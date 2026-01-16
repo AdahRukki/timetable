@@ -100,11 +100,21 @@ export const teacherSchema = z.object({
   name: z.string(),
   subjects: z.array(z.string()),
   classes: z.array(z.enum(CLASSES)),
+  subjectClasses: z.record(z.string(), z.array(z.enum(CLASSES))).optional(), // subject -> classes they can teach it to
   unavailable: z.record(z.enum(DAYS), z.array(z.number())), // day -> array of unavailable period numbers
   color: z.string(), // Hex color for visual identification
 });
 
 export type Teacher = z.infer<typeof teacherSchema>;
+
+// Helper to get classes a teacher can teach a specific subject to
+export function getTeacherSubjectClasses(teacher: Teacher, subject: string): SchoolClass[] {
+  if (teacher.subjectClasses && teacher.subjectClasses[subject]) {
+    return teacher.subjectClasses[subject];
+  }
+  // Fallback to all teacher's classes if no specific mapping
+  return teacher.classes;
+}
 
 export const insertTeacherSchema = teacherSchema.omit({ id: true });
 export type InsertTeacher = z.infer<typeof insertTeacherSchema>;

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { type Teacher, DAYS, CLASSES, type Day, type SchoolClass, PERIODS_PER_DAY } from "@shared/schema";
+import { useState, useMemo } from "react";
+import { type Teacher, DAYS, CLASSES, type Day, type SchoolClass, PERIODS_PER_DAY, getTeacherSubjectClasses } from "@shared/schema";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,6 +39,7 @@ export default function TeachersPage() {
   const [formName, setFormName] = useState("");
   const [formSubjects, setFormSubjects] = useState<string[]>([]);
   const [formClasses, setFormClasses] = useState<SchoolClass[]>([]);
+  const [formSubjectClasses, setFormSubjectClasses] = useState<Record<string, SchoolClass[]>>({});
   const [formUnavailable, setFormUnavailable] = useState<Record<string, number[]>>({});
 
   const { data: teachers = [], isLoading } = useQuery<Teacher[]>({
@@ -46,7 +47,7 @@ export default function TeachersPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: async (data: { name: string; subjects: string[]; classes: SchoolClass[]; unavailable: Record<string, number[]>; color: string }) => {
+    mutationFn: async (data: { name: string; subjects: string[]; classes: SchoolClass[]; subjectClasses?: Record<string, SchoolClass[]>; unavailable: Record<string, number[]>; color: string }) => {
       return apiRequest("POST", "/api/teachers", data);
     },
     onSuccess: () => {
@@ -94,6 +95,7 @@ export default function TeachersPage() {
     setFormName("");
     setFormSubjects([]);
     setFormClasses([]);
+    setFormSubjectClasses({});
     setFormUnavailable({});
   };
 
@@ -102,6 +104,7 @@ export default function TeachersPage() {
     setFormName(teacher.name);
     setFormSubjects([...teacher.subjects]);
     setFormClasses([...teacher.classes]);
+    setFormSubjectClasses(teacher.subjectClasses ? { ...teacher.subjectClasses } : {});
     setFormUnavailable({ ...teacher.unavailable });
     setDialogOpen(true);
   };
@@ -129,6 +132,14 @@ export default function TeachersPage() {
       }
     }
 
+    // Clean subjectClasses to only include selected subjects with specific class mappings
+    const cleanedSubjectClasses: Record<string, SchoolClass[]> = {};
+    for (const subject of formSubjects) {
+      if (formSubjectClasses[subject] && formSubjectClasses[subject].length > 0) {
+        cleanedSubjectClasses[subject] = formSubjectClasses[subject];
+      }
+    }
+
     if (editingTeacher) {
       updateMutation.mutate({
         id: editingTeacher.id,
@@ -136,6 +147,7 @@ export default function TeachersPage() {
           name: formName.trim(),
           subjects: formSubjects,
           classes: formClasses,
+          subjectClasses: cleanedSubjectClasses,
           unavailable: cleanedUnavailable,
         },
       });
@@ -145,6 +157,7 @@ export default function TeachersPage() {
         name: formName.trim(),
         subjects: formSubjects,
         classes: formClasses,
+        subjectClasses: cleanedSubjectClasses,
         unavailable: cleanedUnavailable,
         color: colors[teachers.length % colors.length],
       });
@@ -249,28 +262,25 @@ export default function TeachersPage() {
                 <div>
                   <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1.5">
                     <BookOpen className="h-3 w-3" />
-                    Subjects
+                    Subjects & Classes
                   </div>
-                  <div className="flex flex-wrap gap-1">
-                    {teacher.subjects.map((subject) => (
-                      <Badge key={subject} variant="secondary" className="text-xs">
-                        {subject}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1.5">
-                    <GraduationCap className="h-3 w-3" />
-                    Classes
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {teacher.classes.map((cls) => (
-                      <Badge key={cls} variant="outline" className="text-xs">
-                        {cls}
-                      </Badge>
-                    ))}
+                  <div className="space-y-1">
+                    {teacher.subjects.map((subject) => {
+                      const subjectClasses = getTeacherSubjectClasses(teacher, subject);
+                      return (
+                        <div key={subject} className="flex items-center gap-1 flex-wrap">
+                          <Badge variant="secondary" className="text-xs">
+                            {subject}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">→</span>
+                          {subjectClasses.map((cls) => (
+                            <Badge key={cls} variant="outline" className="text-xs px-1">
+                              {cls}
+                            </Badge>
+                          ))}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -339,33 +349,7 @@ export default function TeachersPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>Subjects</Label>
-                <ScrollArea className="h-32 border rounded-md p-2">
-                  <div className="space-y-2">
-                    {ALL_SUBJECTS.map((subject) => (
-                      <div key={subject} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`subject-${subject}`}
-                          checked={formSubjects.includes(subject)}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setFormSubjects([...formSubjects, subject]);
-                            } else {
-                              setFormSubjects(formSubjects.filter((s) => s !== subject));
-                            }
-                          }}
-                        />
-                        <Label htmlFor={`subject-${subject}`} className="text-sm font-normal cursor-pointer">
-                          {subject}
-                        </Label>
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Classes</Label>
+                <Label>Available Classes (select all classes this teacher can teach)</Label>
                 <div className="flex flex-wrap gap-2">
                   {CLASSES.map((cls) => (
                     <Button
@@ -376,6 +360,12 @@ export default function TeachersPage() {
                       onClick={() => {
                         if (formClasses.includes(cls)) {
                           setFormClasses(formClasses.filter((c) => c !== cls));
+                          // Also remove this class from all subject mappings
+                          const newSubjectClasses = { ...formSubjectClasses };
+                          for (const subj of Object.keys(newSubjectClasses)) {
+                            newSubjectClasses[subj] = newSubjectClasses[subj].filter((c) => c !== cls);
+                          }
+                          setFormSubjectClasses(newSubjectClasses);
                         } else {
                           setFormClasses([...formClasses, cls]);
                         }
@@ -385,6 +375,78 @@ export default function TeachersPage() {
                     </Button>
                   ))}
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Subjects & Class Assignments</Label>
+                <p className="text-xs text-muted-foreground">Select subjects and which classes each subject applies to</p>
+                <ScrollArea className="h-48 border rounded-md p-2">
+                  <div className="space-y-3">
+                    {ALL_SUBJECTS.map((subject) => {
+                      const isSelected = formSubjects.includes(subject);
+                      const subjectClassList = formSubjectClasses[subject] || [];
+                      return (
+                        <div key={subject} className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <Checkbox
+                              id={`subject-${subject}`}
+                              checked={isSelected}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setFormSubjects([...formSubjects, subject]);
+                                  // Initialize with all available classes
+                                  setFormSubjectClasses({ ...formSubjectClasses, [subject]: [...formClasses] });
+                                } else {
+                                  setFormSubjects(formSubjects.filter((s) => s !== subject));
+                                  const newSubjectClasses = { ...formSubjectClasses };
+                                  delete newSubjectClasses[subject];
+                                  setFormSubjectClasses(newSubjectClasses);
+                                }
+                              }}
+                              data-testid={`checkbox-subject-${subject}`}
+                            />
+                            <Label htmlFor={`subject-${subject}`} className="text-sm font-medium cursor-pointer">
+                              {subject}
+                            </Label>
+                          </div>
+                          {isSelected && formClasses.length > 0 && (
+                            <div className="ml-6 flex flex-wrap gap-1">
+                              {formClasses.map((cls) => {
+                                const isClassSelected = subjectClassList.includes(cls);
+                                return (
+                                  <Button
+                                    key={cls}
+                                    type="button"
+                                    variant={isClassSelected ? "secondary" : "ghost"}
+                                    size="sm"
+                                    className="h-6 px-2 text-xs"
+                                    onClick={() => {
+                                      const currentClasses = formSubjectClasses[subject] || [];
+                                      if (isClassSelected) {
+                                        setFormSubjectClasses({
+                                          ...formSubjectClasses,
+                                          [subject]: currentClasses.filter((c) => c !== cls),
+                                        });
+                                      } else {
+                                        setFormSubjectClasses({
+                                          ...formSubjectClasses,
+                                          [subject]: [...currentClasses, cls],
+                                        });
+                                      }
+                                    }}
+                                    data-testid={`button-${subject}-${cls}`}
+                                  >
+                                    {cls}
+                                  </Button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
               </div>
             </TabsContent>
             
