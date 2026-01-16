@@ -81,6 +81,8 @@ The application runs with `npm run dev` which starts both the Express backend an
 ### API Endpoints
 - `GET /api/teachers` - List all teachers
 - `POST /api/teachers` - Create a teacher
+- `PATCH /api/teachers/:id` - Update a teacher (name, subjects, classes, unavailability)
+- `DELETE /api/teachers/:id` - Delete a teacher
 - `GET /api/timetable` - Get full timetable
 - `POST /api/timetable/validate` - Validate a placement (enforces all scheduling rules)
 - `POST /api/timetable/place` - Place a subject (validates before placing)

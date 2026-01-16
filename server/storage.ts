@@ -13,6 +13,36 @@ import {
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
+const TEACHER_COLORS = [
+  "#8884d8", "#82ca9d", "#ffc658", "#ff7c43", "#a4de6c",
+  "#d0ed57", "#83a6ed", "#8dd1e1", "#a4de6c", "#d88484",
+  "#c084d8", "#84d8c0", "#d8b384", "#84a8d8", "#d884a8",
+];
+
+function getTeacherColor(index: number): string {
+  return TEACHER_COLORS[index % TEACHER_COLORS.length];
+}
+
+const initialTeachers: Teacher[] = [
+  { id: "T1", name: "Mr. Adewale", subjects: ["Maths"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(0) },
+  { id: "T2", name: "Mrs. Okonkwo", subjects: ["English"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(1) },
+  { id: "T3", name: "Mr. Ibrahim", subjects: ["Basic Science", "Physics"], classes: [...CLASSES] as SchoolClass[], unavailable: { Tuesday: [1, 2] }, color: getTeacherColor(2) },
+  { id: "T4", name: "Mrs. Bello", subjects: ["Chemistry"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(3) },
+  { id: "T5", name: "Mr. Eze", subjects: ["Biology", "Basic Science"], classes: [...CLASSES] as SchoolClass[], unavailable: { Friday: [1] }, color: getTeacherColor(4) },
+  { id: "T6", name: "Mrs. Abubakar", subjects: ["Social Studies", "Civic"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(5) },
+  { id: "T7", name: "Mr. Chukwu", subjects: ["Basic Technology"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(6) },
+  { id: "T8", name: "Mrs. Danjuma", subjects: ["Home Economics"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(7) },
+  { id: "T9", name: "Mr. Oluwole", subjects: ["Computer"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(8) },
+  { id: "T10", name: "Mrs. Yakubu", subjects: ["PHE"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(9) },
+  { id: "T11", name: "Mr. Ogunyemi", subjects: ["CRS"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(10) },
+  { id: "T12", name: "Mrs. Ahmed", subjects: ["Agric"], classes: [...CLASSES] as SchoolClass[], unavailable: { Wednesday: [8, 9] }, color: getTeacherColor(11) },
+  { id: "T13", name: "Mr. Adeniyi", subjects: ["Security"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(12) },
+  { id: "T14", name: "Mrs. Idris", subjects: ["Economics", "Marketing"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(13) },
+  { id: "T15", name: "Mr. Onyeka", subjects: ["Government"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(14) },
+  { id: "T16", name: "Mrs. Lawal", subjects: ["Literature"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(0) },
+  { id: "T17", name: "Mr. Nwosu", subjects: ["Civic"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(1) },
+];
+
 export interface IStorage {
   // Teachers
   getTeachers(): Promise<Teacher[]>;
@@ -72,6 +102,11 @@ export class MemStorage implements IStorage {
     this.teachers = new Map();
     this.timetable = initializeEmptyTimetable();
     this.actions = [];
+    
+    // Initialize with sample teachers
+    for (const teacher of initialTeachers) {
+      this.teachers.set(teacher.id, teacher);
+    }
   }
 
   // Teachers

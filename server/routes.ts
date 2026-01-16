@@ -342,6 +342,33 @@ export async function registerRoutes(
     }
   });
 
+  // Update teacher
+  app.patch("/api/teachers/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      const teacher = await storage.updateTeacher(id, updates);
+      if (teacher) {
+        res.json(teacher);
+      } else {
+        res.status(404).json({ error: "Teacher not found" });
+      }
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update teacher" });
+    }
+  });
+
+  // Delete teacher
+  app.delete("/api/teachers/:id", async (req, res) => {
+    const { id } = req.params;
+    const deleted = await storage.deleteTeacher(id);
+    if (deleted) {
+      res.json({ success: true });
+    } else {
+      res.status(404).json({ error: "Teacher not found" });
+    }
+  });
+
   // Get timetable
   app.get("/api/timetable", async (req, res) => {
     const timetable = await storage.getTimetable();
