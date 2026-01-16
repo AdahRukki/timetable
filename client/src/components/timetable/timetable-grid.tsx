@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import {
   CLASSES,
   DAYS,
@@ -118,8 +119,8 @@ export function TimetableGrid({
                     </thead>
                     <tbody>
                       {CLASSES.map((schoolClass) => (
-                        <>
-                          <tr key={schoolClass}>
+                        <Fragment key={schoolClass}>
+                          <tr>
                             <td className="p-2 sticky left-0 bg-card z-10">
                               <Badge
                                 variant={
@@ -192,7 +193,7 @@ export function TimetableGrid({
                                 </td>
                               </tr>
                             )}
-                        </>
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
