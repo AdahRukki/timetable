@@ -1,0 +1,273 @@
+Below is a clean, copy-paste-ready project description you can give Replit.
+It is written like a real software brief, not vague instructions.
+
+
+---
+
+📌 Project Title
+
+School Timetable Builder with Live Constraint Validation
+
+
+---
+
+🧠 Project Description
+
+Build a web-based timetable builder that allows a school administrator to create a weekly timetable for multiple classes while automatically enforcing teacher availability and scheduling rules.
+
+The system must maintain a live master grid of the timetable and prevent invalid placements such as teacher clashes, subject overloads, and rule violations.
+
+The goal is to eliminate manual errors and allow structured, rule-driven timetable creation.
+
+
+---
+
+🎯 Core Objectives
+
+1. Maintain a single source of truth for the timetable.
+
+
+2. Prevent teacher clashes automatically.
+
+
+3. Reduce free periods by intelligently placing subjects.
+
+
+4. Support real-time validation before any subject is placed.
+
+
+5. Make the timetable easy to audit visually.
+
+
+
+
+---
+
+🏫 Entities to Model
+
+Classes
+
+JSS1
+
+JSS2
+
+JSS3
+
+SS1
+
+SS2
+
+SS3
+
+
+Days & Periods
+
+Monday, Wednesday, Thursday → P1–P9
+
+Tuesday → P1–P7
+
+Friday → P1–P6
+
+
+
+---
+
+👩‍🏫 Teachers
+
+Each teacher has:
+
+A unique ID (e.g., T1, T2, …)
+
+Subjects they teach
+
+Classes they teach
+
+Days/periods they are unavailable
+
+
+Example:
+
+{
+  "id": "T1",
+  "subjects": ["Basic Science", "Agric"],
+  "classes": ["JSS1", "JSS2", "JSS3", "SS1", "SS2", "SS3"],
+  "unavailable": {
+    "Tuesday": [],
+    "Friday": []
+  }
+}
+
+
+---
+
+📅 Timetable Structure
+
+The timetable should be represented as a nested object:
+
+{
+  "Monday": {
+    "JSS1": { "P1": null, "P2": null, ..., "P9": null },
+    "JSS2": { ... }
+  },
+  "Tuesday": {
+    "JSS1": { "P1": null, ..., "P7": null }
+  }
+}
+
+Each cell stores:
+
+subject
+
+teacher
+
+type (single / double / slash)
+
+
+
+---
+
+⚠️ Scheduling Rules (Very Important)
+
+The system must enforce these rules before placing a subject:
+
+Teacher Rules
+
+A teacher cannot be in two classes in the same period.
+
+Teachers cannot be scheduled on unavailable days.
+
+Tuesday and Friday have reduced periods.
+
+
+Subject Rules
+
+Some subjects allow doubles.
+
+No subject should run more than two consecutive periods unless explicitly allowed.
+
+English must not be immediately followed by Security for the same class.
+
+
+Slash Rules (SS2 & SS3)
+
+Physics / Literature
+
+Chemistry / Government
+
+Agric / CRS
+
+
+Slash subjects must:
+
+Occur at the same time
+
+Have equal weekly period counts
+
+
+Free Period Logic
+
+A period may remain free only if no valid teacher is available.
+
+Otherwise, the system should suggest valid placements.
+
+
+
+---
+
+🔍 Core Functions Required
+
+Validation Functions
+
+isTeacherAvailable(teacher, day, period)
+
+isClassFree(class, day, period)
+
+hasTeacherClash(teacher, day, period)
+
+violatesSubjectRules(class, subject, day, period)
+
+canPlace(subject, teacher, class, day, period)
+
+
+Actions
+
+placeSubject(...)
+
+removeSubject(...)
+
+undoLastAction()
+
+
+
+---
+
+🖥️ User Interface Requirements
+
+Display a day-centric grid (university style)
+
+Rows = Classes
+
+Columns = Periods
+
+Color-code by teacher
+
+Show warnings when a rule is violated
+
+Prevent illegal placements entirely
+
+
+
+---
+
+🧪 Bonus Features (Optional)
+
+Highlight free periods
+
+Show teacher workload summary
+
+Export timetable to Excel/PDF
+
+Save/load timetable state (JSON)
+
+
+
+---
+
+🧱 Tech Stack Suggestion
+
+Frontend: React or Vanilla JS
+
+State: In-memory JSON or localStorage
+
+Backend (optional): Node.js (not required initially)
+
+
+
+---
+
+🏁 Success Criteria
+
+The project is successful if:
+
+No illegal timetable can be created
+
+All clashes are automatically prevented
+
+Free periods are minimized logically
+
+The timetable can be audited visually without confusion
+
+
+
+---
+
+If you want, next I can:
+
+convert this into a Replit prompt,
+
+design the data schema, or
+
+write the starter code for you.
+
+
+Just tell me what you want next.
