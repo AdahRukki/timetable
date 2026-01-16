@@ -196,6 +196,71 @@ export const subjectPeriodCountSchema = z.object({
 
 export type SubjectPeriodCount = z.infer<typeof subjectPeriodCountSchema>;
 
+// ===== SUBJECT QUOTA CONFIGURATION =====
+export const subjectQuotaSchema = z.object({
+  subject: z.string(),
+  jssQuota: z.number().min(0).max(10),
+  ss1Quota: z.number().min(0).max(10),
+  ss2ss3Quota: z.number().min(0).max(10),
+  isSlashSubject: z.boolean().default(false),
+});
+
+export type SubjectQuota = z.infer<typeof subjectQuotaSchema>;
+
+export const insertSubjectQuotaSchema = subjectQuotaSchema;
+export type InsertSubjectQuota = z.infer<typeof insertSubjectQuotaSchema>;
+
+// All possible subjects in the system
+export const ALL_SUBJECTS = [
+  "Maths", "English", "Basic Science", "Basic Technology", "Social Studies",
+  "Civic", "Security", "Home Economics", "Agric", "Computer", "PHE", "CRS",
+  "Physics", "Chemistry", "Biology", "Economics", "Marketing", "Government", "Literature",
+] as const;
+
+// Default quotas based on Nigerian curriculum
+export const DEFAULT_QUOTAS: SubjectQuota[] = [
+  { subject: "Maths", jssQuota: 5, ss1Quota: 5, ss2ss3Quota: 5, isSlashSubject: false },
+  { subject: "English", jssQuota: 4, ss1Quota: 4, ss2ss3Quota: 4, isSlashSubject: false },
+  { subject: "Basic Science", jssQuota: 3, ss1Quota: 0, ss2ss3Quota: 0, isSlashSubject: false },
+  { subject: "Basic Technology", jssQuota: 3, ss1Quota: 0, ss2ss3Quota: 0, isSlashSubject: false },
+  { subject: "Social Studies", jssQuota: 3, ss1Quota: 0, ss2ss3Quota: 0, isSlashSubject: false },
+  { subject: "Civic", jssQuota: 2, ss1Quota: 3, ss2ss3Quota: 3, isSlashSubject: false },
+  { subject: "Security", jssQuota: 2, ss1Quota: 0, ss2ss3Quota: 0, isSlashSubject: false },
+  { subject: "Home Economics", jssQuota: 2, ss1Quota: 0, ss2ss3Quota: 0, isSlashSubject: false },
+  { subject: "Agric", jssQuota: 3, ss1Quota: 3, ss2ss3Quota: 3, isSlashSubject: true },
+  { subject: "Computer", jssQuota: 2, ss1Quota: 0, ss2ss3Quota: 0, isSlashSubject: false },
+  { subject: "PHE", jssQuota: 3, ss1Quota: 0, ss2ss3Quota: 0, isSlashSubject: false },
+  { subject: "CRS", jssQuota: 3, ss1Quota: 3, ss2ss3Quota: 3, isSlashSubject: true },
+  { subject: "Physics", jssQuota: 0, ss1Quota: 4, ss2ss3Quota: 4, isSlashSubject: true },
+  { subject: "Chemistry", jssQuota: 0, ss1Quota: 4, ss2ss3Quota: 4, isSlashSubject: true },
+  { subject: "Biology", jssQuota: 0, ss1Quota: 4, ss2ss3Quota: 4, isSlashSubject: false },
+  { subject: "Economics", jssQuota: 0, ss1Quota: 4, ss2ss3Quota: 4, isSlashSubject: false },
+  { subject: "Marketing", jssQuota: 0, ss1Quota: 3, ss2ss3Quota: 3, isSlashSubject: false },
+  { subject: "Government", jssQuota: 0, ss1Quota: 4, ss2ss3Quota: 4, isSlashSubject: true },
+  { subject: "Literature", jssQuota: 0, ss1Quota: 4, ss2ss3Quota: 4, isSlashSubject: true },
+];
+
+// Get quota for a specific class
+export function getQuotaForClass(quota: SubjectQuota, schoolClass: SchoolClass): number {
+  if (schoolClass.startsWith("JSS")) {
+    return quota.jssQuota;
+  } else if (schoolClass === "SS1") {
+    return quota.ss1Quota;
+  } else {
+    return quota.ss2ss3Quota;
+  }
+}
+
+// ===== AUTO-GENERATION RESULT =====
+export const autoGenerateResultSchema = z.object({
+  success: z.boolean(),
+  slotsPlaced: z.number(),
+  warnings: z.array(z.string()),
+  errors: z.array(z.string()),
+});
+
+export type AutoGenerateResult = z.infer<typeof autoGenerateResultSchema>;
+
 // Legacy user schema (keeping for compatibility)
 export const users = {
   $inferSelect: {} as { id: string; username: string; password: string },

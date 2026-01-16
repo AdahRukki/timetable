@@ -1,21 +1,25 @@
 import { type TimetableSlot, type Teacher, DAYS, CLASSES } from "@shared/schema";
 import { getPeriodsForDay, getSlotKey } from "@/lib/timetable-utils";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   CalendarDays,
   Users,
   BookOpen,
   AlertTriangle,
   CheckCircle2,
+  Wand2,
+  Loader2,
 } from "lucide-react";
 
 interface StatsHeaderProps {
   timetable: Map<string, TimetableSlot>;
   teachers: Teacher[];
+  onAutoGenerate?: () => void;
+  isGenerating?: boolean;
 }
 
-export function StatsHeader({ timetable, teachers }: StatsHeaderProps) {
+export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating }: StatsHeaderProps) {
   let totalSlots = 0;
   let occupiedSlots = 0;
   let freeSlots = 0;
@@ -73,22 +77,41 @@ export function StatsHeader({ timetable, teachers }: StatsHeaderProps) {
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-      {stats.map((stat) => (
-        <Card key={stat.label} className="overflow-hidden">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <div className={`${stat.color}`}>
-                <stat.icon className="h-5 w-5" />
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <h2 className="text-lg font-semibold">Timetable Overview</h2>
+        {onAutoGenerate && (
+          <Button
+            onClick={onAutoGenerate}
+            disabled={isGenerating}
+            data-testid="button-auto-generate"
+          >
+            {isGenerating ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Wand2 className="h-4 w-4 mr-2" />
+            )}
+            Auto-Generate Timetable
+          </Button>
+        )}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+        {stats.map((stat) => (
+          <Card key={stat.label} className="overflow-hidden">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className={`${stat.color}`}>
+                  <stat.icon className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-2xl font-semibold">{stat.value}</p>
+                  <p className="text-xs text-muted-foreground">{stat.label}</p>
+                </div>
               </div>
-              <div>
-                <p className="text-2xl font-semibold">{stat.value}</p>
-                <p className="text-xs text-muted-foreground">{stat.label}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
     </div>
   );
 }

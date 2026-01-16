@@ -7,9 +7,11 @@ import {
   type ValidationResult,
   type Day,
   type SchoolClass,
+  type SubjectQuota,
   DAYS,
   CLASSES,
   PERIODS_PER_DAY,
+  DEFAULT_QUOTAS,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -56,11 +58,17 @@ export interface IStorage {
   getSlot(day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined>;
   setSlot(slot: TimetableSlot): Promise<TimetableSlot>;
   clearSlot(day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined>;
+  clearAllSlots(): Promise<void>;
 
   // Actions (for undo/redo)
   getActions(): Promise<TimetableAction[]>;
   addAction(action: Omit<TimetableAction, "id">): Promise<TimetableAction>;
   clearActions(): Promise<void>;
+
+  // Subject Quotas
+  getSubjectQuotas(): Promise<SubjectQuota[]>;
+  updateSubjectQuota(subject: string, quota: Partial<SubjectQuota>): Promise<SubjectQuota | undefined>;
+  resetSubjectQuotas(): Promise<SubjectQuota[]>;
 }
 
 function getSlotKey(day: Day, schoolClass: SchoolClass, period: number): string {
@@ -97,15 +105,22 @@ export class MemStorage implements IStorage {
   private teachers: Map<string, Teacher>;
   private timetable: Map<string, TimetableSlot>;
   private actions: TimetableAction[];
+  private subjectQuotas: Map<string, SubjectQuota>;
 
   constructor() {
     this.teachers = new Map();
     this.timetable = initializeEmptyTimetable();
     this.actions = [];
+    this.subjectQuotas = new Map();
     
     // Initialize with sample teachers
     for (const teacher of initialTeachers) {
       this.teachers.set(teacher.id, teacher);
+    }
+    
+    // Initialize with default quotas
+    for (const quota of DEFAULT_QUOTAS) {
+      this.subjectQuotas.set(quota.subject, { ...quota });
     }
   }
 
@@ -189,6 +204,32 @@ export class MemStorage implements IStorage {
 
   async clearActions(): Promise<void> {
     this.actions = [];
+  }
+
+  async clearAllSlots(): Promise<void> {
+    this.timetable = initializeEmptyTimetable();
+  }
+
+  // Subject Quotas
+  async getSubjectQuotas(): Promise<SubjectQuota[]> {
+    return Array.from(this.subjectQuotas.values());
+  }
+
+  async updateSubjectQuota(subject: string, updates: Partial<SubjectQuota>): Promise<SubjectQuota | undefined> {
+    const quota = this.subjectQuotas.get(subject);
+    if (!quota) return undefined;
+    
+    const updated = { ...quota, ...updates };
+    this.subjectQuotas.set(subject, updated);
+    return updated;
+  }
+
+  async resetSubjectQuotas(): Promise<SubjectQuota[]> {
+    this.subjectQuotas.clear();
+    for (const quota of DEFAULT_QUOTAS) {
+      this.subjectQuotas.set(quota.subject, { ...quota });
+    }
+    return Array.from(this.subjectQuotas.values());
   }
 }
 

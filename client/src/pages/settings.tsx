@@ -5,11 +5,54 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Settings, Bell, Shield, Clock, Download, Upload } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Settings, Bell, Shield, Clock, Download, Upload, BookOpen, RotateCcw, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import type { SubjectQuota } from "@shared/schema";
+import { useState, useEffect } from "react";
 
 export default function SettingsPage() {
   const { toast } = useToast();
+
+  const { data: quotas = [], isLoading: quotasLoading } = useQuery<SubjectQuota[]>({
+    queryKey: ["/api/quotas"],
+  });
+
+  const updateQuotaMutation = useMutation({
+    mutationFn: async ({ subject, updates }: { subject: string; updates: Partial<SubjectQuota> }) => {
+      return apiRequest("PATCH", `/api/quotas/${encodeURIComponent(subject)}`, updates);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to update quota",
+        description: error instanceof Error ? error.message : "Invalid quota value",
+        variant: "destructive",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
+    },
+  });
+
+  const resetQuotasMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("POST", "/api/quotas/reset");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
+      toast({
+        title: "Quotas Reset",
+        description: "Subject quotas have been reset to default values",
+      });
+    },
+  });
+
+  const handleQuotaChange = (subject: string, field: keyof SubjectQuota, value: number) => {
+    updateQuotaMutation.mutate({ subject, updates: { [field]: value } });
+  };
 
   const handleExport = () => {
     toast({
@@ -25,9 +68,12 @@ export default function SettingsPage() {
     });
   };
 
+  const jssSubjects = quotas.filter(q => q.jssQuota > 0 || (!q.isSlashSubject && q.ss1Quota === 0 && q.ss2ss3Quota === 0));
+  const ssSubjects = quotas.filter(q => q.ss1Quota > 0 || q.ss2ss3Quota > 0);
+
   return (
     <ScrollArea className="h-full">
-      <div className="p-6 max-w-3xl mx-auto space-y-6">
+      <div className="p-6 max-w-4xl mx-auto space-y-6">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Settings className="h-6 w-6 text-primary" />
@@ -37,6 +83,94 @@ export default function SettingsPage() {
             Configure your timetable builder preferences
           </p>
         </div>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <BookOpen className="h-4 w-4" />
+                  Subject Period Quotas
+                </CardTitle>
+                <CardDescription>
+                  Set maximum periods per week for each subject
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => resetQuotasMutation.mutate()}
+                disabled={resetQuotasMutation.isPending}
+                data-testid="button-reset-quotas"
+              >
+                {resetQuotasMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                )}
+                Reset to Defaults
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {quotasLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              <>
+                <div>
+                  <h3 className="font-medium mb-3">JSS Subjects (JSS1-JSS3)</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {quotas.filter(q => q.jssQuota > 0).map((quota) => (
+                      <QuotaInput
+                        key={quota.subject}
+                        subject={quota.subject}
+                        value={quota.jssQuota}
+                        onChange={(v) => handleQuotaChange(quota.subject, "jssQuota", v)}
+                        isSlash={quota.isSlashSubject}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div>
+                  <h3 className="font-medium mb-3">SS1 Subjects</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {quotas.filter(q => q.ss1Quota > 0).map((quota) => (
+                      <QuotaInput
+                        key={quota.subject}
+                        subject={quota.subject}
+                        value={quota.ss1Quota}
+                        onChange={(v) => handleQuotaChange(quota.subject, "ss1Quota", v)}
+                        isSlash={quota.isSlashSubject}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div>
+                  <h3 className="font-medium mb-3">SS2/SS3 Subjects (includes slash pairing)</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {quotas.filter(q => q.ss2ss3Quota > 0).map((quota) => (
+                      <QuotaInput
+                        key={quota.subject}
+                        subject={quota.subject}
+                        value={quota.ss2ss3Quota}
+                        onChange={(v) => handleQuotaChange(quota.subject, "ss2ss3Quota", v)}
+                        isSlash={quota.isSlashSubject}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
@@ -199,5 +333,56 @@ export default function SettingsPage() {
         </Card>
       </div>
     </ScrollArea>
+  );
+}
+
+function QuotaInput({ 
+  subject, 
+  value, 
+  onChange, 
+  isSlash 
+}: { 
+  subject: string; 
+  value: number; 
+  onChange: (value: number) => void;
+  isSlash: boolean;
+}) {
+  const [localValue, setLocalValue] = useState(value.toString());
+  
+  useEffect(() => {
+    setLocalValue(value.toString());
+  }, [value]);
+
+  const handleBlur = () => {
+    const numValue = parseInt(localValue) || 0;
+    const clampedValue = Math.max(0, Math.min(10, numValue));
+    setLocalValue(clampedValue.toString());
+    if (clampedValue !== value) {
+      onChange(clampedValue);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1">
+        <Label className="text-sm flex items-center gap-1">
+          {subject}
+          {isSlash && (
+            <Badge variant="outline" className="text-xs ml-1">Slash</Badge>
+          )}
+        </Label>
+      </div>
+      <Input
+        type="number"
+        min={0}
+        max={10}
+        value={localValue}
+        onChange={(e) => setLocalValue(e.target.value)}
+        onBlur={handleBlur}
+        className="w-16 text-center"
+        data-testid={`input-quota-${subject.toLowerCase().replace(/\s+/g, "-")}`}
+      />
+      <span className="text-sm text-muted-foreground">per week</span>
+    </div>
   );
 }

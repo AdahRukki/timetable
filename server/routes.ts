@@ -4,8 +4,11 @@ import { storage } from "./storage";
 import {
   insertTeacherSchema,
   placementRequestSchema,
+  subjectQuotaSchema,
   type Day,
   type SchoolClass,
+  type SubjectQuota,
+  type AutoGenerateResult,
   DAYS,
   CLASSES,
   PERIODS_PER_DAY,
@@ -13,6 +16,7 @@ import {
   BREAK_AFTER_P7,
   SLASH_SUBJECTS,
   usesSlashSubjects,
+  getQuotaForClass,
   type TimetableSlot,
   type Teacher,
   type ValidationResult,
@@ -488,5 +492,429 @@ export async function registerRoutes(
     res.json(actions);
   });
 
+  // ===== Subject Quotas =====
+  
+  // Get all subject quotas
+  app.get("/api/quotas", async (req, res) => {
+    const quotas = await storage.getSubjectQuotas();
+    res.json(quotas);
+  });
+
+  // Update subject quota
+  app.patch("/api/quotas/:subject", async (req, res) => {
+    try {
+      const { subject } = req.params;
+      
+      const partialQuotaSchema = z.object({
+        jssQuota: z.number().min(0).max(10).optional(),
+        ss1Quota: z.number().min(0).max(10).optional(),
+        ss2ss3Quota: z.number().min(0).max(10).optional(),
+        isSlashSubject: z.boolean().optional(),
+      });
+      
+      const updates = partialQuotaSchema.parse(req.body);
+      const quota = await storage.updateSubjectQuota(decodeURIComponent(subject), updates);
+      if (quota) {
+        res.json(quota);
+      } else {
+        res.status(404).json({ error: "Subject quota not found" });
+      }
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid quota data", details: error.errors });
+      } else {
+        res.status(500).json({ error: "Failed to update quota" });
+      }
+    }
+  });
+
+  // Reset quotas to defaults
+  app.post("/api/quotas/reset", async (req, res) => {
+    const quotas = await storage.resetSubjectQuotas();
+    res.json(quotas);
+  });
+
+  // ===== Auto-Generation =====
+  
+  app.post("/api/timetable/autogenerate", async (req, res) => {
+    try {
+      const { lockExisting = false, clearFirst = true } = req.body;
+      
+      const result = await autoGenerateTimetable(lockExisting, clearFirst);
+      res.json(result);
+    } catch (error) {
+      console.error("Auto-generate error:", error);
+      res.status(500).json({ 
+        success: false, 
+        slotsPlaced: 0, 
+        warnings: [],
+        errors: ["Failed to auto-generate timetable: " + (error instanceof Error ? error.message : "Unknown error")]
+      });
+    }
+  });
+
   return httpServer;
+}
+
+// ===== AUTO-GENERATION ALGORITHM =====
+
+async function autoGenerateTimetable(lockExisting: boolean, clearFirst: boolean): Promise<AutoGenerateResult> {
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  let slotsPlaced = 0;
+  
+  const teachers = await storage.getTeachers();
+  const quotas = await storage.getSubjectQuotas();
+  
+  // Get existing slots to optionally preserve
+  const existingTimetable = await storage.getTimetable();
+  const lockedSlots = new Set<string>();
+  
+  if (lockExisting) {
+    // Mark occupied slots as locked
+    Array.from(existingTimetable.entries()).forEach(([key, slot]) => {
+      if (slot.status === "occupied") {
+        lockedSlots.add(key);
+      }
+    });
+  }
+  
+  // Clear timetable if requested (but preserve locked slots)
+  if (clearFirst && !lockExisting) {
+    await storage.clearAllSlots();
+  } else if (clearFirst && lockExisting) {
+    // Clear only non-locked slots
+    for (const entry of Array.from(existingTimetable.entries())) {
+      const [key, slot] = entry;
+      if (!lockedSlots.has(key) && slot.status === "occupied") {
+        await storage.clearSlot(slot.day, slot.schoolClass, slot.period);
+      }
+    }
+  }
+  
+  // Get fresh timetable state
+  let timetable = await storage.getTimetable();
+  
+  // Build quota tracking per class
+  const quotaTracker: Map<string, Map<string, number>> = new Map();
+  for (const schoolClass of CLASSES) {
+    const classQuotas = new Map<string, number>();
+    for (const quota of quotas) {
+      const required = getQuotaForClass(quota, schoolClass);
+      if (required > 0) {
+        classQuotas.set(quota.subject, required);
+      }
+    }
+    quotaTracker.set(schoolClass, classQuotas);
+  }
+  
+  // Reduce quotas by already placed slots
+  Array.from(timetable.values()).forEach(slot => {
+    if (slot.status === "occupied" && slot.subject) {
+      const classQuotas = quotaTracker.get(slot.schoolClass);
+      if (classQuotas) {
+        const remaining = classQuotas.get(slot.subject) || 0;
+        if (remaining > 0) {
+          classQuotas.set(slot.subject, remaining - 1);
+        }
+        // Also count slash pair subject
+        if (slot.slashPairSubject) {
+          const pairRemaining = classQuotas.get(slot.slashPairSubject) || 0;
+          if (pairRemaining > 0) {
+            classQuotas.set(slot.slashPairSubject, pairRemaining - 1);
+          }
+        }
+      }
+    }
+  });
+  
+  // Process each class
+  for (const schoolClass of CLASSES) {
+    const classQuotas = quotaTracker.get(schoolClass)!;
+    const isSlashClass = usesSlashSubjects(schoolClass);
+    
+    // Schedule slash subjects first for SS2/SS3
+    if (isSlashClass) {
+      for (const slashPair of SLASH_SUBJECTS) {
+        const [subj1, subj2] = slashPair.pair;
+        const quota1 = classQuotas.get(subj1) || 0;
+        const quota2 = classQuotas.get(subj2) || 0;
+        const toSchedule = Math.min(quota1, quota2);
+        
+        if (toSchedule > 0) {
+          const placed = await scheduleSlashSubject(
+            schoolClass, subj1, subj2, toSchedule,
+            teachers, timetable, lockedSlots, warnings
+          );
+          slotsPlaced += placed;
+          classQuotas.set(subj1, quota1 - placed);
+          classQuotas.set(subj2, quota2 - placed);
+          timetable = await storage.getTimetable();
+        }
+      }
+    }
+    
+    // Schedule remaining subjects
+    const subjects = Array.from(classQuotas.entries())
+      .filter(([_, remaining]) => remaining > 0)
+      .sort((a, b) => b[1] - a[1]); // Priority: subjects needing more periods
+    
+    for (const [subject, remaining] of subjects) {
+      const placed = await scheduleSingleSubject(
+        schoolClass, subject, remaining,
+        teachers, timetable, lockedSlots, warnings
+      );
+      slotsPlaced += placed;
+      if (placed < remaining) {
+        warnings.push(`${schoolClass}: Could only place ${placed}/${remaining} periods for ${subject}`);
+      }
+      timetable = await storage.getTimetable();
+    }
+  }
+  
+  // Summary
+  const finalTimetable = await storage.getTimetable();
+  let totalEmpty = 0;
+  Array.from(finalTimetable.values()).forEach(slot => {
+    if (slot.status === "empty") totalEmpty++;
+  });
+  
+  if (totalEmpty > 0) {
+    warnings.push(`${totalEmpty} slots remain empty`);
+  }
+  
+  return {
+    success: errors.length === 0,
+    slotsPlaced,
+    warnings,
+    errors,
+  };
+}
+
+async function scheduleSlashSubject(
+  schoolClass: SchoolClass,
+  subject1: string,
+  subject2: string,
+  count: number,
+  teachers: Teacher[],
+  timetable: Map<string, TimetableSlot>,
+  lockedSlots: Set<string>,
+  warnings: string[]
+): Promise<number> {
+  let placed = 0;
+  
+  // Find teachers for each subject
+  const teachers1 = teachers.filter(t => 
+    t.subjects.includes(subject1) && t.classes.includes(schoolClass)
+  );
+  const teachers2 = teachers.filter(t => 
+    t.subjects.includes(subject2) && t.classes.includes(schoolClass)
+  );
+  
+  if (teachers1.length === 0 || teachers2.length === 0) {
+    warnings.push(`${schoolClass}: No teacher available for slash pair ${subject1}/${subject2}`);
+    return 0;
+  }
+  
+  for (let i = 0; i < count && placed < count; i++) {
+    // Try each day/period combination
+    let slotPlaced = false;
+    
+    for (const day of DAYS) {
+      if (slotPlaced) break;
+      const maxPeriods = PERIODS_PER_DAY[day];
+      
+      for (let period = 1; period <= maxPeriods; period++) {
+        if (slotPlaced) break;
+        const key = `${day}-${schoolClass}-${period}`;
+        
+        if (lockedSlots.has(key)) continue;
+        const slot = timetable.get(key);
+        if (slot && slot.status === "occupied") continue;
+        
+        // Try to find available teacher pair
+        for (const t1 of teachers1) {
+          if (slotPlaced) break;
+          if (!isTeacherAvailableForSlot(timetable, t1, day, period)) continue;
+          if (wouldExceedFatigue(timetable, t1.id, day, [period])) continue;
+          
+          for (const t2 of teachers2) {
+            if (t1.id === t2.id) continue; // Same teacher can't teach both
+            if (!isTeacherAvailableForSlot(timetable, t2, day, period)) continue;
+            if (wouldExceedFatigue(timetable, t2.id, day, [period])) continue;
+            
+            // Check English-Security rule
+            if (subject1 === "Security" || subject2 === "Security") {
+              const prevKey = `${day}-${schoolClass}-${period - 1}`;
+              const prevSlot = timetable.get(prevKey);
+              if (prevSlot && prevSlot.subject === "English") continue;
+            }
+            
+            // Place the slot
+            const newSlot: TimetableSlot = {
+              day,
+              period,
+              schoolClass,
+              status: "occupied",
+              subject: subject1,
+              teacherId: t1.id,
+              slotType: "slash",
+              slashPairSubject: subject2,
+              slashPairTeacherId: t2.id,
+            };
+            
+            await storage.setSlot(newSlot);
+            timetable.set(key, newSlot);
+            placed++;
+            slotPlaced = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+  
+  return placed;
+}
+
+async function scheduleSingleSubject(
+  schoolClass: SchoolClass,
+  subject: string,
+  count: number,
+  teachers: Teacher[],
+  timetable: Map<string, TimetableSlot>,
+  lockedSlots: Set<string>,
+  warnings: string[]
+): Promise<number> {
+  let placed = 0;
+  
+  // Find teachers for this subject and class
+  const availableTeachers = teachers.filter(t => 
+    t.subjects.includes(subject) && t.classes.includes(schoolClass)
+  );
+  
+  if (availableTeachers.length === 0) {
+    warnings.push(`${schoolClass}: No teacher available for ${subject}`);
+    return 0;
+  }
+  
+  for (let i = 0; i < count && placed < count; i++) {
+    let slotPlaced = false;
+    
+    for (const day of DAYS) {
+      if (slotPlaced) break;
+      const maxPeriods = PERIODS_PER_DAY[day];
+      
+      for (let period = 1; period <= maxPeriods; period++) {
+        if (slotPlaced) break;
+        const key = `${day}-${schoolClass}-${period}`;
+        
+        if (lockedSlots.has(key)) continue;
+        const slot = timetable.get(key);
+        if (slot && slot.status === "occupied") continue;
+        
+        // Try each available teacher
+        for (const teacher of availableTeachers) {
+          if (!isTeacherAvailableForSlot(timetable, teacher, day, period)) continue;
+          if (wouldExceedFatigue(timetable, teacher.id, day, [period])) continue;
+          
+          // Check English-Security rule
+          if (subject === "Security") {
+            const prevKey = `${day}-${schoolClass}-${period - 1}`;
+            const prevSlot = timetable.get(prevKey);
+            if (prevSlot && prevSlot.subject === "English") continue;
+          }
+          
+          // Place the slot
+          const newSlot: TimetableSlot = {
+            day,
+            period,
+            schoolClass,
+            status: "occupied",
+            subject,
+            teacherId: teacher.id,
+            slotType: "single",
+            slashPairSubject: null,
+            slashPairTeacherId: null,
+          };
+          
+          await storage.setSlot(newSlot);
+          timetable.set(key, newSlot);
+          placed++;
+          slotPlaced = true;
+          break;
+        }
+      }
+    }
+  }
+  
+  return placed;
+}
+
+function isTeacherAvailableForSlot(
+  timetable: Map<string, TimetableSlot>,
+  teacher: Teacher,
+  day: Day,
+  period: number
+): boolean {
+  // Check unavailability
+  const unavailablePeriods = teacher.unavailable[day] || [];
+  if (unavailablePeriods.includes(period)) return false;
+  
+  // Check if already teaching
+  for (const schoolClass of CLASSES) {
+    const key = `${day}-${schoolClass}-${period}`;
+    const slot = timetable.get(key);
+    if (slot && (slot.teacherId === teacher.id || slot.slashPairTeacherId === teacher.id)) {
+      return false;
+    }
+  }
+  
+  return true;
+}
+
+function wouldExceedFatigue(
+  timetable: Map<string, TimetableSlot>,
+  teacherId: string,
+  day: Day,
+  newPeriods: number[]
+): boolean {
+  const maxPeriods = PERIODS_PER_DAY[day];
+  const teachingPeriods = new Set<number>(newPeriods);
+  
+  for (let period = 1; period <= maxPeriods; period++) {
+    for (const schoolClass of CLASSES) {
+      const key = `${day}-${schoolClass}-${period}`;
+      const slot = timetable.get(key);
+      if (slot && (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId)) {
+        teachingPeriods.add(period);
+        break;
+      }
+    }
+  }
+  
+  const sorted = Array.from(teachingPeriods).sort((a, b) => a - b);
+  let maxConsecutive = 0;
+  let current = 0;
+  
+  for (let i = 0; i < sorted.length; i++) {
+    if (i === 0) {
+      current = 1;
+    } else {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      const hasBreak =
+        (prev <= BREAK_AFTER_P4 && curr > BREAK_AFTER_P4) ||
+        (day !== "Friday" && day !== "Tuesday" && prev <= BREAK_AFTER_P7 && curr > BREAK_AFTER_P7);
+      
+      if (curr === prev + 1 && !hasBreak) {
+        current++;
+      } else {
+        current = 1;
+      }
+    }
+    maxConsecutive = Math.max(maxConsecutive, current);
+  }
+  
+  return maxConsecutive > 5;
 }
