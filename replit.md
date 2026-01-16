@@ -23,7 +23,8 @@ This application allows school administrators to create weekly timetables for mu
 │   │   │   │   ├── teacher-sidebar.tsx     # Teacher workload display
 │   │   │   │   ├── subject-tracker.tsx     # Weekly allocation tracker
 │   │   │   │   ├── action-history.tsx      # Undo/redo history
-│   │   │   │   └── stats-header.tsx        # Statistics display
+│   │   │   │   ├── stats-header.tsx        # Statistics display
+│   │   │   │   └── auto-generate-dialog.tsx # Auto-generation dialog
 │   │   │   ├── app-sidebar.tsx             # Navigation sidebar
 │   │   │   └── theme-toggle.tsx            # Dark/light mode toggle
 │   │   ├── lib/
@@ -88,6 +89,10 @@ The application runs with `npm run dev` which starts both the Express backend an
 - `POST /api/timetable/place` - Place a subject (validates before placing)
 - `DELETE /api/timetable/:day/:class/:period` - Remove a subject
 - `GET /api/actions` - Get action history
+- `GET /api/quotas` - Get subject period quotas
+- `PATCH /api/quotas/:subject` - Update a subject's period quota (validated with Zod)
+- `POST /api/quotas/reset` - Reset quotas to default values
+- `POST /api/timetable/autogenerate` - Auto-generate timetable using configured quotas
 
 ### Undo/Redo
 Undo/redo functionality is implemented on the frontend for session-based state management. The backend tracks actions for audit purposes but does not provide undo/redo endpoints since the frontend maintains authoritative state for immediate user feedback.
