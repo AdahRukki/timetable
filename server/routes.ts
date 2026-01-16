@@ -269,6 +269,18 @@ async function validatePlacement(
           });
         }
         
+        // Check slash pair teacher subject-class mapping
+        if (slashPairSubject) {
+          const allowedClassesForSlashSubject = getTeacherSubjectClasses(slashPairTeacher, slashPairSubject);
+          if (!allowedClassesForSlashSubject.includes(schoolClass)) {
+            errors.push({
+              code: "SLASH_TEACHER_SUBJECT_CLASS_MISMATCH",
+              message: `${slashPairTeacher.name} is not assigned to teach ${slashPairSubject} to ${schoolClass}`,
+              severity: "error",
+            });
+          }
+        }
+        
         // Validate slash pair teacher availability
         const slashUnavailable = slashPairTeacher.unavailable[day] || [];
         if (slashUnavailable.includes(period)) {

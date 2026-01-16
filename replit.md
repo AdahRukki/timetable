@@ -60,6 +60,7 @@ This application allows school administrators to create weekly timetables for mu
 4. **No Doubles in P8/P9**: Double periods restricted to earlier slots
 5. **English-Security Rule**: Security cannot follow English immediately
 6. **Period Quotas**: Tracks weekly allocation per subject
+7. **Subject-Class Mapping**: Teachers can be assigned to teach specific subjects to specific classes only
 
 ### Slash Subjects (SS2/SS3 only)
 Paired subjects scheduled simultaneously:
