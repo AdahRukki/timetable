@@ -17,6 +17,7 @@ import {
   SLASH_SUBJECTS,
   usesSlashSubjects,
   getQuotaForClass,
+  getTeacherSubjectClasses,
   type TimetableSlot,
   type Teacher,
   type ValidationResult,
@@ -131,6 +132,16 @@ async function validatePlacement(
     errors.push({
       code: "TEACHER_CLASS_MISMATCH",
       message: `${teacher.name} is not assigned to teach ${schoolClass}`,
+      severity: "error",
+    });
+  }
+  
+  // Check subject-class mapping if present
+  const allowedClassesForSubject = getTeacherSubjectClasses(teacher, subject);
+  if (!allowedClassesForSubject.includes(schoolClass)) {
+    errors.push({
+      code: "TEACHER_SUBJECT_CLASS_MISMATCH",
+      message: `${teacher.name} is not assigned to teach ${subject} to ${schoolClass}`,
       severity: "error",
     });
   }
@@ -703,12 +714,16 @@ async function scheduleSlashSubject(
 ): Promise<number> {
   let placed = 0;
   
-  // Find teachers for each subject
+  // Find teachers for each subject (respecting subject-class mappings)
   const teachers1 = teachers.filter(t => 
-    t.subjects.includes(subject1) && t.classes.includes(schoolClass)
+    t.subjects.includes(subject1) && 
+    t.classes.includes(schoolClass) &&
+    getTeacherSubjectClasses(t, subject1).includes(schoolClass)
   );
   const teachers2 = teachers.filter(t => 
-    t.subjects.includes(subject2) && t.classes.includes(schoolClass)
+    t.subjects.includes(subject2) && 
+    t.classes.includes(schoolClass) &&
+    getTeacherSubjectClasses(t, subject2).includes(schoolClass)
   );
   
   if (teachers1.length === 0 || teachers2.length === 0) {
@@ -788,9 +803,11 @@ async function scheduleSingleSubject(
 ): Promise<number> {
   let placed = 0;
   
-  // Find teachers for this subject and class
+  // Find teachers for this subject and class (respecting subject-class mappings)
   const availableTeachers = teachers.filter(t => 
-    t.subjects.includes(subject) && t.classes.includes(schoolClass)
+    t.subjects.includes(subject) && 
+    t.classes.includes(schoolClass) &&
+    getTeacherSubjectClasses(t, subject).includes(schoolClass)
   );
   
   if (availableTeachers.length === 0) {
