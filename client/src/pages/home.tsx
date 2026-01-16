@@ -1,0 +1,397 @@
+import { useState, useCallback, useMemo } from "react";
+import {
+  type Day,
+  type TimetableSlot,
+  type TimetableAction,
+  type Teacher,
+  type SlotType,
+  type ValidationResult,
+  DAYS,
+} from "@shared/schema";
+import {
+  initializeTimetable,
+  getSlotKey,
+  validatePlacement,
+} from "@/lib/timetable-utils";
+import { sampleTeachers } from "@/lib/sample-data";
+import { TimetableGrid } from "@/components/timetable/timetable-grid";
+import { TeacherSidebar } from "@/components/timetable/teacher-sidebar";
+import { PlacementDialog } from "@/components/timetable/placement-dialog";
+import { SubjectTracker } from "@/components/timetable/subject-tracker";
+import { ActionHistory } from "@/components/timetable/action-history";
+import { StatsHeader } from "@/components/timetable/stats-header";
+import { useToast } from "@/hooks/use-toast";
+
+export default function Home() {
+  const { toast } = useToast();
+
+  const [timetable, setTimetable] = useState<Map<string, TimetableSlot>>(() =>
+    initializeTimetable()
+  );
+  const [teachers] = useState<Teacher[]>(sampleTeachers);
+  const [selectedDay, setSelectedDay] = useState<Day>("Monday");
+  const [selectedSlot, setSelectedSlot] = useState<TimetableSlot | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [validation, setValidation] = useState<ValidationResult | null>(null);
+
+  const [actions, setActions] = useState<TimetableAction[]>([]);
+  const [actionIndex, setActionIndex] = useState(-1);
+
+  const handleCellClick = useCallback((slot: TimetableSlot) => {
+    setSelectedSlot(slot);
+    setValidation(null);
+    setDialogOpen(true);
+  }, []);
+
+  const handleValidate = useCallback(
+    (
+      subject: string,
+      teacherId: string,
+      slotType: SlotType,
+      slashPairSubject?: string,
+      slashPairTeacherId?: string
+    ) => {
+      if (!selectedSlot) return;
+
+      const result = validatePlacement(timetable, teachers, {
+        day: selectedSlot.day,
+        period: selectedSlot.period,
+        schoolClass: selectedSlot.schoolClass,
+        subject,
+        teacherId,
+        slotType,
+        slashPairSubject,
+        slashPairTeacherId,
+      });
+
+      setValidation(result);
+    },
+    [selectedSlot, timetable, teachers]
+  );
+
+  const handlePlace = useCallback(
+    (
+      subject: string,
+      teacherId: string,
+      slotType: SlotType,
+      slashPairSubject?: string,
+      slashPairTeacherId?: string
+    ) => {
+      if (!selectedSlot) return;
+
+      const validationResult = validatePlacement(timetable, teachers, {
+        day: selectedSlot.day,
+        period: selectedSlot.period,
+        schoolClass: selectedSlot.schoolClass,
+        subject,
+        teacherId,
+        slotType,
+        slashPairSubject,
+        slashPairTeacherId,
+      });
+
+      if (!validationResult.isValid) {
+        toast({
+          title: "Cannot place subject",
+          description: validationResult.errors[0]?.message || "Validation failed",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setTimetable((prev) => {
+        const newTimetable = new Map(prev);
+        const key = getSlotKey(
+          selectedSlot.day,
+          selectedSlot.schoolClass,
+          selectedSlot.period
+        );
+
+        const previousSlot = newTimetable.get(key);
+
+        const newSlot: TimetableSlot = {
+          ...selectedSlot,
+          status: "occupied",
+          subject,
+          teacherId,
+          slotType,
+          slashPairSubject: slashPairSubject || null,
+          slashPairTeacherId: slashPairTeacherId || null,
+        };
+
+        newTimetable.set(key, newSlot);
+
+        if (slotType === "double") {
+          const nextKey = getSlotKey(
+            selectedSlot.day,
+            selectedSlot.schoolClass,
+            selectedSlot.period + 1
+          );
+          const nextSlot = newTimetable.get(nextKey);
+          if (nextSlot) {
+            newTimetable.set(nextKey, {
+              ...nextSlot,
+              status: "occupied",
+              subject,
+              teacherId,
+              slotType: "double",
+              slashPairSubject: slashPairSubject || null,
+              slashPairTeacherId: slashPairTeacherId || null,
+            });
+          }
+        }
+
+        const action: TimetableAction = {
+          id: crypto.randomUUID(),
+          type: "place",
+          timestamp: Date.now(),
+          slot: newSlot,
+          previousSlot: previousSlot || null,
+        };
+
+        setActions((prev) => {
+          const newActions = prev.slice(0, actionIndex + 1);
+          return [...newActions, action];
+        });
+        setActionIndex((prev) => prev + 1);
+
+        return newTimetable;
+      });
+
+      const teacher = teachers.find((t) => t.id === teacherId);
+      toast({
+        title: "Subject scheduled",
+        description: `${subject} with ${teacher?.name} on ${selectedSlot.day} P${selectedSlot.period}`,
+      });
+
+      setDialogOpen(false);
+      setSelectedSlot(null);
+      setValidation(null);
+    },
+    [selectedSlot, timetable, teachers, toast, actionIndex]
+  );
+
+  const handleRemove = useCallback(() => {
+    if (!selectedSlot) return;
+
+    setTimetable((prev) => {
+      const newTimetable = new Map(prev);
+      const key = getSlotKey(
+        selectedSlot.day,
+        selectedSlot.schoolClass,
+        selectedSlot.period
+      );
+
+      const previousSlot = newTimetable.get(key);
+
+      const emptySlot: TimetableSlot = {
+        ...selectedSlot,
+        status: "empty",
+        subject: null,
+        teacherId: null,
+        slotType: null,
+        slashPairSubject: null,
+        slashPairTeacherId: null,
+      };
+
+      newTimetable.set(key, emptySlot);
+
+      if (previousSlot?.slotType === "double") {
+        const nextKey = getSlotKey(
+          selectedSlot.day,
+          selectedSlot.schoolClass,
+          selectedSlot.period + 1
+        );
+        const nextSlot = newTimetable.get(nextKey);
+        if (nextSlot) {
+          newTimetable.set(nextKey, {
+            ...nextSlot,
+            status: "empty",
+            subject: null,
+            teacherId: null,
+            slotType: null,
+            slashPairSubject: null,
+            slashPairTeacherId: null,
+          });
+        }
+      }
+
+      if (previousSlot) {
+        const action: TimetableAction = {
+          id: crypto.randomUUID(),
+          type: "remove",
+          timestamp: Date.now(),
+          slot: emptySlot,
+          previousSlot,
+        };
+
+        setActions((prev) => {
+          const newActions = prev.slice(0, actionIndex + 1);
+          return [...newActions, action];
+        });
+        setActionIndex((prev) => prev + 1);
+      }
+
+      return newTimetable;
+    });
+
+    toast({
+      title: "Period cleared",
+      description: `Removed ${selectedSlot.subject} from ${selectedSlot.day} P${selectedSlot.period}`,
+    });
+
+    setDialogOpen(false);
+    setSelectedSlot(null);
+    setValidation(null);
+  }, [selectedSlot, toast, actionIndex]);
+
+  const handleUndo = useCallback(() => {
+    if (actionIndex < 0) return;
+
+    const action = actions[actionIndex];
+    if (!action) return;
+
+    setTimetable((prev) => {
+      const newTimetable = new Map(prev);
+      const key = getSlotKey(action.slot.day, action.slot.schoolClass, action.slot.period);
+
+      if (action.previousSlot) {
+        newTimetable.set(key, action.previousSlot);
+
+        if (action.previousSlot.slotType === "double" || action.slot.slotType === "double") {
+          const nextKey = getSlotKey(
+            action.slot.day,
+            action.slot.schoolClass,
+            action.slot.period + 1
+          );
+          if (action.type === "place" && action.previousSlot.status === "empty") {
+            const nextSlot = newTimetable.get(nextKey);
+            if (nextSlot) {
+              newTimetable.set(nextKey, {
+                ...nextSlot,
+                status: "empty",
+                subject: null,
+                teacherId: null,
+                slotType: null,
+                slashPairSubject: null,
+                slashPairTeacherId: null,
+              });
+            }
+          }
+        }
+      } else {
+        newTimetable.set(key, {
+          ...action.slot,
+          status: "empty",
+          subject: null,
+          teacherId: null,
+          slotType: null,
+          slashPairSubject: null,
+          slashPairTeacherId: null,
+        });
+      }
+
+      return newTimetable;
+    });
+
+    setActionIndex((prev) => prev - 1);
+
+    toast({
+      title: "Undone",
+      description: `Reverted ${action.type === "place" ? "placement" : "removal"} of ${action.slot.subject || "period"}`,
+    });
+  }, [actions, actionIndex, toast]);
+
+  const handleRedo = useCallback(() => {
+    if (actionIndex >= actions.length - 1) return;
+
+    const action = actions[actionIndex + 1];
+    if (!action) return;
+
+    setTimetable((prev) => {
+      const newTimetable = new Map(prev);
+      const key = getSlotKey(action.slot.day, action.slot.schoolClass, action.slot.period);
+
+      newTimetable.set(key, action.slot);
+
+      if (action.slot.slotType === "double") {
+        const nextKey = getSlotKey(
+          action.slot.day,
+          action.slot.schoolClass,
+          action.slot.period + 1
+        );
+        const nextSlot = newTimetable.get(nextKey);
+        if (nextSlot) {
+          newTimetable.set(nextKey, {
+            ...nextSlot,
+            status: action.slot.status,
+            subject: action.slot.subject,
+            teacherId: action.slot.teacherId,
+            slotType: "double",
+            slashPairSubject: action.slot.slashPairSubject,
+            slashPairTeacherId: action.slot.slashPairTeacherId,
+          });
+        }
+      }
+
+      return newTimetable;
+    });
+
+    setActionIndex((prev) => prev + 1);
+
+    toast({
+      title: "Redone",
+      description: `Re-applied ${action.type === "place" ? "placement" : "removal"} of ${action.slot.subject || "period"}`,
+    });
+  }, [actions, actionIndex, toast]);
+
+  const canUndo = actionIndex >= 0;
+  const canRedo = actionIndex < actions.length - 1;
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="p-4 border-b">
+        <StatsHeader timetable={timetable} teachers={teachers} />
+      </div>
+
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 overflow-auto p-4">
+          <TimetableGrid
+            timetable={timetable}
+            teachers={teachers}
+            selectedDay={selectedDay}
+            onDayChange={setSelectedDay}
+            onCellClick={handleCellClick}
+          />
+        </div>
+
+        <div className="w-80 border-l overflow-y-auto p-4 space-y-4 hidden lg:block">
+          <TeacherSidebar teachers={teachers} timetable={timetable} />
+        </div>
+
+        <div className="w-72 border-l overflow-y-auto p-4 space-y-4 hidden xl:block">
+          <SubjectTracker timetable={timetable} />
+          <ActionHistory
+            actions={actions}
+            currentIndex={actionIndex}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={canUndo}
+            canRedo={canRedo}
+          />
+        </div>
+      </div>
+
+      <PlacementDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        slot={selectedSlot}
+        teachers={teachers}
+        onPlace={handlePlace}
+        onRemove={handleRemove}
+        validation={validation}
+        onValidate={handleValidate}
+      />
+    </div>
+  );
+}
