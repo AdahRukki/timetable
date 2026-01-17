@@ -67,6 +67,7 @@ export interface IStorage {
   createSubject(userId: string, subject: InsertSubject): Promise<Subject>;
   updateSubject(userId: string, id: number, subject: Partial<InsertSubject>): Promise<Subject | undefined>;
   deleteSubject(userId: string, id: number): Promise<boolean>;
+  initializeSubjectsFromQuotas(userId: string): Promise<void>;
   
   // Initialize user data
   initializeUserData(userId: string): Promise<void>;
@@ -79,7 +80,7 @@ export class DatabaseStorage implements IStorage {
     const existingQuotas = await db.select().from(subjectQuotas).where(eq(subjectQuotas.userId, userId)).limit(1);
     if (existingQuotas.length > 0) return;
 
-    // Initialize default quotas
+    // Initialize default quotas and subjects
     for (const quota of DEFAULT_QUOTAS) {
       await db.insert(subjectQuotas).values({
         userId,
@@ -88,6 +89,17 @@ export class DatabaseStorage implements IStorage {
         ss1Quota: quota.ss1Quota,
         ss2ss3Quota: quota.ss2ss3Quota,
         isSlashSubject: quota.isSlashSubject ? 1 : 0,
+      });
+
+      // Also add to subjects table as default subjects
+      await db.insert(subjects).values({
+        userId,
+        name: quota.subject,
+        jssQuota: quota.jssQuota,
+        ss1Quota: quota.ss1Quota,
+        ss2ss3Quota: quota.ss2ss3Quota,
+        isSlashSubject: quota.isSlashSubject ? 1 : 0,
+        isDefault: 1,
       });
     }
 
@@ -526,6 +538,24 @@ export class DatabaseStorage implements IStorage {
     );
 
     return true;
+  }
+
+  async initializeSubjectsFromQuotas(userId: string): Promise<void> {
+    // Get all quotas for this user
+    const quotas = await this.getSubjectQuotas(userId);
+    
+    // Add each quota as a default subject
+    for (const quota of quotas) {
+      await db.insert(subjects).values({
+        userId,
+        name: quota.subject,
+        jssQuota: quota.jssQuota,
+        ss1Quota: quota.ss1Quota,
+        ss2ss3Quota: quota.ss2ss3Quota,
+        isSlashSubject: quota.isSlashSubject ? 1 : 0,
+        isDefault: 1,
+      }).onConflictDoNothing();
+    }
   }
 }
 

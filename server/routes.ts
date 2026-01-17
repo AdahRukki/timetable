@@ -657,7 +657,15 @@ export async function registerRoutes(
   app.get("/api/subjects", isAuthenticated, async (req, res) => {
     const userId = getUserId(req);
     await storage.initializeUserData(userId);
-    const subjectsList = await storage.getSubjects(userId);
+    
+    // Ensure subjects table is populated from quotas for existing users
+    let subjectsList = await storage.getSubjects(userId);
+    if (subjectsList.length === 0) {
+      // Populate subjects from existing quotas for existing users
+      await storage.initializeSubjectsFromQuotas(userId);
+      subjectsList = await storage.getSubjects(userId);
+    }
+    
     res.json(subjectsList);
   });
 
