@@ -74,6 +74,7 @@ PostgreSQL with Drizzle ORM. Tables:
 - `timetable_slots` - Individual period assignments (user-scoped)
 - `timetable_actions` - Action history for audit (user-scoped)
 - `subject_quotas` - Period allocations per subject (user-scoped)
+- `subjects` - Custom subject definitions with per-class quotas (user-scoped)
 
 ## Key Features
 
@@ -93,6 +94,14 @@ PostgreSQL with Drizzle ORM. Tables:
 5. **English-Security Rule**: Security cannot follow English immediately
 6. **Period Quotas**: Tracks weekly allocation per subject
 7. **Subject-Class Mapping**: Teachers can be assigned to teach specific subjects to specific classes only
+8. **Triple Period Prevention**: Maximum 2 consecutive periods of the same subject per class per day
+
+### Custom Subjects
+Users can create custom subjects in the Settings page with:
+- Subject name (must be unique)
+- Per-class-level period quotas (JSS, SS1, SS2/SS3)
+- Default subjects cannot be deleted
+- Custom subjects sync with subject quotas for timetable validation
 
 ### Slash Subjects (SS2/SS3 only)
 Paired subjects scheduled simultaneously:
