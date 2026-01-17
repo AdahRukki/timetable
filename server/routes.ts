@@ -1176,6 +1176,123 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
     }
   }
   
+  // ===== PHASE 5: Retry to fill remaining empty slots =====
+  // This phase aggressively tries to fill any remaining empty slots
+  // by relaxing the daily occurrence constraint and trying all available subjects
+  let retryCount = 0;
+  const maxRetries = 3;
+  
+  while (retryCount < maxRetries) {
+    retryCount++;
+    let filledInRetry = 0;
+    timetable = await storage.getTimetable(userId);
+    
+    // Find all empty slots
+    const emptySlots: Array<{ day: Day; schoolClass: SchoolClass; period: number }> = [];
+    for (const day of DAYS) {
+      const maxPeriods = PERIODS_PER_DAY[day];
+      for (const schoolClass of CLASSES) {
+        for (let period = 1; period <= maxPeriods; period++) {
+          const key = `${day}-${schoolClass}-${period}`;
+          if (lockedSlots.has(key)) continue;
+          const slot = timetable.get(key);
+          if (!slot || slot.status !== "occupied") {
+            emptySlots.push({ day, schoolClass, period });
+          }
+        }
+      }
+    }
+    
+    if (emptySlots.length === 0) break;
+    
+    // Shuffle empty slots for variety
+    for (let i = emptySlots.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [emptySlots[i], emptySlots[j]] = [emptySlots[j], emptySlots[i]];
+    }
+    
+    // Try to fill each empty slot
+    for (const { day, schoolClass, period } of emptySlots) {
+      const key = `${day}-${schoolClass}-${period}`;
+      
+      // Re-check if slot is still empty
+      const currentSlot = timetable.get(key);
+      if (currentSlot && currentSlot.status === "occupied") continue;
+      
+      const classQuotas = quotaTracker.get(schoolClass)!;
+      
+      // Get subjects with remaining quota for this class
+      const subjectsWithQuota: Array<{ subject: string; remaining: number }> = [];
+      for (const [subject, remaining] of Array.from(classQuotas.entries())) {
+        if (remaining > 0) {
+          // Skip slash subjects for SS2/SS3 in retry phase
+          if (usesSlashSubjects(schoolClass) && slashSubjectNames.has(subject)) continue;
+          subjectsWithQuota.push({ subject, remaining });
+        }
+      }
+      
+      // Sort by remaining quota (higher first)
+      subjectsWithQuota.sort((a, b) => b.remaining - a.remaining);
+      
+      let placed = false;
+      
+      for (const { subject } of subjectsWithQuota) {
+        if (placed) break;
+        
+        // Find teachers who can teach this subject to this class
+        const availableTeachers = teachers.filter(t =>
+          t.subjects.includes(subject) &&
+          t.classes.includes(schoolClass) &&
+          getTeacherSubjectClasses(t, subject).includes(schoolClass)
+        );
+        
+        for (const teacher of availableTeachers) {
+          if (placed) break;
+          
+          // Check teacher unavailability
+          const unavailable = teacher.unavailable[day] || [];
+          if (unavailable.includes(period)) continue;
+          
+          // Check teacher not teaching elsewhere
+          if (!isTeacherFreeAt(timetable, teacher.id, day, period)) continue;
+          
+          // Check fatigue
+          if (wouldExceedFatigue(timetable, teacher.id, day, [period], fatigueLimit)) continue;
+          
+          // Security rule
+          if (subject === "Security") {
+            const prevKey = `${day}-${schoolClass}-${period - 1}`;
+            const prevSlot = timetable.get(prevKey);
+            if (prevSlot && prevSlot.subject === "English") continue;
+          }
+          
+          // Place the period
+          const newSlot: TimetableSlot = {
+            day, period, schoolClass,
+            status: "occupied",
+            subject,
+            teacherId: teacher.id,
+            slotType: "single",
+            slashPairSubject: null,
+            slashPairTeacherId: null,
+          };
+          
+          await storage.setSlot(userId, newSlot);
+          timetable.set(key, newSlot);
+          
+          const currentQuota = classQuotas.get(subject) || 0;
+          classQuotas.set(subject, currentQuota - 1);
+          slotsPlaced++;
+          filledInRetry++;
+          placed = true;
+        }
+      }
+    }
+    
+    // If no slots were filled in this retry, stop trying
+    if (filledInRetry === 0) break;
+  }
+  
   // Summary
   const finalTimetable = await storage.getTimetable(userId);
   let totalEmpty = 0;
