@@ -6,6 +6,8 @@ import {
   type Day,
   type SchoolClass,
   type SubjectQuota,
+  type Subject,
+  type InsertSubject,
   DAYS,
   CLASSES,
   PERIODS_PER_DAY,
@@ -14,6 +16,7 @@ import {
   timetableSlots,
   timetableActions,
   subjectQuotas,
+  subjects,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
@@ -57,6 +60,13 @@ export interface IStorage {
   getSubjectQuotas(userId: string): Promise<SubjectQuota[]>;
   updateSubjectQuota(userId: string, subject: string, quota: Partial<SubjectQuota>): Promise<SubjectQuota | undefined>;
   resetSubjectQuotas(userId: string): Promise<SubjectQuota[]>;
+
+  // Subjects
+  getSubjects(userId: string): Promise<Subject[]>;
+  getSubject(userId: string, id: number): Promise<Subject | undefined>;
+  createSubject(userId: string, subject: InsertSubject): Promise<Subject>;
+  updateSubject(userId: string, id: number, subject: Partial<InsertSubject>): Promise<Subject | undefined>;
+  deleteSubject(userId: string, id: number): Promise<boolean>;
   
   // Initialize user data
   initializeUserData(userId: string): Promise<void>;
@@ -391,6 +401,131 @@ export class DatabaseStorage implements IStorage {
     }
 
     return DEFAULT_QUOTAS;
+  }
+
+  // Subjects
+  async getSubjects(userId: string): Promise<Subject[]> {
+    const rows = await db.select().from(subjects).where(eq(subjects.userId, userId));
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      jssQuota: row.jssQuota,
+      ss1Quota: row.ss1Quota,
+      ss2ss3Quota: row.ss2ss3Quota,
+      isSlashSubject: row.isSlashSubject === 1,
+      slashPairName: row.slashPairName,
+      isDefault: row.isDefault === 1,
+    }));
+  }
+
+  async getSubject(userId: string, id: number): Promise<Subject | undefined> {
+    const [row] = await db.select().from(subjects).where(
+      and(eq(subjects.userId, userId), eq(subjects.id, id))
+    );
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      name: row.name,
+      jssQuota: row.jssQuota,
+      ss1Quota: row.ss1Quota,
+      ss2ss3Quota: row.ss2ss3Quota,
+      isSlashSubject: row.isSlashSubject === 1,
+      slashPairName: row.slashPairName,
+      isDefault: row.isDefault === 1,
+    };
+  }
+
+  async createSubject(userId: string, subject: InsertSubject): Promise<Subject> {
+    const [inserted] = await db.insert(subjects).values({
+      userId,
+      name: subject.name,
+      jssQuota: subject.jssQuota,
+      ss1Quota: subject.ss1Quota,
+      ss2ss3Quota: subject.ss2ss3Quota,
+      isSlashSubject: subject.isSlashSubject ? 1 : 0,
+      slashPairName: subject.slashPairName,
+      isDefault: subject.isDefault ? 1 : 0,
+    }).returning({ id: subjects.id });
+
+    // Also add to subject_quotas table for consistency
+    await db.insert(subjectQuotas).values({
+      userId,
+      subject: subject.name,
+      jssQuota: subject.jssQuota,
+      ss1Quota: subject.ss1Quota,
+      ss2ss3Quota: subject.ss2ss3Quota,
+      isSlashSubject: subject.isSlashSubject ? 1 : 0,
+    }).onConflictDoNothing();
+
+    return {
+      id: inserted.id,
+      name: subject.name,
+      jssQuota: subject.jssQuota,
+      ss1Quota: subject.ss1Quota,
+      ss2ss3Quota: subject.ss2ss3Quota,
+      isSlashSubject: subject.isSlashSubject,
+      slashPairName: subject.slashPairName,
+      isDefault: subject.isDefault,
+    };
+  }
+
+  async updateSubject(userId: string, id: number, updates: Partial<InsertSubject>): Promise<Subject | undefined> {
+    const existing = await this.getSubject(userId, id);
+    if (!existing) return undefined;
+
+    const updateValues: any = {};
+    if (updates.name !== undefined) updateValues.name = updates.name;
+    if (updates.jssQuota !== undefined) updateValues.jssQuota = updates.jssQuota;
+    if (updates.ss1Quota !== undefined) updateValues.ss1Quota = updates.ss1Quota;
+    if (updates.ss2ss3Quota !== undefined) updateValues.ss2ss3Quota = updates.ss2ss3Quota;
+    if (updates.isSlashSubject !== undefined) updateValues.isSlashSubject = updates.isSlashSubject ? 1 : 0;
+    if (updates.slashPairName !== undefined) updateValues.slashPairName = updates.slashPairName;
+    if (updates.isDefault !== undefined) updateValues.isDefault = updates.isDefault ? 1 : 0;
+
+    await db.update(subjects).set(updateValues).where(
+      and(eq(subjects.userId, userId), eq(subjects.id, id))
+    );
+
+    // Also update subject_quotas table
+    const quotaUpdates: any = {};
+    if (updates.jssQuota !== undefined) quotaUpdates.jssQuota = updates.jssQuota;
+    if (updates.ss1Quota !== undefined) quotaUpdates.ss1Quota = updates.ss1Quota;
+    if (updates.ss2ss3Quota !== undefined) quotaUpdates.ss2ss3Quota = updates.ss2ss3Quota;
+    if (updates.isSlashSubject !== undefined) quotaUpdates.isSlashSubject = updates.isSlashSubject ? 1 : 0;
+
+    if (Object.keys(quotaUpdates).length > 0) {
+      await db.update(subjectQuotas).set(quotaUpdates).where(
+        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
+      );
+    }
+
+    // If name changed, update subject_quotas subject name
+    if (updates.name && updates.name !== existing.name) {
+      await db.update(subjectQuotas).set({ subject: updates.name }).where(
+        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
+      );
+    }
+
+    return { ...existing, ...updates };
+  }
+
+  async deleteSubject(userId: string, id: number): Promise<boolean> {
+    const existing = await this.getSubject(userId, id);
+    if (!existing) return false;
+    
+    // Don't allow deleting default subjects
+    if (existing.isDefault) return false;
+
+    await db.delete(subjects).where(
+      and(eq(subjects.userId, userId), eq(subjects.id, id))
+    );
+
+    // Also delete from subject_quotas
+    await db.delete(subjectQuotas).where(
+      and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
+    );
+
+    return true;
   }
 }
 

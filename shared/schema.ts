@@ -149,6 +149,19 @@ export const subjectQuotas = pgTable("subject_quotas", {
   isSlashSubject: integer("is_slash_subject").notNull().default(0),
 });
 
+// Custom subjects table
+export const subjects = pgTable("subjects", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  name: text("name").notNull(),
+  jssQuota: integer("jss_quota").notNull().default(0),
+  ss1Quota: integer("ss1_quota").notNull().default(0),
+  ss2ss3Quota: integer("ss2ss3_quota").notNull().default(0),
+  isSlashSubject: integer("is_slash_subject").notNull().default(0),
+  slashPairName: text("slash_pair_name"),
+  isDefault: integer("is_default").notNull().default(0),
+});
+
 // ===== ZOD SCHEMAS =====
 
 // Teacher schema
@@ -275,6 +288,23 @@ export type SubjectQuota = z.infer<typeof subjectQuotaSchema>;
 
 export const insertSubjectQuotaSchema = subjectQuotaSchema;
 export type InsertSubjectQuota = z.infer<typeof insertSubjectQuotaSchema>;
+
+// Subject schema (for custom subjects)
+export const subjectSchema = z.object({
+  id: z.number(),
+  name: z.string().min(1, "Subject name is required"),
+  jssQuota: z.number().min(0).max(10).default(0),
+  ss1Quota: z.number().min(0).max(10).default(0),
+  ss2ss3Quota: z.number().min(0).max(10).default(0),
+  isSlashSubject: z.boolean().default(false),
+  slashPairName: z.string().nullable().default(null),
+  isDefault: z.boolean().default(false),
+});
+
+export type Subject = z.infer<typeof subjectSchema>;
+
+export const insertSubjectSchema = subjectSchema.omit({ id: true });
+export type InsertSubject = z.infer<typeof insertSubjectSchema>;
 
 // All possible subjects in the system
 export const ALL_SUBJECTS = [
