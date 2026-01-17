@@ -820,6 +820,71 @@ export async function registerRoutes(
     }
   });
 
+  // ===== Timetable Sharing =====
+
+  // Create a shareable link
+  app.post("/api/timetable/share", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const { title } = req.body;
+      
+      const timetable = await storage.getTimetable(userId);
+      const teachers = await storage.getTeachers(userId);
+      
+      const timetableData = Array.from(timetable.values()).filter(slot => slot.status === "occupied");
+      
+      const shared = await storage.createSharedTimetable(userId, timetableData, teachers, title);
+      res.json({ shareId: shared.id, shareUrl: `/shared/${shared.id}` });
+    } catch (error) {
+      console.error("Share error:", error);
+      res.status(500).json({ error: "Failed to create shareable link" });
+    }
+  });
+
+  // Get a shared timetable (public - no auth required)
+  app.get("/api/shared/:shareId", async (req, res) => {
+    try {
+      const { shareId } = req.params;
+      const shared = await storage.getSharedTimetable(shareId);
+      
+      if (!shared) {
+        res.status(404).json({ error: "Shared timetable not found" });
+        return;
+      }
+      
+      res.json(shared);
+    } catch (error) {
+      console.error("Get shared error:", error);
+      res.status(500).json({ error: "Failed to get shared timetable" });
+    }
+  });
+
+  // Get user's shared timetables
+  app.get("/api/timetable/shares", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const shares = await storage.getUserSharedTimetables(userId);
+      res.json(shares);
+    } catch (error) {
+      console.error("Get shares error:", error);
+      res.status(500).json({ error: "Failed to get shared timetables" });
+    }
+  });
+
+  // Delete a shared timetable
+  app.delete("/api/timetable/share/:shareId", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const { shareId } = req.params;
+      
+      await storage.deleteSharedTimetable(userId, shareId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Delete share error:", error);
+      res.status(500).json({ error: "Failed to delete shared timetable" });
+    }
+  });
+
   return httpServer;
 }
 

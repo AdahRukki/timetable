@@ -9,6 +9,7 @@ import {
   type Subject,
   type InsertSubject,
   type UserSettings,
+  type SharedTimetable,
   DAYS,
   CLASSES,
   PERIODS_PER_DAY,
@@ -19,6 +20,7 @@ import {
   subjectQuotas,
   subjects,
   userSettings,
+  sharedTimetables,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
@@ -74,6 +76,12 @@ export interface IStorage {
   // User settings
   getUserSettings(userId: string): Promise<UserSettings>;
   updateUserSettings(userId: string, settings: Partial<UserSettings>): Promise<UserSettings>;
+  
+  // Shared timetables
+  createSharedTimetable(userId: string, timetableData: TimetableSlot[], teacherData: Teacher[], title?: string): Promise<SharedTimetable>;
+  getSharedTimetable(shareId: string): Promise<SharedTimetable | undefined>;
+  deleteSharedTimetable(userId: string, shareId: string): Promise<boolean>;
+  getUserSharedTimetables(userId: string): Promise<SharedTimetable[]>;
   
   // Initialize user data
   initializeUserData(userId: string): Promise<void>;
@@ -590,6 +598,67 @@ export class DatabaseStorage implements IStorage {
     const newSettings = { ...existing, ...settings };
     await db.update(userSettings).set({ fatigueLimit: newSettings.fatigueLimit }).where(eq(userSettings.userId, userId));
     return newSettings;
+  }
+
+  async createSharedTimetable(userId: string, timetableData: TimetableSlot[], teacherData: Teacher[], title?: string): Promise<SharedTimetable> {
+    const id = randomUUID().substring(0, 8);
+    const createdAt = Date.now();
+    
+    await db.insert(sharedTimetables).values({
+      id,
+      userId,
+      createdAt,
+      expiresAt: null,
+      timetableData: timetableData as any,
+      teacherData: teacherData as any,
+      title: title || null,
+    });
+
+    return {
+      id,
+      userId,
+      createdAt,
+      expiresAt: null,
+      timetableData,
+      teacherData,
+      title: title || null,
+    };
+  }
+
+  async getSharedTimetable(shareId: string): Promise<SharedTimetable | undefined> {
+    const results = await db.select().from(sharedTimetables).where(eq(sharedTimetables.id, shareId));
+    if (results.length === 0) return undefined;
+
+    const row = results[0];
+    return {
+      id: row.id,
+      userId: row.userId,
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+      timetableData: row.timetableData as TimetableSlot[],
+      teacherData: row.teacherData as Teacher[],
+      title: row.title,
+    };
+  }
+
+  async deleteSharedTimetable(userId: string, shareId: string): Promise<boolean> {
+    const result = await db.delete(sharedTimetables).where(
+      and(eq(sharedTimetables.id, shareId), eq(sharedTimetables.userId, userId))
+    );
+    return true;
+  }
+
+  async getUserSharedTimetables(userId: string): Promise<SharedTimetable[]> {
+    const results = await db.select().from(sharedTimetables).where(eq(sharedTimetables.userId, userId));
+    return results.map(row => ({
+      id: row.id,
+      userId: row.userId,
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+      timetableData: row.timetableData as TimetableSlot[],
+      teacherData: row.teacherData as Teacher[],
+      title: row.title,
+    }));
   }
 }
 

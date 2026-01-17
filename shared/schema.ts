@@ -175,6 +175,17 @@ export const userSettings = pgTable("user_settings", {
   fatigueLimit: integer("fatigue_limit").notNull().default(5),
 });
 
+// Shared timetables table
+export const sharedTimetables = pgTable("shared_timetables", {
+  id: varchar("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+  expiresAt: integer("expires_at"),
+  timetableData: jsonb("timetable_data").notNull(),
+  teacherData: jsonb("teacher_data").notNull(),
+  title: text("title"),
+});
+
 // ===== ZOD SCHEMAS =====
 
 // Teacher schema
@@ -379,3 +390,16 @@ export type UserSettings = z.infer<typeof userSettingsSchema>;
 
 export const insertUserSettingsSchema = userSettingsSchema;
 export type InsertUserSettings = z.infer<typeof insertUserSettingsSchema>;
+
+// Shared timetable schema
+export const sharedTimetableSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  createdAt: z.number(),
+  expiresAt: z.number().nullable(),
+  timetableData: z.array(timetableSlotSchema),
+  teacherData: z.array(teacherSchema),
+  title: z.string().nullable(),
+});
+
+export type SharedTimetable = z.infer<typeof sharedTimetableSchema>;

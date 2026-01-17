@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   type Day,
   type TimetableSlot,
@@ -40,6 +40,7 @@ export default function Home() {
 
   const [actions, setActions] = useState<TimetableAction[]>([]);
   const [actionIndex, setActionIndex] = useState(-1);
+  const gridRef = useRef<HTMLDivElement>(null);
 
   const { data: teachers = [] } = useQuery<Teacher[]>({
     queryKey: ["/api/teachers"],
@@ -417,18 +418,22 @@ export default function Home() {
           teachers={teachers}
           onAutoGenerate={() => setAutoGenDialogOpen(true)}
           isGenerating={autoGenerateMutation.isPending}
+          selectedDay={selectedDay}
+          gridRef={gridRef}
         />
       </div>
 
       <div className="flex flex-1 min-h-0">
         <div className="flex-1 overflow-auto p-4">
-          <TimetableGrid
-            timetable={timetable}
-            teachers={teachers}
-            selectedDay={selectedDay}
-            onDayChange={setSelectedDay}
-            onCellClick={handleCellClick}
-          />
+          <div ref={gridRef}>
+            <TimetableGrid
+              timetable={timetable}
+              teachers={teachers}
+              selectedDay={selectedDay}
+              onDayChange={setSelectedDay}
+              onCellClick={handleCellClick}
+            />
+          </div>
         </div>
 
         <div className="w-80 border-l overflow-y-auto p-4 space-y-4 hidden lg:block">

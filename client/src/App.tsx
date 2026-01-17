@@ -17,6 +17,7 @@ import DashboardPage from "@/pages/dashboard";
 import SettingsPage from "@/pages/settings";
 import HelpPage from "@/pages/help";
 import LandingPage from "@/pages/landing";
+import SharedTimetablePage from "@/pages/shared-timetable";
 
 function Router() {
   return (
@@ -26,6 +27,15 @@ function Router() {
       <Route path="/dashboard" component={DashboardPage} />
       <Route path="/settings" component={SettingsPage} />
       <Route path="/help" component={HelpPage} />
+      <Route component={NotFound} />
+    </Switch>
+  );
+}
+
+function PublicRouter() {
+  return (
+    <Switch>
+      <Route path="/shared/:shareId" component={SharedTimetablePage} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -107,6 +117,11 @@ function LoadingScreen() {
 
 function AppContent() {
   const { isLoading, isAuthenticated } = useAuth();
+
+  // Check if we're on a public shared route
+  if (typeof window !== "undefined" && window.location.pathname.startsWith("/shared/")) {
+    return <PublicRouter />;
+  }
 
   if (isLoading) {
     return <LoadingScreen />;
