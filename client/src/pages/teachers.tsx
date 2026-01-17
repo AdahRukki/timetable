@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { type Teacher, DAYS, CLASSES, type Day, type SchoolClass, PERIODS_PER_DAY, getTeacherSubjectClasses } from "@shared/schema";
+import { type Teacher, type Subject, DAYS, CLASSES, type Day, type SchoolClass, PERIODS_PER_DAY, getTeacherSubjectClasses } from "@shared/schema";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,13 +22,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Users, Plus, Search, BookOpen, GraduationCap, Calendar, Edit, Trash2, X, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-const ALL_SUBJECTS = [
-  "Maths", "English", "Basic Science", "Physics", "Chemistry", "Biology",
-  "Social Studies", "Civic", "Basic Technology", "Home Economics",
-  "Computer", "PHE", "CRS", "Agric", "Security", "Economics",
-  "Marketing", "Government", "Literature",
-];
-
 export default function TeachersPage() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
@@ -45,6 +38,14 @@ export default function TeachersPage() {
   const { data: teachers = [], isLoading } = useQuery<Teacher[]>({
     queryKey: ["/api/teachers"],
   });
+
+  const { data: subjects = [] } = useQuery<Subject[]>({
+    queryKey: ["/api/subjects"],
+  });
+
+  const allSubjects = useMemo(() => {
+    return subjects.map(s => s.name).sort();
+  }, [subjects]);
 
   const createMutation = useMutation({
     mutationFn: async (data: { name: string; subjects: string[]; classes: SchoolClass[]; subjectClasses?: Record<string, SchoolClass[]>; unavailable: Record<string, number[]>; color: string }) => {
@@ -382,7 +383,7 @@ export default function TeachersPage() {
                 <p className="text-xs text-muted-foreground">Select subjects and which classes each subject applies to</p>
                 <ScrollArea className="h-48 border rounded-md p-2">
                   <div className="space-y-3">
-                    {ALL_SUBJECTS.map((subject) => {
+                    {allSubjects.map((subject) => {
                       const isSelected = formSubjects.includes(subject);
                       const subjectClassList = formSubjectClasses[subject] || [];
                       return (
