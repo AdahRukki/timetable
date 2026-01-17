@@ -4,6 +4,10 @@ import {
   CLASSES,
   BREAK_AFTER_P4,
   BREAK_AFTER_P7,
+  MAX_FREE_PERIODS_PER_WEEK,
+  MAX_FREE_PERIODS_PER_DAY,
+  TOTAL_PERIODS_PER_WEEK,
+  MIN_TEACHING_PERIODS_PER_WEEK,
   getSubjectsForClass,
   usesSlashSubjects,
   SLASH_SUBJECTS,
@@ -114,6 +118,94 @@ export function getSlot(
 ): TimetableSlot | undefined {
   return timetable.get(getSlotKey(day, schoolClass, period));
 }
+
+// Free period tracking types
+export interface FreePeriodStats {
+  weeklyTotal: number;
+  dailyCounts: Record<Day, number>;
+  isValid: boolean;
+  weeklyExceeded: boolean;
+  dailyExceededDays: Day[];
+}
+
+// Calculate free periods for a class
+export function getFreePeriodStats(
+  timetable: Map<string, TimetableSlot>,
+  schoolClass: SchoolClass
+): FreePeriodStats {
+  const dailyCounts: Record<Day, number> = {
+    Monday: 0,
+    Tuesday: 0,
+    Wednesday: 0,
+    Thursday: 0,
+    Friday: 0,
+  };
+  
+  let weeklyTotal = 0;
+  
+  for (const day of DAYS) {
+    const periods = getPeriodsForDay(day);
+    for (const period of periods) {
+      const slot = getSlot(timetable, day, schoolClass, period);
+      if (!slot || slot.status === "empty") {
+        dailyCounts[day]++;
+        weeklyTotal++;
+      }
+    }
+  }
+  
+  const weeklyExceeded = weeklyTotal > MAX_FREE_PERIODS_PER_WEEK;
+  const dailyExceededDays = DAYS.filter(day => dailyCounts[day] > MAX_FREE_PERIODS_PER_DAY);
+  const isValid = !weeklyExceeded && dailyExceededDays.length === 0;
+  
+  return {
+    weeklyTotal,
+    dailyCounts,
+    isValid,
+    weeklyExceeded,
+    dailyExceededDays,
+  };
+}
+
+// Calculate filled periods for a class
+export function getFilledPeriodsCount(
+  timetable: Map<string, TimetableSlot>,
+  schoolClass: SchoolClass
+): number {
+  let count = 0;
+  for (const day of DAYS) {
+    const periods = getPeriodsForDay(day);
+    for (const period of periods) {
+      const slot = getSlot(timetable, day, schoolClass, period);
+      if (slot && slot.status !== "empty") {
+        count++;
+      }
+    }
+  }
+  return count;
+}
+
+// Check if adding a free period would violate limits
+export function canAddFreePeriod(
+  timetable: Map<string, TimetableSlot>,
+  schoolClass: SchoolClass,
+  day: Day
+): { allowed: boolean; reason?: string } {
+  const stats = getFreePeriodStats(timetable, schoolClass);
+  
+  if (stats.weeklyTotal >= MAX_FREE_PERIODS_PER_WEEK) {
+    return { allowed: false, reason: `${schoolClass} already has ${MAX_FREE_PERIODS_PER_WEEK} free periods this week (maximum allowed)` };
+  }
+  
+  if (stats.dailyCounts[day] >= MAX_FREE_PERIODS_PER_DAY) {
+    return { allowed: false, reason: `${schoolClass} already has ${MAX_FREE_PERIODS_PER_DAY} free periods on ${day} (maximum allowed)` };
+  }
+  
+  return { allowed: true };
+}
+
+// Re-export constants for UI components
+export { MAX_FREE_PERIODS_PER_WEEK, MAX_FREE_PERIODS_PER_DAY, TOTAL_PERIODS_PER_WEEK, MIN_TEACHING_PERIODS_PER_WEEK };
 
 // Check if teacher is available (not teaching another class at same time)
 export function isTeacherAvailable(
