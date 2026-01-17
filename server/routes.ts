@@ -1,10 +1,10 @@
-import type { Express } from "express";
+import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import {
   insertTeacherSchema,
   placementRequestSchema,
-  subjectQuotaSchema,
   type Day,
   type SchoolClass,
   type SubjectQuota,
@@ -24,6 +24,11 @@ import {
   type ValidationError,
 } from "@shared/schema";
 import { z } from "zod";
+
+// Get user ID from authenticated request
+function getUserId(req: Request): string {
+  return (req.user as any)?.claims?.sub;
+}
 
 function isTeacherAvailable(
   timetable: Map<string, TimetableSlot>,
@@ -100,6 +105,7 @@ function getConsecutiveTeachingCount(
 }
 
 async function validatePlacement(
+  userId: string,
   day: Day,
   period: number,
   schoolClass: SchoolClass,
@@ -110,8 +116,8 @@ async function validatePlacement(
   slashPairTeacherId?: string
 ): Promise<ValidationResult> {
   const errors: ValidationError[] = [];
-  const teachers = await storage.getTeachers();
-  const timetable = await storage.getTimetable();
+  const teachers = await storage.getTeachers(userId);
+  const timetable = await storage.getTimetable(userId);
   
   const teacher = teachers.find((t) => t.id === teacherId);
   if (!teacher) {
@@ -136,9 +142,9 @@ async function validatePlacement(
     });
   }
   
-  // Check subject-class mapping if present
-  const allowedClassesForSubject = getTeacherSubjectClasses(teacher, subject);
-  if (!allowedClassesForSubject.includes(schoolClass)) {
+  // Check subject-class mapping
+  const allowedClasses = getTeacherSubjectClasses(teacher, subject);
+  if (!allowedClasses.includes(schoolClass)) {
     errors.push({
       code: "TEACHER_SUBJECT_CLASS_MISMATCH",
       message: `${teacher.name} is not assigned to teach ${subject} to ${schoolClass}`,
@@ -146,14 +152,9 @@ async function validatePlacement(
     });
   }
   
-  const key = `${day}-${schoolClass}-${period}`;
-  const slot = timetable.get(key);
-  if (slot && slot.status === "occupied") {
-    errors.push({ code: "SLOT_OCCUPIED", message: `Period ${period} is already occupied`, severity: "error" });
-  }
-  
-  const unavailablePeriods = teacher.unavailable[day] || [];
-  if (unavailablePeriods.includes(period)) {
+  // Validate teacher availability
+  const unavailable = teacher.unavailable[day] || [];
+  if (unavailable.includes(period)) {
     errors.push({
       code: "TEACHER_UNAVAILABLE",
       message: `${teacher.name} is unavailable during period ${period} on ${day}`,
@@ -161,6 +162,16 @@ async function validatePlacement(
     });
   }
   
+  // Check double period availability
+  if (slotType === "double" && unavailable.includes(period + 1)) {
+    errors.push({
+      code: "TEACHER_UNAVAILABLE",
+      message: `${teacher.name} is unavailable during period ${period + 1} on ${day}`,
+      severity: "error",
+    });
+  }
+  
+  // Check for clashes
   if (!isTeacherAvailable(timetable, teacher, day, period)) {
     errors.push({
       code: "TEACHER_CLASH",
@@ -169,37 +180,61 @@ async function validatePlacement(
     });
   }
   
-  // Double period validation
+  // Check double period clash
+  if (slotType === "double" && !isTeacherAvailable(timetable, teacher, day, period + 1)) {
+    errors.push({
+      code: "TEACHER_CLASH",
+      message: `${teacher.name} is already teaching another class during period ${period + 1}`,
+      severity: "error",
+    });
+  }
+  
+  // Check if slot is already occupied
+  const key = `${day}-${schoolClass}-${period}`;
+  const existingSlot = timetable.get(key);
+  if (existingSlot && existingSlot.status === "occupied") {
+    errors.push({
+      code: "SLOT_OCCUPIED",
+      message: `Period ${period} on ${day} for ${schoolClass} is already scheduled`,
+      severity: "error",
+    });
+  }
+  
+  // Double period checks
   if (slotType === "double") {
     const maxPeriods = PERIODS_PER_DAY[day];
-    if (period >= maxPeriods) {
+    if (period + 1 > maxPeriods) {
       errors.push({
         code: "INVALID_DOUBLE",
-        message: "Cannot start a double period at the last period",
+        message: "Double period would exceed the day's schedule",
         severity: "error",
       });
     }
-    if (period >= 8) {
-      errors.push({ code: "NO_DOUBLE_P8_P9", message: "Double periods not allowed in P8 or P9", severity: "error" });
-    }
+    
     if (wouldCrossBreak(day, period)) {
-      errors.push({ code: "DOUBLE_CROSSES_BREAK", message: "Double period cannot cross a break", severity: "error" });
+      errors.push({
+        code: "BREAK_VIOLATION",
+        message: "Double period cannot cross break time",
+        severity: "error",
+      });
     }
     
+    // Check if next slot is occupied
     const nextKey = `${day}-${schoolClass}-${period + 1}`;
     const nextSlot = timetable.get(nextKey);
     if (nextSlot && nextSlot.status === "occupied") {
       errors.push({
-        code: "NEXT_SLOT_OCCUPIED",
-        message: `Period ${period + 1} is already occupied`,
+        code: "SLOT_OCCUPIED",
+        message: `Period ${period + 1} on ${day} for ${schoolClass} is already scheduled`,
         severity: "error",
       });
     }
     
-    if (!isTeacherAvailable(timetable, teacher, day, period + 1)) {
+    // No doubles in P8/P9
+    if (period >= 8) {
       errors.push({
-        code: "TEACHER_CLASH_DOUBLE",
-        message: `${teacher.name} not available for period ${period + 1}`,
+        code: "LATE_DOUBLE",
+        message: "Double periods are not allowed in P8/P9",
         severity: "error",
       });
     }
@@ -207,33 +242,12 @@ async function validatePlacement(
   
   // Slash subject validation
   if (slotType === "slash") {
-    // Slash subjects only allowed for SS2 and SS3
     if (!usesSlashSubjects(schoolClass)) {
       errors.push({
-        code: "SLASH_NOT_ALLOWED",
-        message: "Slash subjects are only allowed for SS2 and SS3 classes",
+        code: "INVALID_SLASH",
+        message: "Slash subjects are only allowed for SS2 and SS3",
         severity: "error",
       });
-    }
-    
-    // Validate subject is part of a valid slash pair
-    const slashPair = SLASH_SUBJECTS.find((s) => s.pair.includes(subject));
-    if (!slashPair) {
-      errors.push({
-        code: "INVALID_SLASH_SUBJECT",
-        message: `${subject} is not a valid slash subject`,
-        severity: "error",
-      });
-    } else {
-      // Validate slash pair subject is correct
-      const expectedPairSubject = slashPair.pair.find((s) => s !== subject);
-      if (slashPairSubject !== expectedPairSubject) {
-        errors.push({
-          code: "INVALID_SLASH_PAIR",
-          message: `${subject} must be paired with ${expectedPairSubject}`,
-          severity: "error",
-        });
-      }
     }
     
     // Validate slash pair teacher is provided
@@ -348,17 +362,24 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // Setup authentication
+  await setupAuth(app);
+  registerAuthRoutes(app);
+
   // Get all teachers
-  app.get("/api/teachers", async (req, res) => {
-    const teachers = await storage.getTeachers();
+  app.get("/api/teachers", isAuthenticated, async (req, res) => {
+    const userId = getUserId(req);
+    await storage.initializeUserData(userId);
+    const teachers = await storage.getTeachers(userId);
     res.json(teachers);
   });
 
   // Create teacher
-  app.post("/api/teachers", async (req, res) => {
+  app.post("/api/teachers", isAuthenticated, async (req, res) => {
     try {
+      const userId = getUserId(req);
       const data = insertTeacherSchema.parse(req.body);
-      const teacher = await storage.createTeacher(data);
+      const teacher = await storage.createTeacher(userId, data);
       res.status(201).json(teacher);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -370,11 +391,12 @@ export async function registerRoutes(
   });
 
   // Update teacher
-  app.patch("/api/teachers/:id", async (req, res) => {
+  app.patch("/api/teachers/:id", isAuthenticated, async (req, res) => {
     try {
+      const userId = getUserId(req);
       const { id } = req.params;
       const updates = req.body;
-      const teacher = await storage.updateTeacher(id, updates);
+      const teacher = await storage.updateTeacher(userId, id, updates);
       if (teacher) {
         res.json(teacher);
       } else {
@@ -386,9 +408,10 @@ export async function registerRoutes(
   });
 
   // Delete teacher
-  app.delete("/api/teachers/:id", async (req, res) => {
+  app.delete("/api/teachers/:id", isAuthenticated, async (req, res) => {
+    const userId = getUserId(req);
     const { id } = req.params;
-    const deleted = await storage.deleteTeacher(id);
+    const deleted = await storage.deleteTeacher(userId, id);
     if (deleted) {
       res.json({ success: true });
     } else {
@@ -397,17 +420,21 @@ export async function registerRoutes(
   });
 
   // Get timetable
-  app.get("/api/timetable", async (req, res) => {
-    const timetable = await storage.getTimetable();
+  app.get("/api/timetable", isAuthenticated, async (req, res) => {
+    const userId = getUserId(req);
+    await storage.initializeUserData(userId);
+    const timetable = await storage.getTimetable(userId);
     const slots = Array.from(timetable.values());
     res.json(slots);
   });
 
   // Validate placement
-  app.post("/api/timetable/validate", async (req, res) => {
+  app.post("/api/timetable/validate", isAuthenticated, async (req, res) => {
     try {
+      const userId = getUserId(req);
       const data = placementRequestSchema.parse(req.body);
       const result = await validatePlacement(
+        userId,
         data.day,
         data.period,
         data.schoolClass,
@@ -428,11 +455,13 @@ export async function registerRoutes(
   });
 
   // Place subject
-  app.post("/api/timetable/place", async (req, res) => {
+  app.post("/api/timetable/place", isAuthenticated, async (req, res) => {
     try {
+      const userId = getUserId(req);
       const data = placementRequestSchema.parse(req.body);
       
       const validation = await validatePlacement(
+        userId,
         data.day,
         data.period,
         data.schoolClass,
@@ -460,17 +489,17 @@ export async function registerRoutes(
         slashPairTeacherId: data.slashPairTeacherId || null,
       };
       
-      await storage.setSlot(slot);
+      await storage.setSlot(userId, slot);
       
       if (data.slotType === "double") {
         const nextSlot: TimetableSlot = {
           ...slot,
           period: data.period + 1,
         };
-        await storage.setSlot(nextSlot);
+        await storage.setSlot(userId, nextSlot);
       }
       
-      await storage.addAction({
+      await storage.addAction(userId, {
         type: "place",
         timestamp: Date.now(),
         slot,
@@ -488,7 +517,8 @@ export async function registerRoutes(
   });
 
   // Remove subject
-  app.delete("/api/timetable/:day/:class/:period", async (req, res) => {
+  app.delete("/api/timetable/:day/:class/:period", isAuthenticated, async (req, res) => {
+    const userId = getUserId(req);
     const { day, class: schoolClass, period } = req.params;
     
     if (!DAYS.includes(day as Day) || !CLASSES.includes(schoolClass as SchoolClass)) {
@@ -497,6 +527,7 @@ export async function registerRoutes(
     }
     
     const cleared = await storage.clearSlot(
+      userId,
       day as Day,
       schoolClass as SchoolClass,
       parseInt(period)
@@ -510,22 +541,26 @@ export async function registerRoutes(
   });
 
   // Get actions history
-  app.get("/api/actions", async (req, res) => {
-    const actions = await storage.getActions();
+  app.get("/api/actions", isAuthenticated, async (req, res) => {
+    const userId = getUserId(req);
+    const actions = await storage.getActions(userId);
     res.json(actions);
   });
 
   // ===== Subject Quotas =====
   
   // Get all subject quotas
-  app.get("/api/quotas", async (req, res) => {
-    const quotas = await storage.getSubjectQuotas();
+  app.get("/api/quotas", isAuthenticated, async (req, res) => {
+    const userId = getUserId(req);
+    await storage.initializeUserData(userId);
+    const quotas = await storage.getSubjectQuotas(userId);
     res.json(quotas);
   });
 
   // Update subject quota
-  app.patch("/api/quotas/:subject", async (req, res) => {
+  app.patch("/api/quotas/:subject", isAuthenticated, async (req, res) => {
     try {
+      const userId = getUserId(req);
       const { subject } = req.params;
       
       const partialQuotaSchema = z.object({
@@ -536,7 +571,7 @@ export async function registerRoutes(
       });
       
       const updates = partialQuotaSchema.parse(req.body);
-      const quota = await storage.updateSubjectQuota(decodeURIComponent(subject), updates);
+      const quota = await storage.updateSubjectQuota(userId, decodeURIComponent(subject), updates);
       if (quota) {
         res.json(quota);
       } else {
@@ -552,18 +587,20 @@ export async function registerRoutes(
   });
 
   // Reset quotas to defaults
-  app.post("/api/quotas/reset", async (req, res) => {
-    const quotas = await storage.resetSubjectQuotas();
+  app.post("/api/quotas/reset", isAuthenticated, async (req, res) => {
+    const userId = getUserId(req);
+    const quotas = await storage.resetSubjectQuotas(userId);
     res.json(quotas);
   });
 
   // ===== Auto-Generation =====
   
-  app.post("/api/timetable/autogenerate", async (req, res) => {
+  app.post("/api/timetable/autogenerate", isAuthenticated, async (req, res) => {
     try {
+      const userId = getUserId(req);
       const { lockExisting = false, clearFirst = true } = req.body;
       
-      const result = await autoGenerateTimetable(lockExisting, clearFirst);
+      const result = await autoGenerateTimetable(userId, lockExisting, clearFirst);
       res.json(result);
     } catch (error) {
       console.error("Auto-generate error:", error);
@@ -581,20 +618,19 @@ export async function registerRoutes(
 
 // ===== AUTO-GENERATION ALGORITHM =====
 
-async function autoGenerateTimetable(lockExisting: boolean, clearFirst: boolean): Promise<AutoGenerateResult> {
+async function autoGenerateTimetable(userId: string, lockExisting: boolean, clearFirst: boolean): Promise<AutoGenerateResult> {
   const warnings: string[] = [];
   const errors: string[] = [];
   let slotsPlaced = 0;
   
-  const teachers = await storage.getTeachers();
-  const quotas = await storage.getSubjectQuotas();
+  const teachers = await storage.getTeachers(userId);
+  const quotas = await storage.getSubjectQuotas(userId);
   
   // Get existing slots to optionally preserve
-  const existingTimetable = await storage.getTimetable();
+  const existingTimetable = await storage.getTimetable(userId);
   const lockedSlots = new Set<string>();
   
   if (lockExisting) {
-    // Mark occupied slots as locked
     Array.from(existingTimetable.entries()).forEach(([key, slot]) => {
       if (slot.status === "occupied") {
         lockedSlots.add(key);
@@ -604,19 +640,18 @@ async function autoGenerateTimetable(lockExisting: boolean, clearFirst: boolean)
   
   // Clear timetable if requested (but preserve locked slots)
   if (clearFirst && !lockExisting) {
-    await storage.clearAllSlots();
+    await storage.clearAllSlots(userId);
   } else if (clearFirst && lockExisting) {
-    // Clear only non-locked slots
     for (const entry of Array.from(existingTimetable.entries())) {
       const [key, slot] = entry;
       if (!lockedSlots.has(key) && slot.status === "occupied") {
-        await storage.clearSlot(slot.day, slot.schoolClass, slot.period);
+        await storage.clearSlot(userId, slot.day, slot.schoolClass, slot.period);
       }
     }
   }
   
   // Get fresh timetable state
-  let timetable = await storage.getTimetable();
+  let timetable = await storage.getTimetable(userId);
   
   // Build quota tracking per class
   const quotaTracker: Map<string, Map<string, number>> = new Map();
@@ -640,7 +675,6 @@ async function autoGenerateTimetable(lockExisting: boolean, clearFirst: boolean)
         if (remaining > 0) {
           classQuotas.set(slot.subject, remaining - 1);
         }
-        // Also count slash pair subject
         if (slot.slashPairSubject) {
           const pairRemaining = classQuotas.get(slot.slashPairSubject) || 0;
           if (pairRemaining > 0) {
@@ -666,13 +700,13 @@ async function autoGenerateTimetable(lockExisting: boolean, clearFirst: boolean)
         
         if (toSchedule > 0) {
           const placed = await scheduleSlashSubject(
-            schoolClass, subj1, subj2, toSchedule,
+            userId, schoolClass, subj1, subj2, toSchedule,
             teachers, timetable, lockedSlots, warnings
           );
           slotsPlaced += placed;
           classQuotas.set(subj1, quota1 - placed);
           classQuotas.set(subj2, quota2 - placed);
-          timetable = await storage.getTimetable();
+          timetable = await storage.getTimetable(userId);
         }
       }
     }
@@ -680,23 +714,23 @@ async function autoGenerateTimetable(lockExisting: boolean, clearFirst: boolean)
     // Schedule remaining subjects
     const subjects = Array.from(classQuotas.entries())
       .filter(([_, remaining]) => remaining > 0)
-      .sort((a, b) => b[1] - a[1]); // Priority: subjects needing more periods
+      .sort((a, b) => b[1] - a[1]);
     
     for (const [subject, remaining] of subjects) {
       const placed = await scheduleSingleSubject(
-        schoolClass, subject, remaining,
+        userId, schoolClass, subject, remaining,
         teachers, timetable, lockedSlots, warnings
       );
       slotsPlaced += placed;
       if (placed < remaining) {
         warnings.push(`${schoolClass}: Could only place ${placed}/${remaining} periods for ${subject}`);
       }
-      timetable = await storage.getTimetable();
+      timetable = await storage.getTimetable(userId);
     }
   }
   
   // Summary
-  const finalTimetable = await storage.getTimetable();
+  const finalTimetable = await storage.getTimetable(userId);
   let totalEmpty = 0;
   Array.from(finalTimetable.values()).forEach(slot => {
     if (slot.status === "empty") totalEmpty++;
@@ -715,6 +749,7 @@ async function autoGenerateTimetable(lockExisting: boolean, clearFirst: boolean)
 }
 
 async function scheduleSlashSubject(
+  userId: string,
   schoolClass: SchoolClass,
   subject1: string,
   subject2: string,
@@ -726,7 +761,6 @@ async function scheduleSlashSubject(
 ): Promise<number> {
   let placed = 0;
   
-  // Find teachers for each subject (respecting subject-class mappings)
   const teachers1 = teachers.filter(t => 
     t.subjects.includes(subject1) && 
     t.classes.includes(schoolClass) &&
@@ -744,7 +778,6 @@ async function scheduleSlashSubject(
   }
   
   for (let i = 0; i < count && placed < count; i++) {
-    // Try each day/period combination
     let slotPlaced = false;
     
     for (const day of DAYS) {
@@ -759,25 +792,22 @@ async function scheduleSlashSubject(
         const slot = timetable.get(key);
         if (slot && slot.status === "occupied") continue;
         
-        // Try to find available teacher pair
         for (const t1 of teachers1) {
           if (slotPlaced) break;
           if (!isTeacherAvailableForSlot(timetable, t1, day, period)) continue;
           if (wouldExceedFatigue(timetable, t1.id, day, [period])) continue;
           
           for (const t2 of teachers2) {
-            if (t1.id === t2.id) continue; // Same teacher can't teach both
+            if (t1.id === t2.id) continue;
             if (!isTeacherAvailableForSlot(timetable, t2, day, period)) continue;
             if (wouldExceedFatigue(timetable, t2.id, day, [period])) continue;
             
-            // Check English-Security rule
             if (subject1 === "Security" || subject2 === "Security") {
               const prevKey = `${day}-${schoolClass}-${period - 1}`;
               const prevSlot = timetable.get(prevKey);
               if (prevSlot && prevSlot.subject === "English") continue;
             }
             
-            // Place the slot
             const newSlot: TimetableSlot = {
               day,
               period,
@@ -790,7 +820,7 @@ async function scheduleSlashSubject(
               slashPairTeacherId: t2.id,
             };
             
-            await storage.setSlot(newSlot);
+            await storage.setSlot(userId, newSlot);
             timetable.set(key, newSlot);
             placed++;
             slotPlaced = true;
@@ -805,6 +835,7 @@ async function scheduleSlashSubject(
 }
 
 async function scheduleSingleSubject(
+  userId: string,
   schoolClass: SchoolClass,
   subject: string,
   count: number,
@@ -815,7 +846,6 @@ async function scheduleSingleSubject(
 ): Promise<number> {
   let placed = 0;
   
-  // Find teachers for this subject and class (respecting subject-class mappings)
   const availableTeachers = teachers.filter(t => 
     t.subjects.includes(subject) && 
     t.classes.includes(schoolClass) &&
@@ -842,19 +872,16 @@ async function scheduleSingleSubject(
         const slot = timetable.get(key);
         if (slot && slot.status === "occupied") continue;
         
-        // Try each available teacher
         for (const teacher of availableTeachers) {
           if (!isTeacherAvailableForSlot(timetable, teacher, day, period)) continue;
           if (wouldExceedFatigue(timetable, teacher.id, day, [period])) continue;
           
-          // Check English-Security rule
           if (subject === "Security") {
             const prevKey = `${day}-${schoolClass}-${period - 1}`;
             const prevSlot = timetable.get(prevKey);
             if (prevSlot && prevSlot.subject === "English") continue;
           }
           
-          // Place the slot
           const newSlot: TimetableSlot = {
             day,
             period,
@@ -867,7 +894,7 @@ async function scheduleSingleSubject(
             slashPairTeacherId: null,
           };
           
-          await storage.setSlot(newSlot);
+          await storage.setSlot(userId, newSlot);
           timetable.set(key, newSlot);
           placed++;
           slotPlaced = true;
@@ -886,11 +913,9 @@ function isTeacherAvailableForSlot(
   day: Day,
   period: number
 ): boolean {
-  // Check unavailability
   const unavailablePeriods = teacher.unavailable[day] || [];
   if (unavailablePeriods.includes(period)) return false;
   
-  // Check if already teaching
   for (const schoolClass of CLASSES) {
     const key = `${day}-${schoolClass}-${period}`;
     const slot = timetable.get(key);

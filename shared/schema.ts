@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { pgTable, text, integer, jsonb, varchar, serial } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+
+// Export auth schema
+export * from "./models/auth";
 
 // ===== CONSTANTS =====
 export const CLASSES = ["JSS1", "JSS2", "JSS3", "SS1", "SS2", "SS3"] as const;
@@ -94,15 +99,67 @@ export function usesSlashSubjects(schoolClass: SchoolClass): boolean {
   return schoolClass === "SS2" || schoolClass === "SS3";
 }
 
-// ===== TEACHER SCHEMA =====
+// ===== DATABASE TABLES =====
+
+// Teachers table
+export const teachers = pgTable("teachers", {
+  id: varchar("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  name: text("name").notNull(),
+  subjects: text("subjects").array().notNull(),
+  classes: text("classes").array().notNull(),
+  subjectClasses: jsonb("subject_classes").$type<Record<string, string[]>>(),
+  unavailable: jsonb("unavailable").notNull().$type<Record<string, number[]>>(),
+  color: text("color").notNull(),
+});
+
+// Timetable slots table
+export const timetableSlots = pgTable("timetable_slots", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  day: text("day").notNull(),
+  period: integer("period").notNull(),
+  schoolClass: text("school_class").notNull(),
+  status: text("status").notNull(),
+  subject: text("subject"),
+  teacherId: varchar("teacher_id"),
+  slotType: text("slot_type"),
+  slashPairSubject: text("slash_pair_subject"),
+  slashPairTeacherId: varchar("slash_pair_teacher_id"),
+});
+
+// Timetable actions table (for history)
+export const timetableActions = pgTable("timetable_actions", {
+  id: varchar("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  type: text("type").notNull(),
+  timestamp: integer("timestamp").notNull(),
+  slotData: jsonb("slot_data").notNull(),
+  previousSlotData: jsonb("previous_slot_data"),
+});
+
+// Subject quotas table
+export const subjectQuotas = pgTable("subject_quotas", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  subject: text("subject").notNull(),
+  jssQuota: integer("jss_quota").notNull(),
+  ss1Quota: integer("ss1_quota").notNull(),
+  ss2ss3Quota: integer("ss2ss3_quota").notNull(),
+  isSlashSubject: integer("is_slash_subject").notNull().default(0),
+});
+
+// ===== ZOD SCHEMAS =====
+
+// Teacher schema
 export const teacherSchema = z.object({
   id: z.string(),
   name: z.string(),
   subjects: z.array(z.string()),
   classes: z.array(z.enum(CLASSES)),
-  subjectClasses: z.record(z.string(), z.array(z.enum(CLASSES))).optional(), // subject -> classes they can teach it to
-  unavailable: z.record(z.enum(DAYS), z.array(z.number())), // day -> array of unavailable period numbers
-  color: z.string(), // Hex color for visual identification
+  subjectClasses: z.record(z.string(), z.array(z.enum(CLASSES))).optional(),
+  unavailable: z.record(z.enum(DAYS), z.array(z.number())),
+  color: z.string(),
 });
 
 export type Teacher = z.infer<typeof teacherSchema>;
@@ -112,14 +169,13 @@ export function getTeacherSubjectClasses(teacher: Teacher, subject: string): Sch
   if (teacher.subjectClasses && teacher.subjectClasses[subject]) {
     return teacher.subjectClasses[subject];
   }
-  // Fallback to all teacher's classes if no specific mapping
   return teacher.classes;
 }
 
 export const insertTeacherSchema = teacherSchema.omit({ id: true });
 export type InsertTeacher = z.infer<typeof insertTeacherSchema>;
 
-// ===== TIMETABLE SLOT SCHEMA =====
+// Slot types
 export const slotTypeSchema = z.enum(["single", "double", "slash"]);
 export type SlotType = z.infer<typeof slotTypeSchema>;
 
@@ -134,13 +190,13 @@ export const timetableSlotSchema = z.object({
   subject: z.string().nullable(),
   teacherId: z.string().nullable(),
   slotType: slotTypeSchema.nullable(),
-  slashPairSubject: z.string().nullable(), // For slash subjects in SS2/SS3
+  slashPairSubject: z.string().nullable(),
   slashPairTeacherId: z.string().nullable(),
 });
 
 export type TimetableSlot = z.infer<typeof timetableSlotSchema>;
 
-// ===== TIMETABLE ACTION (for undo/redo) =====
+// Timetable action (for undo/redo)
 export const timetableActionSchema = z.object({
   id: z.string(),
   type: z.enum(["place", "remove"]),
@@ -151,7 +207,7 @@ export const timetableActionSchema = z.object({
 
 export type TimetableAction = z.infer<typeof timetableActionSchema>;
 
-// ===== VALIDATION RESULT =====
+// Validation result
 export const validationErrorSchema = z.object({
   code: z.string(),
   message: z.string(),
@@ -167,7 +223,7 @@ export const validationResultSchema = z.object({
 
 export type ValidationResult = z.infer<typeof validationResultSchema>;
 
-// ===== PLACEMENT REQUEST =====
+// Placement request
 export const placementRequestSchema = z.object({
   day: z.enum(DAYS),
   period: z.number(),
@@ -181,7 +237,7 @@ export const placementRequestSchema = z.object({
 
 export type PlacementRequest = z.infer<typeof placementRequestSchema>;
 
-// ===== TEACHER WORKLOAD =====
+// Teacher workload
 export const teacherWorkloadSchema = z.object({
   teacherId: z.string(),
   totalPeriods: z.number(),
@@ -196,7 +252,7 @@ export const teacherWorkloadSchema = z.object({
 
 export type TeacherWorkload = z.infer<typeof teacherWorkloadSchema>;
 
-// ===== SUBJECT PERIOD COUNT (for tracking weekly allocations) =====
+// Subject period count
 export const subjectPeriodCountSchema = z.object({
   schoolClass: z.enum(CLASSES),
   subject: z.string(),
@@ -206,7 +262,7 @@ export const subjectPeriodCountSchema = z.object({
 
 export type SubjectPeriodCount = z.infer<typeof subjectPeriodCountSchema>;
 
-// ===== SUBJECT QUOTA CONFIGURATION =====
+// Subject quota configuration
 export const subjectQuotaSchema = z.object({
   subject: z.string(),
   jssQuota: z.number().min(0).max(10),
@@ -261,7 +317,7 @@ export function getQuotaForClass(quota: SubjectQuota, schoolClass: SchoolClass):
   }
 }
 
-// ===== AUTO-GENERATION RESULT =====
+// Auto-generation result
 export const autoGenerateResultSchema = z.object({
   success: z.boolean(),
   slotsPlaced: z.number(),
@@ -270,16 +326,3 @@ export const autoGenerateResultSchema = z.object({
 });
 
 export type AutoGenerateResult = z.infer<typeof autoGenerateResultSchema>;
-
-// Legacy user schema (keeping for compatibility)
-export const users = {
-  $inferSelect: {} as { id: string; username: string; password: string },
-};
-
-export const insertUserSchema = z.object({
-  username: z.string(),
-  password: z.string(),
-});
-
-export type InsertUser = z.infer<typeof insertUserSchema>;
-export type User = typeof users.$inferSelect;

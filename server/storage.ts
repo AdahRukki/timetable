@@ -3,8 +3,6 @@ import {
   type InsertTeacher,
   type TimetableSlot,
   type TimetableAction,
-  type PlacementRequest,
-  type ValidationResult,
   type Day,
   type SchoolClass,
   type SubjectQuota,
@@ -12,7 +10,13 @@ import {
   CLASSES,
   PERIODS_PER_DAY,
   DEFAULT_QUOTAS,
+  teachers,
+  timetableSlots,
+  timetableActions,
+  subjectQuotas,
 } from "@shared/schema";
+import { db } from "./db";
+import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 const TEACHER_COLORS = [
@@ -25,155 +29,271 @@ function getTeacherColor(index: number): string {
   return TEACHER_COLORS[index % TEACHER_COLORS.length];
 }
 
-const initialTeachers: Teacher[] = [
-  { id: "T1", name: "Mr. Adewale", subjects: ["Maths"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(0) },
-  { id: "T2", name: "Mrs. Okonkwo", subjects: ["English"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(1) },
-  { id: "T3", name: "Mr. Ibrahim", subjects: ["Basic Science", "Physics"], classes: [...CLASSES] as SchoolClass[], unavailable: { Tuesday: [1, 2] }, color: getTeacherColor(2) },
-  { id: "T4", name: "Mrs. Bello", subjects: ["Chemistry"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(3) },
-  { id: "T5", name: "Mr. Eze", subjects: ["Biology", "Basic Science"], classes: [...CLASSES] as SchoolClass[], unavailable: { Friday: [1] }, color: getTeacherColor(4) },
-  { id: "T6", name: "Mrs. Abubakar", subjects: ["Social Studies", "Civic"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(5) },
-  { id: "T7", name: "Mr. Chukwu", subjects: ["Basic Technology"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(6) },
-  { id: "T8", name: "Mrs. Danjuma", subjects: ["Home Economics"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(7) },
-  { id: "T9", name: "Mr. Oluwole", subjects: ["Computer"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(8) },
-  { id: "T10", name: "Mrs. Yakubu", subjects: ["PHE"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(9) },
-  { id: "T11", name: "Mr. Ogunyemi", subjects: ["CRS"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(10) },
-  { id: "T12", name: "Mrs. Ahmed", subjects: ["Agric"], classes: [...CLASSES] as SchoolClass[], unavailable: { Wednesday: [8, 9] }, color: getTeacherColor(11) },
-  { id: "T13", name: "Mr. Adeniyi", subjects: ["Security"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(12) },
-  { id: "T14", name: "Mrs. Idris", subjects: ["Economics", "Marketing"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(13) },
-  { id: "T15", name: "Mr. Onyeka", subjects: ["Government"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(14) },
-  { id: "T16", name: "Mrs. Lawal", subjects: ["Literature"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(0) },
-  { id: "T17", name: "Mr. Nwosu", subjects: ["Civic"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(1) },
-];
-
-export interface IStorage {
-  // Teachers
-  getTeachers(): Promise<Teacher[]>;
-  getTeacher(id: string): Promise<Teacher | undefined>;
-  createTeacher(teacher: InsertTeacher): Promise<Teacher>;
-  updateTeacher(id: string, teacher: Partial<InsertTeacher>): Promise<Teacher | undefined>;
-  deleteTeacher(id: string): Promise<boolean>;
-
-  // Timetable
-  getTimetable(): Promise<Map<string, TimetableSlot>>;
-  getSlot(day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined>;
-  setSlot(slot: TimetableSlot): Promise<TimetableSlot>;
-  clearSlot(day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined>;
-  clearAllSlots(): Promise<void>;
-
-  // Actions (for undo/redo)
-  getActions(): Promise<TimetableAction[]>;
-  addAction(action: Omit<TimetableAction, "id">): Promise<TimetableAction>;
-  clearActions(): Promise<void>;
-
-  // Subject Quotas
-  getSubjectQuotas(): Promise<SubjectQuota[]>;
-  updateSubjectQuota(subject: string, quota: Partial<SubjectQuota>): Promise<SubjectQuota | undefined>;
-  resetSubjectQuotas(): Promise<SubjectQuota[]>;
-}
-
 function getSlotKey(day: Day, schoolClass: SchoolClass, period: number): string {
   return `${day}-${schoolClass}-${period}`;
 }
 
-function initializeEmptyTimetable(): Map<string, TimetableSlot> {
-  const timetable = new Map<string, TimetableSlot>();
+export interface IStorage {
+  // Teachers
+  getTeachers(userId: string): Promise<Teacher[]>;
+  getTeacher(userId: string, id: string): Promise<Teacher | undefined>;
+  createTeacher(userId: string, teacher: InsertTeacher): Promise<Teacher>;
+  updateTeacher(userId: string, id: string, teacher: Partial<InsertTeacher>): Promise<Teacher | undefined>;
+  deleteTeacher(userId: string, id: string): Promise<boolean>;
+
+  // Timetable
+  getTimetable(userId: string): Promise<Map<string, TimetableSlot>>;
+  getSlot(userId: string, day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined>;
+  setSlot(userId: string, slot: TimetableSlot): Promise<TimetableSlot>;
+  clearSlot(userId: string, day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined>;
+  clearAllSlots(userId: string): Promise<void>;
+
+  // Actions (for undo/redo)
+  getActions(userId: string): Promise<TimetableAction[]>;
+  addAction(userId: string, action: Omit<TimetableAction, "id">): Promise<TimetableAction>;
+  clearActions(userId: string): Promise<void>;
+
+  // Subject Quotas
+  getSubjectQuotas(userId: string): Promise<SubjectQuota[]>;
+  updateSubjectQuota(userId: string, subject: string, quota: Partial<SubjectQuota>): Promise<SubjectQuota | undefined>;
+  resetSubjectQuotas(userId: string): Promise<SubjectQuota[]>;
   
-  for (const day of DAYS) {
-    const maxPeriods = PERIODS_PER_DAY[day];
-    for (const schoolClass of CLASSES) {
-      for (let period = 1; period <= maxPeriods; period++) {
-        const key = getSlotKey(day, schoolClass, period);
-        timetable.set(key, {
-          day,
-          period,
-          schoolClass,
-          status: "empty",
-          subject: null,
-          teacherId: null,
-          slotType: null,
-          slashPairSubject: null,
-          slashPairTeacherId: null,
-        });
-      }
-    }
-  }
-  
-  return timetable;
+  // Initialize user data
+  initializeUserData(userId: string): Promise<void>;
 }
 
-export class MemStorage implements IStorage {
-  private teachers: Map<string, Teacher>;
-  private timetable: Map<string, TimetableSlot>;
-  private actions: TimetableAction[];
-  private subjectQuotas: Map<string, SubjectQuota>;
+export class DatabaseStorage implements IStorage {
+  // Initialize default data for a new user
+  async initializeUserData(userId: string): Promise<void> {
+    // Check if user already has quotas
+    const existingQuotas = await db.select().from(subjectQuotas).where(eq(subjectQuotas.userId, userId)).limit(1);
+    if (existingQuotas.length > 0) return;
 
-  constructor() {
-    this.teachers = new Map();
-    this.timetable = initializeEmptyTimetable();
-    this.actions = [];
-    this.subjectQuotas = new Map();
-    
-    // Initialize with sample teachers
-    for (const teacher of initialTeachers) {
-      this.teachers.set(teacher.id, teacher);
-    }
-    
-    // Initialize with default quotas
+    // Initialize default quotas
     for (const quota of DEFAULT_QUOTAS) {
-      this.subjectQuotas.set(quota.subject, { ...quota });
+      await db.insert(subjectQuotas).values({
+        userId,
+        subject: quota.subject,
+        jssQuota: quota.jssQuota,
+        ss1Quota: quota.ss1Quota,
+        ss2ss3Quota: quota.ss2ss3Quota,
+        isSlashSubject: quota.isSlashSubject ? 1 : 0,
+      });
+    }
+
+    // Initialize sample teachers
+    const sampleTeachers: InsertTeacher[] = [
+      { name: "Mr. Adewale", subjects: ["Maths"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(0) },
+      { name: "Mrs. Okonkwo", subjects: ["English"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(1) },
+      { name: "Mr. Ibrahim", subjects: ["Basic Science", "Physics"], classes: [...CLASSES] as SchoolClass[], unavailable: { Tuesday: [1, 2] }, color: getTeacherColor(2) },
+      { name: "Mrs. Bello", subjects: ["Chemistry"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(3) },
+      { name: "Mr. Eze", subjects: ["Biology", "Basic Science"], classes: [...CLASSES] as SchoolClass[], unavailable: { Friday: [1] }, color: getTeacherColor(4) },
+      { name: "Mrs. Abubakar", subjects: ["Social Studies", "Civic"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(5) },
+      { name: "Mr. Chukwu", subjects: ["Basic Technology"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(6) },
+      { name: "Mrs. Danjuma", subjects: ["Home Economics"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(7) },
+      { name: "Mr. Oluwole", subjects: ["Computer"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(8) },
+      { name: "Mrs. Yakubu", subjects: ["PHE"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(9) },
+      { name: "Mr. Ogunyemi", subjects: ["CRS"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(10) },
+      { name: "Mrs. Ahmed", subjects: ["Agric"], classes: [...CLASSES] as SchoolClass[], unavailable: { Wednesday: [8, 9] }, color: getTeacherColor(11) },
+      { name: "Mr. Adeniyi", subjects: ["Security"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(12) },
+      { name: "Mrs. Idris", subjects: ["Economics", "Marketing"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(13) },
+      { name: "Mr. Onyeka", subjects: ["Government"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(14) },
+      { name: "Mrs. Lawal", subjects: ["Literature"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(0) },
+      { name: "Mr. Nwosu", subjects: ["Civic"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(1) },
+    ];
+
+    for (const teacher of sampleTeachers) {
+      await this.createTeacher(userId, teacher);
     }
   }
 
   // Teachers
-  async getTeachers(): Promise<Teacher[]> {
-    return Array.from(this.teachers.values());
+  async getTeachers(userId: string): Promise<Teacher[]> {
+    const rows = await db.select().from(teachers).where(eq(teachers.userId, userId));
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      subjects: row.subjects,
+      classes: row.classes as SchoolClass[],
+      subjectClasses: row.subjectClasses as Record<string, SchoolClass[]> | undefined,
+      unavailable: row.unavailable as Record<Day, number[]>,
+      color: row.color,
+    }));
   }
 
-  async getTeacher(id: string): Promise<Teacher | undefined> {
-    return this.teachers.get(id);
+  async getTeacher(userId: string, id: string): Promise<Teacher | undefined> {
+    const [row] = await db.select().from(teachers).where(and(eq(teachers.userId, userId), eq(teachers.id, id)));
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      name: row.name,
+      subjects: row.subjects,
+      classes: row.classes as SchoolClass[],
+      subjectClasses: row.subjectClasses as Record<string, SchoolClass[]> | undefined,
+      unavailable: row.unavailable as Record<Day, number[]>,
+      color: row.color,
+    };
   }
 
-  async createTeacher(insertTeacher: InsertTeacher): Promise<Teacher> {
+  async createTeacher(userId: string, insertTeacher: InsertTeacher): Promise<Teacher> {
     const id = randomUUID();
-    const teacher: Teacher = { ...insertTeacher, id };
-    this.teachers.set(id, teacher);
-    return teacher;
+    await db.insert(teachers).values({
+      id,
+      userId,
+      name: insertTeacher.name,
+      subjects: insertTeacher.subjects,
+      classes: insertTeacher.classes,
+      subjectClasses: insertTeacher.subjectClasses,
+      unavailable: insertTeacher.unavailable,
+      color: insertTeacher.color,
+    });
+    return { ...insertTeacher, id };
   }
 
-  async updateTeacher(id: string, updates: Partial<InsertTeacher>): Promise<Teacher | undefined> {
-    const teacher = this.teachers.get(id);
-    if (!teacher) return undefined;
-    
-    const updated = { ...teacher, ...updates };
-    this.teachers.set(id, updated);
-    return updated;
+  async updateTeacher(userId: string, id: string, updates: Partial<InsertTeacher>): Promise<Teacher | undefined> {
+    const existing = await this.getTeacher(userId, id);
+    if (!existing) return undefined;
+
+    const updateValues: any = {};
+    if (updates.name !== undefined) updateValues.name = updates.name;
+    if (updates.subjects !== undefined) updateValues.subjects = updates.subjects;
+    if (updates.classes !== undefined) updateValues.classes = updates.classes;
+    if (updates.subjectClasses !== undefined) updateValues.subjectClasses = updates.subjectClasses;
+    if (updates.unavailable !== undefined) updateValues.unavailable = updates.unavailable;
+    if (updates.color !== undefined) updateValues.color = updates.color;
+
+    await db.update(teachers).set(updateValues).where(and(eq(teachers.userId, userId), eq(teachers.id, id)));
+    return { ...existing, ...updates };
   }
 
-  async deleteTeacher(id: string): Promise<boolean> {
-    return this.teachers.delete(id);
+  async deleteTeacher(userId: string, id: string): Promise<boolean> {
+    const result = await db.delete(teachers).where(and(eq(teachers.userId, userId), eq(teachers.id, id)));
+    return true;
   }
 
   // Timetable
-  async getTimetable(): Promise<Map<string, TimetableSlot>> {
-    return new Map(this.timetable);
+  async getTimetable(userId: string): Promise<Map<string, TimetableSlot>> {
+    const timetable = new Map<string, TimetableSlot>();
+    
+    // Initialize empty slots
+    for (const day of DAYS) {
+      const maxPeriods = PERIODS_PER_DAY[day];
+      for (const schoolClass of CLASSES) {
+        for (let period = 1; period <= maxPeriods; period++) {
+          const key = getSlotKey(day, schoolClass, period);
+          timetable.set(key, {
+            day,
+            period,
+            schoolClass,
+            status: "empty",
+            subject: null,
+            teacherId: null,
+            slotType: null,
+            slashPairSubject: null,
+            slashPairTeacherId: null,
+          });
+        }
+      }
+    }
+
+    // Load saved slots
+    const rows = await db.select().from(timetableSlots).where(eq(timetableSlots.userId, userId));
+    for (const row of rows) {
+      const key = getSlotKey(row.day as Day, row.schoolClass as SchoolClass, row.period);
+      timetable.set(key, {
+        day: row.day as Day,
+        period: row.period,
+        schoolClass: row.schoolClass as SchoolClass,
+        status: row.status as "empty" | "occupied" | "break",
+        subject: row.subject,
+        teacherId: row.teacherId,
+        slotType: row.slotType as "single" | "double" | "slash" | null,
+        slashPairSubject: row.slashPairSubject,
+        slashPairTeacherId: row.slashPairTeacherId,
+      });
+    }
+
+    return timetable;
   }
 
-  async getSlot(day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined> {
-    return this.timetable.get(getSlotKey(day, schoolClass, period));
+  async getSlot(userId: string, day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined> {
+    const [row] = await db.select().from(timetableSlots).where(
+      and(
+        eq(timetableSlots.userId, userId),
+        eq(timetableSlots.day, day),
+        eq(timetableSlots.schoolClass, schoolClass),
+        eq(timetableSlots.period, period)
+      )
+    );
+    
+    if (!row) {
+      return {
+        day,
+        period,
+        schoolClass,
+        status: "empty",
+        subject: null,
+        teacherId: null,
+        slotType: null,
+        slashPairSubject: null,
+        slashPairTeacherId: null,
+      };
+    }
+
+    return {
+      day: row.day as Day,
+      period: row.period,
+      schoolClass: row.schoolClass as SchoolClass,
+      status: row.status as "empty" | "occupied" | "break",
+      subject: row.subject,
+      teacherId: row.teacherId,
+      slotType: row.slotType as "single" | "double" | "slash" | null,
+      slashPairSubject: row.slashPairSubject,
+      slashPairTeacherId: row.slashPairTeacherId,
+    };
   }
 
-  async setSlot(slot: TimetableSlot): Promise<TimetableSlot> {
-    const key = getSlotKey(slot.day, slot.schoolClass, slot.period);
-    this.timetable.set(key, slot);
+  async setSlot(userId: string, slot: TimetableSlot): Promise<TimetableSlot> {
+    // Delete existing slot first
+    await db.delete(timetableSlots).where(
+      and(
+        eq(timetableSlots.userId, userId),
+        eq(timetableSlots.day, slot.day),
+        eq(timetableSlots.schoolClass, slot.schoolClass),
+        eq(timetableSlots.period, slot.period)
+      )
+    );
+
+    // Insert new slot if not empty
+    if (slot.status !== "empty") {
+      await db.insert(timetableSlots).values({
+        userId,
+        day: slot.day,
+        period: slot.period,
+        schoolClass: slot.schoolClass,
+        status: slot.status,
+        subject: slot.subject,
+        teacherId: slot.teacherId,
+        slotType: slot.slotType,
+        slashPairSubject: slot.slashPairSubject,
+        slashPairTeacherId: slot.slashPairTeacherId,
+      });
+    }
+
     return slot;
   }
 
-  async clearSlot(day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined> {
-    const key = getSlotKey(day, schoolClass, period);
-    const existing = this.timetable.get(key);
-    if (!existing) return undefined;
-    
-    const cleared: TimetableSlot = {
+  async clearSlot(userId: string, day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined> {
+    await db.delete(timetableSlots).where(
+      and(
+        eq(timetableSlots.userId, userId),
+        eq(timetableSlots.day, day),
+        eq(timetableSlots.schoolClass, schoolClass),
+        eq(timetableSlots.period, period)
+      )
+    );
+
+    return {
       day,
       period,
       schoolClass,
@@ -184,53 +304,94 @@ export class MemStorage implements IStorage {
       slashPairSubject: null,
       slashPairTeacherId: null,
     };
-    this.timetable.set(key, cleared);
-    return cleared;
+  }
+
+  async clearAllSlots(userId: string): Promise<void> {
+    await db.delete(timetableSlots).where(eq(timetableSlots.userId, userId));
   }
 
   // Actions
-  async getActions(): Promise<TimetableAction[]> {
-    return [...this.actions];
+  async getActions(userId: string): Promise<TimetableAction[]> {
+    const rows = await db.select().from(timetableActions).where(eq(timetableActions.userId, userId));
+    return rows.map((row) => ({
+      id: row.id,
+      type: row.type as "place" | "remove",
+      timestamp: row.timestamp,
+      slot: row.slotData as TimetableSlot,
+      previousSlot: row.previousSlotData as TimetableSlot | null,
+    }));
   }
 
-  async addAction(action: Omit<TimetableAction, "id">): Promise<TimetableAction> {
-    const newAction: TimetableAction = {
-      ...action,
-      id: randomUUID(),
-    };
-    this.actions.push(newAction);
-    return newAction;
+  async addAction(userId: string, action: Omit<TimetableAction, "id">): Promise<TimetableAction> {
+    const id = randomUUID();
+    await db.insert(timetableActions).values({
+      id,
+      userId,
+      type: action.type,
+      timestamp: action.timestamp,
+      slotData: action.slot,
+      previousSlotData: action.previousSlot,
+    });
+    return { ...action, id };
   }
 
-  async clearActions(): Promise<void> {
-    this.actions = [];
-  }
-
-  async clearAllSlots(): Promise<void> {
-    this.timetable = initializeEmptyTimetable();
+  async clearActions(userId: string): Promise<void> {
+    await db.delete(timetableActions).where(eq(timetableActions.userId, userId));
   }
 
   // Subject Quotas
-  async getSubjectQuotas(): Promise<SubjectQuota[]> {
-    return Array.from(this.subjectQuotas.values());
+  async getSubjectQuotas(userId: string): Promise<SubjectQuota[]> {
+    const rows = await db.select().from(subjectQuotas).where(eq(subjectQuotas.userId, userId));
+    return rows.map((row) => ({
+      subject: row.subject,
+      jssQuota: row.jssQuota,
+      ss1Quota: row.ss1Quota,
+      ss2ss3Quota: row.ss2ss3Quota,
+      isSlashSubject: row.isSlashSubject === 1,
+    }));
   }
 
-  async updateSubjectQuota(subject: string, updates: Partial<SubjectQuota>): Promise<SubjectQuota | undefined> {
-    const quota = this.subjectQuotas.get(subject);
-    if (!quota) return undefined;
+  async updateSubjectQuota(userId: string, subject: string, updates: Partial<SubjectQuota>): Promise<SubjectQuota | undefined> {
+    const [existing] = await db.select().from(subjectQuotas).where(
+      and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subject))
+    );
+    if (!existing) return undefined;
+
+    const updateValues: any = {};
+    if (updates.jssQuota !== undefined) updateValues.jssQuota = updates.jssQuota;
+    if (updates.ss1Quota !== undefined) updateValues.ss1Quota = updates.ss1Quota;
+    if (updates.ss2ss3Quota !== undefined) updateValues.ss2ss3Quota = updates.ss2ss3Quota;
+    if (updates.isSlashSubject !== undefined) updateValues.isSlashSubject = updates.isSlashSubject ? 1 : 0;
+
+    await db.update(subjectQuotas).set(updateValues).where(
+      and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subject))
+    );
+
+    return {
+      subject: existing.subject,
+      jssQuota: updates.jssQuota ?? existing.jssQuota,
+      ss1Quota: updates.ss1Quota ?? existing.ss1Quota,
+      ss2ss3Quota: updates.ss2ss3Quota ?? existing.ss2ss3Quota,
+      isSlashSubject: updates.isSlashSubject ?? (existing.isSlashSubject === 1),
+    };
+  }
+
+  async resetSubjectQuotas(userId: string): Promise<SubjectQuota[]> {
+    await db.delete(subjectQuotas).where(eq(subjectQuotas.userId, userId));
     
-    const updated = { ...quota, ...updates };
-    this.subjectQuotas.set(subject, updated);
-    return updated;
-  }
-
-  async resetSubjectQuotas(): Promise<SubjectQuota[]> {
-    this.subjectQuotas.clear();
     for (const quota of DEFAULT_QUOTAS) {
-      this.subjectQuotas.set(quota.subject, { ...quota });
+      await db.insert(subjectQuotas).values({
+        userId,
+        subject: quota.subject,
+        jssQuota: quota.jssQuota,
+        ss1Quota: quota.ss1Quota,
+        ss2ss3Quota: quota.ss2ss3Quota,
+        isSlashSubject: quota.isSlashSubject ? 1 : 0,
+      });
     }
-    return Array.from(this.subjectQuotas.values());
+
+    return DEFAULT_QUOTAS;
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
