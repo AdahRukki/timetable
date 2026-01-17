@@ -428,6 +428,27 @@ export default function SettingsPage() {
               </div>
             ) : (
               <>
+                <div className="bg-muted/50 rounded-md p-4 mb-2">
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div>
+                      <p className="text-sm font-medium">Total Weekly Periods (All Classes)</p>
+                      <p className="text-xs text-muted-foreground">
+                        Sum of all subject quotas across all 6 classes
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-2xl font-bold">
+                        {quotas.reduce((sum, q) => sum + (q.jssQuota * 3) + q.ss1Quota + (q.ss2ss3Quota * 2), 0)}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        JSS: {quotas.reduce((sum, q) => sum + q.jssQuota * 3, 0)} | SS1: {quotas.reduce((sum, q) => sum + q.ss1Quota, 0)} | SS2/SS3: {quotas.reduce((sum, q) => sum + q.ss2ss3Quota * 2, 0)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <Separator />
+
                 <div>
                   <h3 className="font-medium mb-3">JSS Subjects (JSS1-JSS3)</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
