@@ -12,7 +12,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { SubjectQuota, Subject, UserSettings } from "@shared/schema";
-import { useState, useEffect } from "react";
+import { SLASH_SUBJECTS } from "@shared/schema";
+import { useState, useEffect, useMemo } from "react";
 
 export default function SettingsPage() {
   const { toast } = useToast();
@@ -502,17 +503,59 @@ export default function SettingsPage() {
                       {quotas.filter(q => q.ss2ss3Quota > 0).reduce((sum, q) => sum + q.ss2ss3Quota * 2, 0)} periods total
                     </Badge>
                   </div>
+                  
+                  <div className="mb-4">
+                    <p className="text-sm text-muted-foreground mb-3">Slash Subject Pairs (scheduled simultaneously)</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {SLASH_SUBJECTS.map((slashPair) => {
+                        const [subj1, subj2] = slashPair.pair;
+                        const q1 = quotas.find(q => q.subject === subj1);
+                        const q2 = quotas.find(q => q.subject === subj2);
+                        const quota = q1?.ss2ss3Quota || q2?.ss2ss3Quota || 0;
+                        return (
+                          <div key={`${subj1}-${subj2}`} className="flex items-center gap-2">
+                            <div className="flex-1">
+                              <Label className="text-sm flex items-center gap-1">
+                                {subj1} / {subj2}
+                                <Badge variant="outline" className="text-xs ml-1">Slash</Badge>
+                                <span className="text-xs text-muted-foreground ml-1">({quota * 2} total)</span>
+                              </Label>
+                            </div>
+                            <Input
+                              type="number"
+                              min={0}
+                              max={10}
+                              value={quota}
+                              onChange={(e) => {
+                                const v = Math.max(0, Math.min(10, parseInt(e.target.value) || 0));
+                                handleQuotaChange(subj1, "ss2ss3Quota", v);
+                                handleQuotaChange(subj2, "ss2ss3Quota", v);
+                              }}
+                              className="w-16 text-center"
+                              data-testid={`input-quota-slash-${subj1.toLowerCase()}-${subj2.toLowerCase()}`}
+                            />
+                            <span className="text-sm text-muted-foreground">per week</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  
+                  <p className="text-sm text-muted-foreground mb-3">Regular Subjects</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {quotas.filter(q => q.ss2ss3Quota > 0).map((q) => (
-                      <QuotaInput
-                        key={q.subject}
-                        subject={q.subject}
-                        value={q.ss2ss3Quota}
-                        onChange={(v) => handleQuotaChange(q.subject, "ss2ss3Quota", v)}
-                        isSlash={q.isSlashSubject}
-                        sectionTotal={q.ss2ss3Quota * 2}
-                      />
-                    ))}
+                    {(() => {
+                      const slashSubjectNames = new Set(SLASH_SUBJECTS.flatMap(s => s.pair));
+                      return quotas.filter(q => q.ss2ss3Quota > 0 && !slashSubjectNames.has(q.subject)).map((q) => (
+                        <QuotaInput
+                          key={q.subject}
+                          subject={q.subject}
+                          value={q.ss2ss3Quota}
+                          onChange={(v) => handleQuotaChange(q.subject, "ss2ss3Quota", v)}
+                          isSlash={false}
+                          sectionTotal={q.ss2ss3Quota * 2}
+                        />
+                      ));
+                    })()}
                   </div>
                 </div>
               </>
