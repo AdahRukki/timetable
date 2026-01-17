@@ -450,7 +450,12 @@ export default function SettingsPage() {
                 <Separator />
 
                 <div>
-                  <h3 className="font-medium mb-3">JSS Subjects (JSS1-JSS3)</h3>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-medium">JSS Subjects (JSS1-JSS3)</h3>
+                    <Badge variant="secondary">
+                      {quotas.filter(q => q.jssQuota > 0).reduce((sum, q) => sum + q.jssQuota * 3, 0)} periods total
+                    </Badge>
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {quotas.filter(q => q.jssQuota > 0).map((q) => (
                       <QuotaInput
@@ -468,7 +473,12 @@ export default function SettingsPage() {
                 <Separator />
 
                 <div>
-                  <h3 className="font-medium mb-3">SS1 Subjects</h3>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-medium">SS1 Subjects</h3>
+                    <Badge variant="secondary">
+                      {quotas.filter(q => q.ss1Quota > 0).reduce((sum, q) => sum + q.ss1Quota, 0)} periods total
+                    </Badge>
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {quotas.filter(q => q.ss1Quota > 0).map((q) => (
                       <QuotaInput
@@ -486,7 +496,12 @@ export default function SettingsPage() {
                 <Separator />
 
                 <div>
-                  <h3 className="font-medium mb-3">SS2/SS3 Subjects (includes slash pairing)</h3>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-medium">SS2/SS3 Subjects (includes slash pairing)</h3>
+                    <Badge variant="secondary">
+                      {quotas.filter(q => q.ss2ss3Quota > 0).reduce((sum, q) => sum + q.ss2ss3Quota * 2, 0)} periods total
+                    </Badge>
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {quotas.filter(q => q.ss2ss3Quota > 0).map((q) => (
                       <QuotaInput
