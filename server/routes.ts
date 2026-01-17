@@ -879,15 +879,21 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
   
   // Build quota tracking per class
   const quotaTracker: Map<string, Map<string, number>> = new Map();
+  // Track ORIGINAL quotas to determine double period eligibility (only for 4-period subjects)
+  const originalQuotaTracker: Map<string, Map<string, number>> = new Map();
+  
   for (const schoolClass of CLASSES) {
     const classQuotas = new Map<string, number>();
+    const originalClassQuotas = new Map<string, number>();
     for (const quota of quotas) {
       const required = getQuotaForClass(quota, schoolClass);
       if (required > 0) {
         classQuotas.set(quota.subject, required);
+        originalClassQuotas.set(quota.subject, required);
       }
     }
     quotaTracker.set(schoolClass, classQuotas);
+    originalQuotaTracker.set(schoolClass, originalClassQuotas);
   }
   
   // Reduce quotas by already placed slots
@@ -1026,8 +1032,15 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
         break;
       }
       
-      // Try double period first if we need 2+ periods
-      if (periodsToPlace >= 2) {
+      // Get original quota for this subject-class to determine double period eligibility
+      const originalClassQuotas = originalQuotaTracker.get(schoolClass);
+      const originalQuota = originalClassQuotas?.get(subject) || 0;
+      
+      // Only use double periods for subjects with EXACTLY 4 periods quota per week
+      const useDoublePeriods = originalQuota === 4 && periodsToPlace >= 2;
+      
+      // Try double period first if eligible (only for 4-period subjects)
+      if (useDoublePeriods) {
         for (const day of availableDays) {
           if (placed) break;
           
