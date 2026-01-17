@@ -197,6 +197,50 @@ export function getConsecutiveTeachingPeriods(
   return groups;
 }
 
+// Check consecutive same subject count for a class on a day
+export function getConsecutiveSameSubjectCount(
+  timetable: Map<string, TimetableSlot>,
+  day: Day,
+  schoolClass: SchoolClass,
+  subject: string,
+  newPeriods: number[]
+): number {
+  const maxPeriods = PERIODS_PER_DAY[day];
+  const subjectPeriods = new Set<number>(newPeriods);
+  
+  for (let period = 1; period <= maxPeriods; period++) {
+    const slot = getSlot(timetable, day, schoolClass, period);
+    if (slot && slot.subject === subject) {
+      subjectPeriods.add(period);
+    }
+  }
+  
+  const sorted = Array.from(subjectPeriods).sort((a, b) => a - b);
+  let maxConsecutive = 0;
+  let current = 0;
+  
+  for (let i = 0; i < sorted.length; i++) {
+    if (i === 0) {
+      current = 1;
+    } else {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      const hasBreak =
+        (prev <= BREAK_AFTER_P4 && curr > BREAK_AFTER_P4) ||
+        (day !== "Friday" && day !== "Tuesday" && prev <= BREAK_AFTER_P7 && curr > BREAK_AFTER_P7);
+      
+      if (curr === prev + 1 && !hasBreak) {
+        current++;
+      } else {
+        current = 1;
+      }
+    }
+    maxConsecutive = Math.max(maxConsecutive, current);
+  }
+  
+  return maxConsecutive;
+}
+
 // Check if adding a period would exceed fatigue limit (5 consecutive periods)
 export function wouldExceedFatigueLimit(
   timetable: Map<string, TimetableSlot>,
@@ -399,23 +443,15 @@ export function validatePlacement(
     });
   }
   
-  // Check consecutive same subject (max 2)
-  const periods = getPeriodsForDay(day);
-  let consecutiveSameSubject = 0;
-  for (const p of periods) {
-    if (p < period) {
-      const prevSlot = getSlot(timetable, day, schoolClass, p);
-      if (prevSlot && prevSlot.subject === subject) {
-        if (p === period - 1 - consecutiveSameSubject) {
-          consecutiveSameSubject++;
-        }
-      }
-    }
-  }
-  if (consecutiveSameSubject >= 2) {
+  // Check consecutive same subject (max 2 - triple period prevention)
+  const periodsToAddForSubject = slotType === "double" ? [period, period + 1] : [period];
+  const consecutiveSameSubject = getConsecutiveSameSubjectCount(
+    timetable, day, schoolClass, subject, periodsToAddForSubject
+  );
+  if (consecutiveSameSubject > 2) {
     errors.push({
-      code: "MAX_CONSECUTIVE_SUBJECT",
-      message: `Cannot have more than 2 consecutive periods of ${subject}`,
+      code: "TRIPLE_PERIOD",
+      message: `Cannot have more than 2 consecutive periods of ${subject} in a day`,
       severity: "error",
     });
   }

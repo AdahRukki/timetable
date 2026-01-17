@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import {
   insertTeacherSchema,
+  insertSubjectSchema,
   placementRequestSchema,
   type Day,
   type SchoolClass,
@@ -56,6 +57,50 @@ function wouldCrossBreak(day: Day, startPeriod: number): boolean {
   if (startPeriod === BREAK_AFTER_P4) return true;
   if (day !== "Friday" && day !== "Tuesday" && startPeriod === BREAK_AFTER_P7) return true;
   return false;
+}
+
+function getConsecutiveSameSubjectCount(
+  timetable: Map<string, TimetableSlot>,
+  day: Day,
+  schoolClass: SchoolClass,
+  subject: string,
+  newPeriods: number[]
+): number {
+  const maxPeriods = PERIODS_PER_DAY[day];
+  const subjectPeriods = new Set<number>(newPeriods);
+  
+  for (let period = 1; period <= maxPeriods; period++) {
+    const key = `${day}-${schoolClass}-${period}`;
+    const slot = timetable.get(key);
+    if (slot && slot.subject === subject) {
+      subjectPeriods.add(period);
+    }
+  }
+  
+  const sorted = Array.from(subjectPeriods).sort((a, b) => a - b);
+  let maxConsecutive = 0;
+  let current = 0;
+  
+  for (let i = 0; i < sorted.length; i++) {
+    if (i === 0) {
+      current = 1;
+    } else {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      const hasBreak =
+        (prev <= BREAK_AFTER_P4 && curr > BREAK_AFTER_P4) ||
+        (day !== "Friday" && day !== "Tuesday" && prev <= BREAK_AFTER_P7 && curr > BREAK_AFTER_P7);
+      
+      if (curr === prev + 1 && !hasBreak) {
+        current++;
+      } else {
+        current = 1;
+      }
+    }
+    maxConsecutive = Math.max(maxConsecutive, current);
+  }
+  
+  return maxConsecutive;
 }
 
 function getConsecutiveTeachingCount(
@@ -352,6 +397,19 @@ async function validatePlacement(
     }
   }
   
+  // Triple period prevention (max 2 consecutive periods of the same subject)
+  const periodsToAddForSubject = slotType === "double" ? [period, period + 1] : [period];
+  const consecutiveSameSubject = getConsecutiveSameSubjectCount(
+    timetable, day, schoolClass, subject, periodsToAddForSubject
+  );
+  if (consecutiveSameSubject > 2) {
+    errors.push({
+      code: "TRIPLE_PERIOD",
+      message: `Cannot have more than 2 consecutive periods of ${subject} in a day`,
+      severity: "error",
+    });
+  }
+  
   return {
     isValid: errors.filter((e) => e.severity === "error").length === 0,
     errors,
@@ -591,6 +649,94 @@ export async function registerRoutes(
     const userId = getUserId(req);
     const quotas = await storage.resetSubjectQuotas(userId);
     res.json(quotas);
+  });
+
+  // ===== Custom Subjects =====
+  
+  // Get all subjects
+  app.get("/api/subjects", isAuthenticated, async (req, res) => {
+    const userId = getUserId(req);
+    await storage.initializeUserData(userId);
+    const subjectsList = await storage.getSubjects(userId);
+    res.json(subjectsList);
+  });
+
+  // Create subject
+  app.post("/api/subjects", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const data = insertSubjectSchema.parse(req.body);
+      
+      // Check if subject name already exists
+      const existing = await storage.getSubjects(userId);
+      if (existing.some(s => s.name.toLowerCase() === data.name.toLowerCase())) {
+        res.status(400).json({ error: "A subject with this name already exists" });
+        return;
+      }
+      
+      const subject = await storage.createSubject(userId, data);
+      res.status(201).json(subject);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid subject data", details: error.errors });
+      } else {
+        res.status(500).json({ error: "Failed to create subject" });
+      }
+    }
+  });
+
+  // Update subject
+  app.patch("/api/subjects/:id", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      
+      if (isNaN(id)) {
+        res.status(400).json({ error: "Invalid subject ID" });
+        return;
+      }
+      
+      const partialSubjectSchema = z.object({
+        name: z.string().min(1).optional(),
+        jssQuota: z.number().min(0).max(10).optional(),
+        ss1Quota: z.number().min(0).max(10).optional(),
+        ss2ss3Quota: z.number().min(0).max(10).optional(),
+        isSlashSubject: z.boolean().optional(),
+        slashPairName: z.string().nullable().optional(),
+      });
+      
+      const updates = partialSubjectSchema.parse(req.body);
+      const subject = await storage.updateSubject(userId, id, updates);
+      if (subject) {
+        res.json(subject);
+      } else {
+        res.status(404).json({ error: "Subject not found" });
+      }
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid subject data", details: error.errors });
+      } else {
+        res.status(500).json({ error: "Failed to update subject" });
+      }
+    }
+  });
+
+  // Delete subject
+  app.delete("/api/subjects/:id", isAuthenticated, async (req, res) => {
+    const userId = getUserId(req);
+    const id = parseInt(req.params.id);
+    
+    if (isNaN(id)) {
+      res.status(400).json({ error: "Invalid subject ID" });
+      return;
+    }
+    
+    const deleted = await storage.deleteSubject(userId, id);
+    if (deleted) {
+      res.json({ success: true });
+    } else {
+      res.status(404).json({ error: "Subject not found or cannot be deleted" });
+    }
   });
 
   // ===== Auto-Generation =====
