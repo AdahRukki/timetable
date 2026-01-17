@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   type TimetableSlot,
   type Teacher,
@@ -6,13 +5,13 @@ import {
   CLASSES,
   type Day,
 } from "@shared/schema";
-import { sampleTeachers } from "@/lib/sample-data";
 import {
-  initializeTimetable,
   getSlotKey,
   getPeriodsForDay,
   calculateTeacherWorkload,
 } from "@/lib/timetable-utils";
+import { useQuery } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -46,10 +45,30 @@ import {
 } from "lucide-react";
 
 export default function DashboardPage() {
-  const [timetable] = useState<Map<string, TimetableSlot>>(() =>
-    initializeTimetable()
-  );
-  const [teachers] = useState<Teacher[]>(sampleTeachers);
+  // Fetch actual timetable data from API
+  const { data: timetableData = [], isLoading: timetableLoading } = useQuery<TimetableSlot[]>({
+    queryKey: ["/api/timetable"],
+  });
+
+  // Fetch actual teachers data from API
+  const { data: teachers = [], isLoading: teachersLoading } = useQuery<Teacher[]>({
+    queryKey: ["/api/teachers"],
+  });
+
+  // Convert timetable array to Map
+  const timetable = new Map<string, TimetableSlot>();
+  timetableData.forEach((slot) => {
+    const key = getSlotKey(slot.day, slot.schoolClass, slot.period);
+    timetable.set(key, slot);
+  });
+
+  if (timetableLoading || teachersLoading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   let totalSlots = 0;
   let occupiedSlots = 0;
@@ -66,16 +85,15 @@ export default function DashboardPage() {
     const periods = getPeriodsForDay(day);
     for (const schoolClass of CLASSES) {
       for (const period of periods) {
+        totalSlots++;
+        slotsByDay[day].total++;
+        
         const slot = timetable.get(getSlotKey(day, schoolClass, period));
-        if (slot) {
-          totalSlots++;
-          slotsByDay[day].total++;
-          if (slot.status === "occupied") {
-            occupiedSlots++;
-            slotsByDay[day].occupied++;
-          } else if (slot.status === "empty") {
-            emptySlots++;
-          }
+        if (slot && slot.status === "occupied") {
+          occupiedSlots++;
+          slotsByDay[day].occupied++;
+        } else {
+          emptySlots++;
         }
       }
     }

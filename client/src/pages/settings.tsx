@@ -7,11 +7,11 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Settings, Bell, Shield, Clock, Download, Upload, BookOpen, RotateCcw, Loader2, Plus, Pencil, Trash2 } from "lucide-react";
+import { Settings, Bell, Shield, Clock, Download, Upload, BookOpen, RotateCcw, Loader2, Plus, Pencil, Trash2, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import type { SubjectQuota, Subject } from "@shared/schema";
+import type { SubjectQuota, Subject, UserSettings } from "@shared/schema";
 import { useState, useEffect } from "react";
 
 export default function SettingsPage() {
@@ -22,6 +22,7 @@ export default function SettingsPage() {
   const [newSubjectJssQuota, setNewSubjectJssQuota] = useState(4);
   const [newSubjectSs1Quota, setNewSubjectSs1Quota] = useState(4);
   const [newSubjectSs2ss3Quota, setNewSubjectSs2ss3Quota] = useState(4);
+  const [fatigueLimit, setFatigueLimit] = useState(5);
 
   const { data: quotas = [], isLoading: quotasLoading } = useQuery<SubjectQuota[]>({
     queryKey: ["/api/quotas"],
@@ -29,6 +30,34 @@ export default function SettingsPage() {
 
   const { data: subjects = [], isLoading: subjectsLoading } = useQuery<Subject[]>({
     queryKey: ["/api/subjects"],
+  });
+
+  const { data: userSettings, isLoading: settingsLoading } = useQuery<UserSettings>({
+    queryKey: ["/api/settings"],
+  });
+
+  // Sync fatigue limit from server
+  useEffect(() => {
+    if (userSettings?.fatigueLimit) {
+      setFatigueLimit(userSettings.fatigueLimit);
+    }
+  }, [userSettings]);
+
+  const updateSettingsMutation = useMutation({
+    mutationFn: async (updates: Partial<UserSettings>) => {
+      return apiRequest("PATCH", "/api/settings", updates);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+      toast({ title: "Settings Saved", description: "Fatigue limit has been updated" });
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to save settings",
+        description: error instanceof Error ? error.message : "Could not save settings",
+        variant: "destructive",
+      });
+    },
   });
 
   const updateQuotaMutation = useMutation({
@@ -462,13 +491,35 @@ export default function SettingsPage() {
             </div>
             <Separator />
             <div className="flex items-center justify-between gap-4">
-              <div className="space-y-0.5">
-                <Label>Fatigue Limit (5 consecutive)</Label>
+              <div className="space-y-0.5 flex-1">
+                <Label>Teacher Fatigue Limit</Label>
                 <p className="text-sm text-muted-foreground">
-                  Limit teachers to maximum 5 consecutive teaching periods
+                  Maximum consecutive teaching periods allowed per teacher per day (1-10)
                 </p>
               </div>
-              <Switch defaultChecked disabled />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={fatigueLimit}
+                  onChange={(e) => setFatigueLimit(Math.min(10, Math.max(1, parseInt(e.target.value) || 1)))}
+                  className="w-20"
+                  data-testid="input-fatigue-limit"
+                />
+                <Button
+                  size="sm"
+                  onClick={() => updateSettingsMutation.mutate({ fatigueLimit })}
+                  disabled={updateSettingsMutation.isPending || settingsLoading || fatigueLimit === userSettings?.fatigueLimit}
+                  data-testid="button-save-fatigue-limit"
+                >
+                  {updateSettingsMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
             </div>
             <Separator />
             <div className="flex items-center justify-between gap-4">

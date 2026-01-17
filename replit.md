@@ -75,6 +75,7 @@ PostgreSQL with Drizzle ORM. Tables:
 - `timetable_actions` - Action history for audit (user-scoped)
 - `subject_quotas` - Period allocations per subject (user-scoped)
 - `subjects` - Custom subject definitions with per-class quotas (user-scoped)
+- `user_settings` - User preferences including fatigue limit (user-scoped)
 
 ## Key Features
 
@@ -88,13 +89,13 @@ PostgreSQL with Drizzle ORM. Tables:
 
 ### Validation Rules
 1. **Teacher Clash Prevention**: A teacher cannot teach two classes simultaneously
-2. **Fatigue Limit**: Max 5 consecutive teaching periods per teacher per day
+2. **Fatigue Limit**: Configurable max consecutive teaching periods per teacher per day (default: 5, range: 1-10)
 3. **Break Enforcement**: Double periods cannot cross breaks
 4. **No Doubles in P8/P9**: Double periods restricted to earlier slots
 5. **English-Security Rule**: Security cannot follow English immediately
 6. **Period Quotas**: Tracks weekly allocation per subject
 7. **Subject-Class Mapping**: Teachers can be assigned to teach specific subjects to specific classes only
-8. **Triple Period Prevention**: Maximum 2 consecutive periods of the same subject per class per day
+8. **Daily Occurrence Rule**: Each subject can only appear once per day per class
 
 ### Custom Subjects
 Users can create custom subjects in the Settings page with:

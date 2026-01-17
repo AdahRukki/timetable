@@ -162,6 +162,13 @@ export const subjects = pgTable("subjects", {
   isDefault: integer("is_default").notNull().default(0),
 });
 
+// User settings table
+export const userSettings = pgTable("user_settings", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().unique(),
+  fatigueLimit: integer("fatigue_limit").notNull().default(5),
+});
+
 // ===== ZOD SCHEMAS =====
 
 // Teacher schema
@@ -356,3 +363,13 @@ export const autoGenerateResultSchema = z.object({
 });
 
 export type AutoGenerateResult = z.infer<typeof autoGenerateResultSchema>;
+
+// User settings schema
+export const userSettingsSchema = z.object({
+  fatigueLimit: z.number().min(1).max(10).default(5),
+});
+
+export type UserSettings = z.infer<typeof userSettingsSchema>;
+
+export const insertUserSettingsSchema = userSettingsSchema;
+export type InsertUserSettings = z.infer<typeof insertUserSettingsSchema>;

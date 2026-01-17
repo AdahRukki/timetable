@@ -266,15 +266,15 @@ export function getTotalSubjectCountForDay(
   return count;
 }
 
-// Check if adding a period would exceed fatigue limit (5 consecutive periods)
+// Check if adding a period would exceed fatigue limit
 export function wouldExceedFatigueLimit(
   timetable: Map<string, TimetableSlot>,
   teacherId: string,
   day: Day,
   period: number,
-  isDouble: boolean = false
+  isDouble: boolean = false,
+  maxConsecutive: number = 5
 ): boolean {
-  const MAX_CONSECUTIVE = 5;
   const periodsToAdd = isDouble ? [period, period + 1] : [period];
   
   // Create a set of periods the teacher would be teaching
@@ -319,7 +319,7 @@ export function wouldExceedFatigueLimit(
       }
     }
     
-    if (consecutive > MAX_CONSECUTIVE) return true;
+    if (consecutive > maxConsecutive) return true;
   }
   
   return false;
@@ -364,7 +364,8 @@ export function getSubjectPeriodCounts(
 export function validatePlacement(
   timetable: Map<string, TimetableSlot>,
   teachers: Teacher[],
-  request: PlacementRequest
+  request: PlacementRequest,
+  fatigueLimit: number = 5
 ): ValidationResult {
   const errors: ValidationError[] = [];
   const { day, period, schoolClass, subject, teacherId, slotType } = request;
@@ -460,10 +461,10 @@ export function validatePlacement(
   }
   
   // Check fatigue limit
-  if (wouldExceedFatigueLimit(timetable, teacherId, day, period, slotType === "double")) {
+  if (wouldExceedFatigueLimit(timetable, teacherId, day, period, slotType === "double", fatigueLimit)) {
     errors.push({
       code: "FATIGUE_LIMIT",
-      message: `${teacher.name} would exceed 5 consecutive teaching periods`,
+      message: `${teacher.name} would exceed ${fatigueLimit} consecutive teaching periods`,
       severity: "error",
     });
   }

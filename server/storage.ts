@@ -8,6 +8,7 @@ import {
   type SubjectQuota,
   type Subject,
   type InsertSubject,
+  type UserSettings,
   DAYS,
   CLASSES,
   PERIODS_PER_DAY,
@@ -17,6 +18,7 @@ import {
   timetableActions,
   subjectQuotas,
   subjects,
+  userSettings,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
@@ -68,6 +70,10 @@ export interface IStorage {
   updateSubject(userId: string, id: number, subject: Partial<InsertSubject>): Promise<Subject | undefined>;
   deleteSubject(userId: string, id: number): Promise<boolean>;
   initializeSubjectsFromQuotas(userId: string): Promise<void>;
+  
+  // User settings
+  getUserSettings(userId: string): Promise<UserSettings>;
+  updateUserSettings(userId: string, settings: Partial<UserSettings>): Promise<UserSettings>;
   
   // Initialize user data
   initializeUserData(userId: string): Promise<void>;
@@ -127,6 +133,9 @@ export class DatabaseStorage implements IStorage {
     for (const teacher of sampleTeachers) {
       await this.createTeacher(userId, teacher);
     }
+
+    // Initialize default user settings
+    await db.insert(userSettings).values({ userId, fatigueLimit: 5 }).onConflictDoNothing();
   }
 
   // Teachers
@@ -562,6 +571,25 @@ export class DatabaseStorage implements IStorage {
         });
       }
     }
+  }
+
+  async getUserSettings(userId: string): Promise<UserSettings> {
+    const results = await db.select().from(userSettings).where(eq(userSettings.userId, userId));
+    if (results.length > 0) {
+      return { fatigueLimit: results[0].fatigueLimit };
+    }
+    // Create default settings if none exist
+    await db.insert(userSettings).values({ userId, fatigueLimit: 5 });
+    return { fatigueLimit: 5 };
+  }
+
+  async updateUserSettings(userId: string, settings: Partial<UserSettings>): Promise<UserSettings> {
+    // Ensure settings exist first
+    const existing = await this.getUserSettings(userId);
+    
+    const newSettings = { ...existing, ...settings };
+    await db.update(userSettings).set({ fatigueLimit: newSettings.fatigueLimit }).where(eq(userSettings.userId, userId));
+    return newSettings;
   }
 }
 

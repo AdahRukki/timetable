@@ -189,6 +189,8 @@ async function validatePlacement(
   const errors: ValidationError[] = [];
   const teachers = await storage.getTeachers(userId);
   const timetable = await storage.getTimetable(userId);
+  const userSettings = await storage.getUserSettings(userId);
+  const fatigueLimit = userSettings.fatigueLimit;
   
   const teacher = teachers.find((t) => t.id === teacherId);
   if (!teacher) {
@@ -388,10 +390,10 @@ async function validatePlacement(
         // Check fatigue for slash pair teacher
         const slashPeriodsToAdd = [period];
         const slashConsecutive = getConsecutiveTeachingCount(timetable, slashPairTeacherId, day, slashPeriodsToAdd);
-        if (slashConsecutive > 5) {
+        if (slashConsecutive > fatigueLimit) {
           errors.push({
             code: "SLASH_TEACHER_FATIGUE",
-            message: `${slashPairTeacher.name} would exceed 5 consecutive teaching periods`,
+            message: `${slashPairTeacher.name} would exceed ${fatigueLimit} consecutive teaching periods`,
             severity: "error",
           });
         }
@@ -402,10 +404,10 @@ async function validatePlacement(
   // Fatigue limit check
   const periodsToAdd = slotType === "double" ? [period, period + 1] : [period];
   const consecutive = getConsecutiveTeachingCount(timetable, teacherId, day, periodsToAdd);
-  if (consecutive > 5) {
+  if (consecutive > fatigueLimit) {
     errors.push({
       code: "FATIGUE_LIMIT",
-      message: `${teacher.name} would exceed 5 consecutive teaching periods`,
+      message: `${teacher.name} would exceed ${fatigueLimit} consecutive teaching periods`,
       severity: "error",
     });
   }
@@ -686,6 +688,34 @@ export async function registerRoutes(
     res.json(quotas);
   });
 
+  // ===== User Settings =====
+
+  // Get user settings
+  app.get("/api/settings", isAuthenticated, async (req, res) => {
+    const userId = getUserId(req);
+    const settings = await storage.getUserSettings(userId);
+    res.json(settings);
+  });
+
+  // Update user settings
+  app.patch("/api/settings", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const settingsSchema = z.object({
+        fatigueLimit: z.number().min(1).max(10).optional(),
+      });
+      const updates = settingsSchema.parse(req.body);
+      const settings = await storage.updateUserSettings(userId, updates);
+      res.json(settings);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid settings data", details: error.errors });
+      } else {
+        res.status(500).json({ error: "Failed to update settings" });
+      }
+    }
+  });
+
   // ===== Custom Subjects =====
   
   // Get all subjects
@@ -810,6 +840,8 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
   
   const teachers = await storage.getTeachers(userId);
   const quotas = await storage.getSubjectQuotas(userId);
+  const userSettings = await storage.getUserSettings(userId);
+  const fatigueLimit = userSettings.fatigueLimit;
   
   // Get existing slots to optionally preserve
   const existingTimetable = await storage.getTimetable(userId);
@@ -886,7 +918,7 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
         if (toSchedule > 0) {
           const placed = await scheduleSlashSubject(
             userId, schoolClass, subj1, subj2, toSchedule,
-            teachers, timetable, lockedSlots, warnings
+            teachers, timetable, lockedSlots, warnings, fatigueLimit
           );
           slotsPlaced += placed;
           classQuotas.set(subj1, quota1 - placed);
@@ -904,7 +936,7 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
     for (const [subject, remaining] of subjects) {
       const placed = await scheduleSingleSubject(
         userId, schoolClass, subject, remaining,
-        teachers, timetable, lockedSlots, warnings
+        teachers, timetable, lockedSlots, warnings, fatigueLimit
       );
       slotsPlaced += placed;
       if (placed < remaining) {
@@ -942,7 +974,8 @@ async function scheduleSlashSubject(
   teachers: Teacher[],
   timetable: Map<string, TimetableSlot>,
   lockedSlots: Set<string>,
-  warnings: string[]
+  warnings: string[],
+  fatigueLimit: number = 5
 ): Promise<number> {
   let placed = 0;
   
@@ -985,12 +1018,12 @@ async function scheduleSlashSubject(
         for (const t1 of teachers1) {
           if (slotPlaced) break;
           if (!isTeacherAvailableForSlot(timetable, t1, day, period)) continue;
-          if (wouldExceedFatigue(timetable, t1.id, day, [period])) continue;
+          if (wouldExceedFatigue(timetable, t1.id, day, [period], fatigueLimit)) continue;
           
           for (const t2 of teachers2) {
             if (t1.id === t2.id) continue;
             if (!isTeacherAvailableForSlot(timetable, t2, day, period)) continue;
-            if (wouldExceedFatigue(timetable, t2.id, day, [period])) continue;
+            if (wouldExceedFatigue(timetable, t2.id, day, [period], fatigueLimit)) continue;
             
             if (subject1 === "Security" || subject2 === "Security") {
               const prevKey = `${day}-${schoolClass}-${period - 1}`;
@@ -1032,7 +1065,8 @@ async function scheduleSingleSubject(
   teachers: Teacher[],
   timetable: Map<string, TimetableSlot>,
   lockedSlots: Set<string>,
-  warnings: string[]
+  warnings: string[],
+  fatigueLimit: number = 5
 ): Promise<number> {
   let placed = 0;
   
@@ -1068,7 +1102,7 @@ async function scheduleSingleSubject(
         
         for (const teacher of availableTeachers) {
           if (!isTeacherAvailableForSlot(timetable, teacher, day, period)) continue;
-          if (wouldExceedFatigue(timetable, teacher.id, day, [period])) continue;
+          if (wouldExceedFatigue(timetable, teacher.id, day, [period], fatigueLimit)) continue;
           
           if (subject === "Security") {
             const prevKey = `${day}-${schoolClass}-${period - 1}`;
@@ -1125,7 +1159,8 @@ function wouldExceedFatigue(
   timetable: Map<string, TimetableSlot>,
   teacherId: string,
   day: Day,
-  newPeriods: number[]
+  newPeriods: number[],
+  fatigueLimit: number = 5
 ): boolean {
   const maxPeriods = PERIODS_PER_DAY[day];
   const teachingPeriods = new Set<number>(newPeriods);
@@ -1164,5 +1199,5 @@ function wouldExceedFatigue(
     maxConsecutive = Math.max(maxConsecutive, current);
   }
   
-  return maxConsecutive > 5;
+  return maxConsecutive > fatigueLimit;
 }
