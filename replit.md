@@ -27,21 +27,53 @@ This application allows school administrators to create weekly timetables for mu
 │   │   │   │   └── auto-generate-dialog.tsx # Auto-generation dialog
 │   │   │   ├── app-sidebar.tsx             # Navigation sidebar
 │   │   │   └── theme-toggle.tsx            # Dark/light mode toggle
+│   │   ├── hooks/
+│   │   │   └── use-auth.ts                 # Authentication hook
 │   │   ├── lib/
 │   │   │   ├── timetable-utils.ts          # Validation & utility functions
 │   │   │   └── sample-data.ts              # Sample teacher data
 │   │   └── pages/
 │   │       ├── home.tsx                    # Main timetable builder
+│   │       ├── landing.tsx                 # Landing page for logged-out users
 │   │       ├── teachers.tsx                # Teacher management
 │   │       ├── dashboard.tsx               # Analytics & reports
 │   │       ├── settings.tsx                # Configuration
 │   │       └── help.tsx                    # Documentation
 ├── server/                    # Express backend
-│   ├── routes.ts              # API endpoints
-│   └── storage.ts             # In-memory data storage
+│   ├── db.ts                  # Database connection (Drizzle + PostgreSQL)
+│   ├── routes.ts              # API endpoints (protected by auth)
+│   ├── storage.ts             # DatabaseStorage implementation
+│   └── replit_integrations/   # Replit integration modules
+│       └── auth/              # Authentication via Replit OpenID Connect
 └── shared/
-    └── schema.ts              # Shared TypeScript types & constants
+    ├── schema.ts              # Shared TypeScript types & database schema
+    └── models/
+        └── auth.ts            # User type definitions
 ```
+
+## Authentication
+
+The application uses Replit Auth (OpenID Connect) supporting:
+- Google login
+- GitHub login  
+- Apple login
+- Email/password
+
+User sessions are stored in PostgreSQL. All data is user-scoped - each user has their own isolated timetables, teachers, and settings.
+
+On first login, users are automatically initialized with:
+- Default subject quotas for all classes
+- Sample teachers for demonstration
+
+## Database Schema
+
+PostgreSQL with Drizzle ORM. Tables:
+- `users` - User accounts (managed by auth)
+- `sessions` - Session storage (managed by auth)
+- `teachers` - Teacher profiles with subjects, classes, unavailability (user-scoped)
+- `timetable_slots` - Individual period assignments (user-scoped)
+- `timetable_actions` - Action history for audit (user-scoped)
+- `subject_quotas` - Period allocations per subject (user-scoped)
 
 ## Key Features
 
@@ -72,7 +104,9 @@ Paired subjects scheduled simultaneously:
 
 - **Frontend**: React, TypeScript, Tailwind CSS, Shadcn UI
 - **Backend**: Express.js, Node.js
-- **State Management**: React useState/useCallback
+- **Database**: PostgreSQL with Drizzle ORM
+- **Authentication**: Replit Auth (OpenID Connect)
+- **State Management**: React useState/useCallback, TanStack Query
 - **Routing**: Wouter
 - **Charts**: Recharts (for dashboard analytics)
 
@@ -80,20 +114,38 @@ Paired subjects scheduled simultaneously:
 
 The application runs with `npm run dev` which starts both the Express backend and Vite frontend on port 5000.
 
+### Database Commands
+- `npm run db:push` - Sync schema to database
+
 ### API Endpoints
-- `GET /api/teachers` - List all teachers
+
+All API endpoints require authentication (except `/api/login`, `/api/logout`, `/api/auth/user`).
+
+**Auth:**
+- `GET /api/auth/user` - Get current user info
+- `GET /api/login` - Redirect to login page
+- `GET /api/logout` - Log out and redirect to home
+
+**Teachers:**
+- `GET /api/teachers` - List all teachers (user-scoped)
 - `POST /api/teachers` - Create a teacher
-- `PATCH /api/teachers/:id` - Update a teacher (name, subjects, classes, unavailability)
+- `PATCH /api/teachers/:id` - Update a teacher
 - `DELETE /api/teachers/:id` - Delete a teacher
-- `GET /api/timetable` - Get full timetable
-- `POST /api/timetable/validate` - Validate a placement (enforces all scheduling rules)
-- `POST /api/timetable/place` - Place a subject (validates before placing)
+
+**Timetable:**
+- `GET /api/timetable` - Get full timetable (user-scoped)
+- `POST /api/timetable/validate` - Validate a placement
+- `POST /api/timetable/place` - Place a subject
 - `DELETE /api/timetable/:day/:class/:period` - Remove a subject
-- `GET /api/actions` - Get action history
-- `GET /api/quotas` - Get subject period quotas
-- `PATCH /api/quotas/:subject` - Update a subject's period quota (validated with Zod)
-- `POST /api/quotas/reset` - Reset quotas to default values
-- `POST /api/timetable/autogenerate` - Auto-generate timetable using configured quotas
+- `POST /api/timetable/autogenerate` - Auto-generate timetable
+
+**Quotas:**
+- `GET /api/quotas` - Get subject period quotas (user-scoped)
+- `PATCH /api/quotas/:subject` - Update a subject's quota
+- `POST /api/quotas/reset` - Reset quotas to defaults
+
+**History:**
+- `GET /api/actions` - Get action history (user-scoped)
 
 ### Undo/Redo
 Undo/redo functionality is implemented on the frontend for session-based state management. The backend tracks actions for audit purposes but does not provide undo/redo endpoints since the frontend maintains authoritative state for immediate user feedback.
@@ -101,5 +153,7 @@ Undo/redo functionality is implemented on the frontend for session-based state m
 ## User Preferences
 
 - Dark mode toggle available in header
+- User profile menu with avatar and logout
 - Sidebar navigation for different sections
 - Collapsible teacher cards for workload details
+- Data persists across sessions (stored in database)
