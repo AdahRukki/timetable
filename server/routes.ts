@@ -303,14 +303,6 @@ async function validatePlacement(
       });
     }
     
-    // No doubles in P8/P9
-    if (period >= 8) {
-      errors.push({
-        code: "LATE_DOUBLE",
-        message: "Double periods are not allowed in P8/P9",
-        severity: "error",
-      });
-    }
   }
   
   // Slash subject validation
@@ -1037,7 +1029,6 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
             if (placed) break;
             
             // Double period validation
-            if (period >= 8) continue; // No doubles in P8/P9
             if (wouldCrossBreak(day, period)) continue;
             
             const key1 = `${day}-${schoolClass}-${period}`;
@@ -1366,7 +1357,6 @@ async function scheduleSingleSubject(
           if (slotPlaced) break;
           
           // Double period validation
-          if (period >= 8) continue; // No doubles in P8/P9
           if (wouldCrossBreak(day, period)) continue; // Can't cross breaks
           
           const key1 = `${day}-${schoolClass}-${period}`;

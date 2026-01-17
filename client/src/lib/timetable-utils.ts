@@ -514,15 +514,6 @@ export function validatePlacement(
       });
     }
     
-    // Check P8/P9 restriction
-    if (period >= 8) {
-      errors.push({
-        code: "NO_DOUBLE_P8_P9",
-        message: "Double periods are not allowed in P8 or P9",
-        severity: "error",
-      });
-    }
-    
     // Check if would cross break
     if (wouldCrossBreak(day, period)) {
       errors.push({
