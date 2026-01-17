@@ -544,17 +544,23 @@ export class DatabaseStorage implements IStorage {
     // Get all quotas for this user
     const quotas = await this.getSubjectQuotas(userId);
     
-    // Add each quota as a default subject
+    // Get existing subjects for this user
+    const existingSubjects = await this.getSubjects(userId);
+    const existingNames = new Set(existingSubjects.map(s => s.name));
+    
+    // Add each quota as a default subject if not already exists
     for (const quota of quotas) {
-      await db.insert(subjects).values({
-        userId,
-        name: quota.subject,
-        jssQuota: quota.jssQuota,
-        ss1Quota: quota.ss1Quota,
-        ss2ss3Quota: quota.ss2ss3Quota,
-        isSlashSubject: quota.isSlashSubject ? 1 : 0,
-        isDefault: 1,
-      }).onConflictDoNothing();
+      if (!existingNames.has(quota.subject)) {
+        await db.insert(subjects).values({
+          userId,
+          name: quota.subject,
+          jssQuota: quota.jssQuota,
+          ss1Quota: quota.ss1Quota,
+          ss2ss3Quota: quota.ss2ss3Quota,
+          isSlashSubject: quota.isSlashSubject ? 1 : 0,
+          isDefault: 1,
+        });
+      }
     }
   }
 }
