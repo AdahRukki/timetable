@@ -25,6 +25,12 @@ export const PERIODS_PER_DAY: Record<Day, number> = {
 export const BREAK_AFTER_P4 = 4; // Break 1: after P4
 export const BREAK_AFTER_P7 = 7; // Break 2: after P7 (Mon-Thu only)
 
+// Free period limits
+export const MAX_FREE_PERIODS_PER_WEEK = 3; // Each class can have max 3 free periods per week
+export const MAX_FREE_PERIODS_PER_DAY = 2; // Each class can have max 2 free periods per day
+export const TOTAL_PERIODS_PER_WEEK = 40; // Total periods available per class per week
+export const MIN_TEACHING_PERIODS_PER_WEEK = TOTAL_PERIODS_PER_WEEK - MAX_FREE_PERIODS_PER_WEEK; // 37 minimum teaching periods
+
 // Friday special structure: P1-P3, Prayer 11:30-12:00, Break 12:00-12:30, P4-P6
 
 // Subject period counts per week
