@@ -1,4 +1,3 @@
-import { Fragment } from "react";
 import {
   CLASSES,
   DAYS,
@@ -6,16 +5,14 @@ import {
   type TimetableSlot,
   type Teacher,
   PERIODS_PER_DAY,
-  BREAK_AFTER_P4,
-  BREAK_AFTER_P7,
 } from "@shared/schema";
-import { TimetableCell } from "./timetable-cell";
-import { getSlotKey, getPeriodsForDay } from "@/lib/timetable-utils";
+import { getPeriodsForDay } from "@/lib/timetable-utils";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { Calendar, Clock } from "lucide-react";
+import { Calendar, Clock, Coffee, Plus } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface TimetableGridProps {
   timetable: Map<string, TimetableSlot>;
@@ -32,25 +29,144 @@ export function TimetableGrid({
   onDayChange,
   onCellClick,
 }: TimetableGridProps) {
-  const periods = getPeriodsForDay(selectedDay);
   const maxPeriods = PERIODS_PER_DAY[selectedDay];
 
-  const getTeacher = (teacherId: string | null) =>
+  const getTeacher = (teacherId: string | null): Teacher | undefined =>
     teacherId ? teachers.find((t) => t.id === teacherId) : undefined;
 
-  const isBreakAfterPeriod = (period: number) => {
-    if (selectedDay === "Friday") {
-      return period === 3;
-    }
-    if (period === BREAK_AFTER_P4) return true;
-    if (selectedDay !== "Tuesday" && period === BREAK_AFTER_P7) return true;
-    return false;
-  };
-
-  const getPeriodLabel = (period: number) => {
+  const getPeriodLabel = (period: number): string => {
     const startHour = 8 + Math.floor((period - 1) * 40 / 60);
     const startMin = ((period - 1) * 40) % 60;
     return `${startHour.toString().padStart(2, "0")}:${startMin.toString().padStart(2, "0")}`;
+  };
+
+  const getSlotForCell = (day: Day, schoolClass: string, period: number): TimetableSlot => {
+    const key = `${day}-${schoolClass}-${period}`;
+    const slot = timetable.get(key);
+    
+    if (slot) {
+      return slot;
+    }
+    
+    return {
+      day: day as Day,
+      period,
+      schoolClass: schoolClass as any,
+      status: "empty",
+      subject: null,
+      teacherId: null,
+      slotType: null,
+      slashPairSubject: null,
+      slashPairTeacherId: null,
+    };
+  };
+
+  const renderCell = (day: Day, schoolClass: string, period: number, skipDoubleCheck: Set<string>) => {
+    const slot = getSlotForCell(day, schoolClass, period);
+    const teacher = getTeacher(slot.teacherId);
+    const slashPairTeacher = getTeacher(slot.slashPairTeacherId);
+    
+    const prevKey = `${day}-${schoolClass}-${period - 1}`;
+    if (skipDoubleCheck.has(prevKey)) {
+      return null;
+    }
+    
+    if (slot.slotType === "double" && slot.status === "occupied") {
+      skipDoubleCheck.add(`${day}-${schoolClass}-${period}`);
+    }
+
+    const isDouble = slot.slotType === "double";
+
+    if (slot.status === "empty") {
+      return (
+        <td key={period} className="p-1">
+          <button
+            onClick={() => onCellClick(slot)}
+            className="timetable-cell timetable-cell-empty h-14 w-full flex items-center justify-center rounded-md hover-elevate cursor-pointer group"
+            data-testid={`cell-empty-${day}-${schoolClass}-${period}`}
+          >
+            <Plus className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+          </button>
+        </td>
+      );
+    }
+
+    const cellStyle = teacher
+      ? { backgroundColor: `${teacher.color}15`, borderColor: teacher.color }
+      : {};
+
+    return (
+      <td key={period} className="p-1" colSpan={isDouble ? 2 : 1}>
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => onCellClick(slot)}
+              className={cn(
+                "timetable-cell timetable-cell-occupied w-full flex flex-col items-start justify-center rounded-md px-2 py-1 hover-elevate cursor-pointer text-left border-l-4",
+                isDouble ? "h-[7.25rem]" : "h-14"
+              )}
+              style={cellStyle}
+              data-testid={`cell-${day}-${schoolClass}-${period}`}
+            >
+              {slot.slotType === "slash" ? (
+                <>
+                  <div className="flex items-center gap-1 w-full">
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: teacher?.color }}
+                    />
+                    <span className="text-xs font-medium truncate">{slot.subject}</span>
+                  </div>
+                  <div className="flex items-center gap-1 w-full">
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: slashPairTeacher?.color }}
+                    />
+                    <span className="text-xs font-medium truncate">{slot.slashPairSubject}</span>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground truncate w-full mt-0.5">
+                    {teacher?.name?.split(" ")[0]} / {slashPairTeacher?.name?.split(" ")[0]}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-1 w-full">
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: teacher?.color }}
+                    />
+                    <span className="text-xs font-medium truncate">{slot.subject}</span>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground truncate w-full">
+                    {teacher?.name}
+                  </div>
+                  {isDouble && (
+                    <span className="text-[9px] bg-primary/10 text-primary px-1 rounded mt-0.5">
+                      Double
+                    </span>
+                  )}
+                </>
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-xs">
+            <div className="space-y-1">
+              <p className="font-medium">{slot.subject}</p>
+              <p className="text-xs text-muted-foreground">{teacher?.name}</p>
+              {slot.slotType === "slash" && (
+                <>
+                  <p className="font-medium mt-1">{slot.slashPairSubject}</p>
+                  <p className="text-xs text-muted-foreground">{slashPairTeacher?.name}</p>
+                </>
+              )}
+              {isDouble && (
+                <p className="text-xs text-primary">Double Period</p>
+              )}
+            </div>
+          </TooltipContent>
+        </Tooltip>
+      </td>
+    );
   };
 
   return (
@@ -85,134 +201,72 @@ export function TimetableGrid({
             </TabsList>
           </div>
 
-          {DAYS.map((day) => (
-            <TabsContent
-              key={day}
-              value={day}
-              className="mt-0 focus-visible:outline-none focus-visible:ring-0"
-            >
-              <div className="overflow-x-auto scrollbar-thin">
-                <div className="min-w-[800px] px-4 pb-4">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr>
-                        <th className="w-20 p-2 text-left text-xs font-medium text-muted-foreground sticky left-0 bg-card z-10">
-                          <div className="flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            Class
-                          </div>
-                        </th>
-                        {getPeriodsForDay(day).map((period) => (
-                          <th
-                            key={period}
-                            className="p-2 text-center min-w-[90px]"
-                          >
-                            <div className="text-xs font-medium text-foreground">
-                              P{period}
-                            </div>
-                            <div className="text-[10px] text-muted-foreground">
-                              {getPeriodLabel(period)}
+          {DAYS.map((day) => {
+            const periods = getPeriodsForDay(day);
+            
+            return (
+              <TabsContent
+                key={day}
+                value={day}
+                className="mt-0 focus-visible:outline-none focus-visible:ring-0"
+              >
+                <div className="overflow-x-auto scrollbar-thin">
+                  <div className="min-w-[800px] px-4 pb-4">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr>
+                          <th className="w-20 p-2 text-left text-xs font-medium text-muted-foreground sticky left-0 bg-card z-10">
+                            <div className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              Class
                             </div>
                           </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {CLASSES.map((schoolClass) => (
-                        <Fragment key={schoolClass}>
-                          <tr>
-                            <td className="p-2 sticky left-0 bg-card z-10">
-                              <Badge
-                                variant={
-                                  schoolClass.startsWith("SS")
-                                    ? "default"
-                                    : "secondary"
-                                }
-                                className="font-medium"
-                              >
-                                {schoolClass}
-                              </Badge>
-                            </td>
-                            {getPeriodsForDay(day).map((period) => {
-                              const slot = timetable.get(
-                                getSlotKey(day, schoolClass, period)
-                              );
-                              
-                              // Create a default empty slot if not found
-                              const displaySlot: TimetableSlot = slot || {
-                                day,
-                                period,
-                                schoolClass,
-                                status: "empty",
-                                subject: null,
-                                teacherId: null,
-                                slotType: null,
-                                slashPairSubject: null,
-                                slashPairTeacherId: null,
-                              };
-
-                              const teacher = getTeacher(displaySlot.teacherId);
-                              const slashPairTeacher = getTeacher(
-                                displaySlot.slashPairTeacherId
-                              );
-
-                              const prevSlot = timetable.get(
-                                getSlotKey(day, schoolClass, period - 1)
-                              );
-                              const isSecondOfDouble =
-                                prevSlot?.slotType === "double" &&
-                                prevSlot.status === "occupied";
-
-                              return (
-                                <td
-                                  key={period}
-                                  className={cn(
-                                    "p-1",
-                                    isSecondOfDouble && "hidden"
-                                  )}
-                                  colSpan={
-                                    displaySlot.slotType === "double" ? 2 : 1
+                          {periods.map((period) => (
+                            <th
+                              key={period}
+                              className="p-2 text-center min-w-[90px]"
+                            >
+                              <div className="text-xs font-medium text-foreground">
+                                P{period}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">
+                                {getPeriodLabel(period)}
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {CLASSES.map((schoolClass) => {
+                          const skipDoubleCheck = new Set<string>();
+                          
+                          return (
+                            <tr key={schoolClass}>
+                              <td className="p-2 sticky left-0 bg-card z-10">
+                                <Badge
+                                  variant={
+                                    schoolClass.startsWith("SS")
+                                      ? "default"
+                                      : "secondary"
                                   }
+                                  className="font-medium"
                                 >
-                                  <TimetableCell
-                                    slot={displaySlot}
-                                    teacher={teacher}
-                                    slashPairTeacher={slashPairTeacher}
-                                    onCellClick={() => onCellClick(displaySlot)}
-                                    isDouble={displaySlot.slotType === "double"}
-                                    isSecondOfDouble={isSecondOfDouble}
-                                  />
-                                </td>
-                              );
-                            })}
-                          </tr>
-                          {isBreakAfterPeriod(
-                            getPeriodsForDay(day).find((p) =>
-                              isBreakAfterPeriod(p)
-                            ) || 0
-                          ) &&
-                            schoolClass === CLASSES[0] && (
-                              <tr key={`break-indicator-${schoolClass}`}>
-                                <td
-                                  colSpan={getPeriodsForDay(day).length + 1}
-                                  className="py-1"
-                                >
-                                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                    <div className="h-px flex-1 bg-border" />
-                                    <span>Break</span>
-                                    <div className="h-px flex-1 bg-border" />
-                                  </div>
-                                </td>
-                              </tr>
-                            )}
-                        </Fragment>
-                      ))}
-                    </tbody>
-                  </table>
+                                  {schoolClass}
+                                </Badge>
+                              </td>
+                              {periods.map((period) => 
+                                renderCell(day, schoolClass, period, skipDoubleCheck)
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
-            </TabsContent>
-          ))}
+              </TabsContent>
+            );
+          })}
         </Tabs>
       </CardContent>
     </Card>
