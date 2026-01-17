@@ -137,11 +137,23 @@ export function TimetableGrid({
                               const slot = timetable.get(
                                 getSlotKey(day, schoolClass, period)
                               );
-                              if (!slot) return null;
+                              
+                              // Create a default empty slot if not found
+                              const displaySlot: TimetableSlot = slot || {
+                                day,
+                                period,
+                                schoolClass,
+                                status: "empty",
+                                subject: null,
+                                teacherId: null,
+                                slotType: null,
+                                slashPairSubject: null,
+                                slashPairTeacherId: null,
+                              };
 
-                              const teacher = getTeacher(slot.teacherId);
+                              const teacher = getTeacher(displaySlot.teacherId);
                               const slashPairTeacher = getTeacher(
-                                slot.slashPairTeacherId
+                                displaySlot.slashPairTeacherId
                               );
 
                               const prevSlot = timetable.get(
@@ -159,15 +171,15 @@ export function TimetableGrid({
                                     isSecondOfDouble && "hidden"
                                   )}
                                   colSpan={
-                                    slot.slotType === "double" ? 2 : 1
+                                    displaySlot.slotType === "double" ? 2 : 1
                                   }
                                 >
                                   <TimetableCell
-                                    slot={slot}
+                                    slot={displaySlot}
                                     teacher={teacher}
                                     slashPairTeacher={slashPairTeacher}
-                                    onCellClick={() => onCellClick(slot)}
-                                    isDouble={slot.slotType === "double"}
+                                    onCellClick={() => onCellClick(displaySlot)}
+                                    isDouble={displaySlot.slotType === "double"}
                                     isSecondOfDouble={isSecondOfDouble}
                                   />
                                 </td>
