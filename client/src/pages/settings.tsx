@@ -276,6 +276,7 @@ export default function SettingsPage() {
                         <span>JSS: {subject.jssQuota}</span>
                         <span>SS1: {subject.ss1Quota}</span>
                         <span>SS2/SS3: {subject.ss2ss3Quota}</span>
+                        <span className="font-medium text-foreground">Total: {(subject.jssQuota * 3) + subject.ss1Quota + (subject.ss2ss3Quota * 2)}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
@@ -336,6 +337,7 @@ export default function SettingsPage() {
                     onChange={(e) => setNewSubjectJssQuota(parseInt(e.target.value) || 0)}
                     data-testid="input-jss-quota"
                   />
+                  <p className="text-xs text-muted-foreground">× 3 classes = {newSubjectJssQuota * 3}</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="ss1-quota">SS1 Quota</Label>
@@ -348,6 +350,7 @@ export default function SettingsPage() {
                     onChange={(e) => setNewSubjectSs1Quota(parseInt(e.target.value) || 0)}
                     data-testid="input-ss1-quota"
                   />
+                  <p className="text-xs text-muted-foreground">× 1 class = {newSubjectSs1Quota}</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="ss2ss3-quota">SS2/SS3 Quota</Label>
@@ -360,7 +363,16 @@ export default function SettingsPage() {
                     onChange={(e) => setNewSubjectSs2ss3Quota(parseInt(e.target.value) || 0)}
                     data-testid="input-ss2ss3-quota"
                   />
+                  <p className="text-xs text-muted-foreground">× 2 classes = {newSubjectSs2ss3Quota * 2}</p>
                 </div>
+              </div>
+              <div className="bg-muted/50 rounded-md p-3 mt-2">
+                <p className="text-sm font-medium">
+                  Total Weekly Periods: {(newSubjectJssQuota * 3) + newSubjectSs1Quota + (newSubjectSs2ss3Quota * 2)}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  JSS ({newSubjectJssQuota} × 3) + SS1 ({newSubjectSs1Quota} × 1) + SS2/SS3 ({newSubjectSs2ss3Quota} × 2)
+                </p>
               </div>
             </div>
             <DialogFooter>
