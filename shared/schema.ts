@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { pgTable, text, integer, jsonb, varchar, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, jsonb, varchar, serial, bigint } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 
 // Export auth schema
@@ -179,8 +179,8 @@ export const userSettings = pgTable("user_settings", {
 export const sharedTimetables = pgTable("shared_timetables", {
   id: varchar("id").primaryKey(),
   userId: varchar("user_id").notNull(),
-  createdAt: integer("created_at").notNull(),
-  expiresAt: integer("expires_at"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  expiresAt: bigint("expires_at", { mode: "number" }),
   timetableData: jsonb("timetable_data").notNull(),
   teacherData: jsonb("teacher_data").notNull(),
   title: text("title"),
