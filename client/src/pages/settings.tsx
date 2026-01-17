@@ -6,18 +6,29 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import { Settings, Bell, Shield, Clock, Download, Upload, BookOpen, RotateCcw, Loader2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Settings, Bell, Shield, Clock, Download, Upload, BookOpen, RotateCcw, Loader2, Plus, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import type { SubjectQuota } from "@shared/schema";
+import type { SubjectQuota, Subject } from "@shared/schema";
 import { useState, useEffect } from "react";
 
 export default function SettingsPage() {
   const { toast } = useToast();
+  const [subjectDialogOpen, setSubjectDialogOpen] = useState(false);
+  const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
+  const [newSubjectName, setNewSubjectName] = useState("");
+  const [newSubjectJssQuota, setNewSubjectJssQuota] = useState(4);
+  const [newSubjectSs1Quota, setNewSubjectSs1Quota] = useState(4);
+  const [newSubjectSs2ss3Quota, setNewSubjectSs2ss3Quota] = useState(4);
 
   const { data: quotas = [], isLoading: quotasLoading } = useQuery<SubjectQuota[]>({
     queryKey: ["/api/quotas"],
+  });
+
+  const { data: subjects = [], isLoading: subjectsLoading } = useQuery<Subject[]>({
+    queryKey: ["/api/subjects"],
   });
 
   const updateQuotaMutation = useMutation({
@@ -50,8 +61,110 @@ export default function SettingsPage() {
     },
   });
 
+  const createSubjectMutation = useMutation({
+    mutationFn: async (data: { name: string; jssQuota: number; ss1Quota: number; ss2ss3Quota: number }) => {
+      return apiRequest("POST", "/api/subjects", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/subjects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
+      setSubjectDialogOpen(false);
+      resetSubjectForm();
+      toast({ title: "Subject Created", description: "New subject has been added" });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to create subject",
+        description: error?.message || "Could not create subject",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateSubjectMutation = useMutation({
+    mutationFn: async ({ id, updates }: { id: number; updates: Partial<Subject> }) => {
+      return apiRequest("PATCH", `/api/subjects/${id}`, updates);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/subjects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
+      setSubjectDialogOpen(false);
+      setEditingSubject(null);
+      resetSubjectForm();
+      toast({ title: "Subject Updated", description: "Subject has been updated" });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to update subject",
+        description: error?.message || "Could not update subject",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteSubjectMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return apiRequest("DELETE", `/api/subjects/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/subjects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
+      toast({ title: "Subject Deleted", description: "Subject has been removed" });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to delete subject",
+        description: error?.message || "Could not delete subject",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleQuotaChange = (subject: string, field: keyof SubjectQuota, value: number) => {
     updateQuotaMutation.mutate({ subject, updates: { [field]: value } });
+  };
+
+  const resetSubjectForm = () => {
+    setNewSubjectName("");
+    setNewSubjectJssQuota(4);
+    setNewSubjectSs1Quota(4);
+    setNewSubjectSs2ss3Quota(4);
+    setEditingSubject(null);
+  };
+
+  const openAddSubjectDialog = () => {
+    resetSubjectForm();
+    setSubjectDialogOpen(true);
+  };
+
+  const openEditSubjectDialog = (subject: Subject) => {
+    setEditingSubject(subject);
+    setNewSubjectName(subject.name);
+    setNewSubjectJssQuota(subject.jssQuota);
+    setNewSubjectSs1Quota(subject.ss1Quota);
+    setNewSubjectSs2ss3Quota(subject.ss2ss3Quota);
+    setSubjectDialogOpen(true);
+  };
+
+  const handleSubjectSubmit = () => {
+    if (editingSubject) {
+      updateSubjectMutation.mutate({
+        id: editingSubject.id,
+        updates: {
+          name: newSubjectName,
+          jssQuota: newSubjectJssQuota,
+          ss1Quota: newSubjectSs1Quota,
+          ss2ss3Quota: newSubjectSs2ss3Quota,
+        },
+      });
+    } else {
+      createSubjectMutation.mutate({
+        name: newSubjectName,
+        jssQuota: newSubjectJssQuota,
+        ss1Quota: newSubjectSs1Quota,
+        ss2ss3Quota: newSubjectSs2ss3Quota,
+      });
+    }
   };
 
   const handleExport = () => {
@@ -83,6 +196,161 @@ export default function SettingsPage() {
             Configure your timetable builder preferences
           </p>
         </div>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Plus className="h-4 w-4" />
+                  Custom Subjects
+                </CardTitle>
+                <CardDescription>
+                  Create and manage custom subjects for your timetable
+                </CardDescription>
+              </div>
+              <Button
+                size="sm"
+                onClick={openAddSubjectDialog}
+                data-testid="button-add-subject"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Subject
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {subjectsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : subjects.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                No custom subjects created yet. Default subjects are already available.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {subjects.map((subject) => (
+                  <div
+                    key={subject.id}
+                    className="flex items-center justify-between gap-4 p-3 rounded-md border"
+                    data-testid={`subject-row-${subject.id}`}
+                  >
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{subject.name}</span>
+                        {subject.isDefault ? (
+                          <Badge variant="secondary" className="text-xs">Default</Badge>
+                        ) : null}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
+                        <span>JSS: {subject.jssQuota}</span>
+                        <span>SS1: {subject.ss1Quota}</span>
+                        <span>SS2/SS3: {subject.ss2ss3Quota}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => openEditSubjectDialog(subject)}
+                        disabled={subject.isDefault}
+                        data-testid={`button-edit-subject-${subject.id}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => deleteSubjectMutation.mutate(subject.id)}
+                        disabled={subject.isDefault || deleteSubjectMutation.isPending}
+                        data-testid={`button-delete-subject-${subject.id}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Dialog open={subjectDialogOpen} onOpenChange={setSubjectDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{editingSubject ? "Edit Subject" : "Add New Subject"}</DialogTitle>
+              <DialogDescription>
+                {editingSubject ? "Update the subject details below" : "Create a new subject with weekly period quotas"}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="subject-name">Subject Name</Label>
+                <Input
+                  id="subject-name"
+                  value={newSubjectName}
+                  onChange={(e) => setNewSubjectName(e.target.value)}
+                  placeholder="e.g., French, Computer Science"
+                  data-testid="input-subject-name"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="jss-quota">JSS Quota</Label>
+                  <Input
+                    id="jss-quota"
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={newSubjectJssQuota}
+                    onChange={(e) => setNewSubjectJssQuota(parseInt(e.target.value) || 0)}
+                    data-testid="input-jss-quota"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ss1-quota">SS1 Quota</Label>
+                  <Input
+                    id="ss1-quota"
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={newSubjectSs1Quota}
+                    onChange={(e) => setNewSubjectSs1Quota(parseInt(e.target.value) || 0)}
+                    data-testid="input-ss1-quota"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ss2ss3-quota">SS2/SS3 Quota</Label>
+                  <Input
+                    id="ss2ss3-quota"
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={newSubjectSs2ss3Quota}
+                    onChange={(e) => setNewSubjectSs2ss3Quota(parseInt(e.target.value) || 0)}
+                    data-testid="input-ss2ss3-quota"
+                  />
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSubjectDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSubjectSubmit}
+                disabled={!newSubjectName.trim() || createSubjectMutation.isPending || updateSubjectMutation.isPending}
+                data-testid="button-submit-subject"
+              >
+                {createSubjectMutation.isPending || updateSubjectMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : null}
+                {editingSubject ? "Update Subject" : "Create Subject"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Card>
           <CardHeader>
