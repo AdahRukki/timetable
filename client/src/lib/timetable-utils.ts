@@ -242,6 +242,30 @@ export function getConsecutiveSameSubjectCount(
   return maxConsecutive;
 }
 
+// Count total occurrences of a subject for a class on a given day (including slash pairs)
+export function getTotalSubjectCountForDay(
+  timetable: Map<string, TimetableSlot>,
+  day: Day,
+  schoolClass: SchoolClass,
+  subject: string,
+  newPeriods: number[] = []
+): number {
+  const maxPeriods = PERIODS_PER_DAY[day];
+  let count = newPeriods.length;
+  
+  for (let period = 1; period <= maxPeriods; period++) {
+    // Don't double-count if this period is in newPeriods
+    if (newPeriods.includes(period)) continue;
+    
+    const slot = getSlot(timetable, day, schoolClass, period);
+    if (slot && (slot.subject === subject || slot.slashPairSubject === subject)) {
+      count++;
+    }
+  }
+  
+  return count;
+}
+
 // Check if adding a period would exceed fatigue limit (5 consecutive periods)
 export function wouldExceedFatigueLimit(
   timetable: Map<string, TimetableSlot>,
@@ -444,17 +468,26 @@ export function validatePlacement(
     });
   }
   
-  // Check consecutive same subject (max 2 - triple period prevention)
-  const periodsToAddForSubject = slotType === "double" ? [period, period + 1] : [period];
-  const consecutiveSameSubject = getConsecutiveSameSubjectCount(
-    timetable, day, schoolClass, subject, periodsToAddForSubject
-  );
-  if (consecutiveSameSubject > 2) {
+  // Check if subject already appears on this day (max 1 occurrence per day)
+  const dailySubjectCount = getTotalSubjectCountForDay(timetable, day, schoolClass, subject, []);
+  if (dailySubjectCount >= 1) {
     errors.push({
-      code: "TRIPLE_PERIOD",
-      message: `Cannot have more than 2 consecutive periods of ${subject} in a day`,
+      code: "SUBJECT_ALREADY_SCHEDULED",
+      message: `${subject} is already scheduled for ${schoolClass} on ${day}`,
       severity: "error",
     });
+  }
+  
+  // For slash subjects, also check the paired subject
+  if (request.slashPairSubject) {
+    const dailyPairCount = getTotalSubjectCountForDay(timetable, day, schoolClass, request.slashPairSubject, []);
+    if (dailyPairCount >= 1) {
+      errors.push({
+        code: "SUBJECT_ALREADY_SCHEDULED",
+        message: `${request.slashPairSubject} is already scheduled for ${schoolClass} on ${day}`,
+        severity: "error",
+      });
+    }
   }
   
   // Check English followed by Security rule

@@ -104,6 +104,31 @@ function getConsecutiveSameSubjectCount(
   return maxConsecutive;
 }
 
+// Count total occurrences of a subject for a class on a given day (including slash pairs)
+function getTotalSubjectCountForDay(
+  timetable: Map<string, TimetableSlot>,
+  day: Day,
+  schoolClass: SchoolClass,
+  subject: string,
+  newPeriods: number[] = []
+): number {
+  const maxPeriods = PERIODS_PER_DAY[day];
+  let count = newPeriods.length;
+  
+  for (let period = 1; period <= maxPeriods; period++) {
+    // Don't double-count if this period is in newPeriods
+    if (newPeriods.includes(period)) continue;
+    
+    const key = `${day}-${schoolClass}-${period}`;
+    const slot = timetable.get(key);
+    if (slot && (slot.subject === subject || slot.slashPairSubject === subject)) {
+      count++;
+    }
+  }
+  
+  return count;
+}
+
 function getConsecutiveTeachingCount(
   timetable: Map<string, TimetableSlot>,
   teacherId: string,
@@ -398,17 +423,26 @@ async function validatePlacement(
     }
   }
   
-  // Triple period prevention (max 2 consecutive periods of the same subject)
-  const periodsToAddForSubject = slotType === "double" ? [period, period + 1] : [period];
-  const consecutiveSameSubject = getConsecutiveSameSubjectCount(
-    timetable, day, schoolClass, subject, periodsToAddForSubject
-  );
-  if (consecutiveSameSubject > 2) {
+  // Subject can only appear once per day per class
+  const dailySubjectCount = getTotalSubjectCountForDay(timetable, day, schoolClass, subject, []);
+  if (dailySubjectCount >= 1) {
     errors.push({
-      code: "TRIPLE_PERIOD",
-      message: `Cannot have more than 2 consecutive periods of ${subject} in a day`,
+      code: "SUBJECT_ALREADY_SCHEDULED",
+      message: `${subject} is already scheduled for ${schoolClass} on ${day}`,
       severity: "error",
     });
+  }
+  
+  // For slash subjects, also check the paired subject
+  if (slashPairSubject) {
+    const dailyPairCount = getTotalSubjectCountForDay(timetable, day, schoolClass, slashPairSubject, []);
+    if (dailyPairCount >= 1) {
+      errors.push({
+        code: "SUBJECT_ALREADY_SCHEDULED",
+        message: `${slashPairSubject} is already scheduled for ${schoolClass} on ${day}`,
+        severity: "error",
+      });
+    }
   }
   
   return {
@@ -943,10 +977,10 @@ async function scheduleSlashSubject(
         const slot = timetable.get(key);
         if (slot && slot.status === "occupied") continue;
         
-        // Check if placing here would create triple period (3+ consecutive same subject) for either subject
-        const consecutiveCount1 = getConsecutiveSameSubjectCount(timetable, day, schoolClass, subject1, [period]);
-        const consecutiveCount2 = getConsecutiveSameSubjectCount(timetable, day, schoolClass, subject2, [period]);
-        if (consecutiveCount1 > 2 || consecutiveCount2 > 2) continue;
+        // Check if either subject already appears on this day for this class (max 1 occurrence per day)
+        const dailyCount1 = getTotalSubjectCountForDay(timetable, day, schoolClass, subject1, []);
+        const dailyCount2 = getTotalSubjectCountForDay(timetable, day, schoolClass, subject2, []);
+        if (dailyCount1 >= 1 || dailyCount2 >= 1) continue;
         
         for (const t1 of teachers1) {
           if (slotPlaced) break;
@@ -1028,9 +1062,9 @@ async function scheduleSingleSubject(
         const slot = timetable.get(key);
         if (slot && slot.status === "occupied") continue;
         
-        // Check if placing here would create triple period (3+ consecutive same subject)
-        const consecutiveCount = getConsecutiveSameSubjectCount(timetable, day, schoolClass, subject, [period]);
-        if (consecutiveCount > 2) continue;
+        // Check if subject already appears on this day for this class (max 1 occurrence per day)
+        const dailyCount = getTotalSubjectCountForDay(timetable, day, schoolClass, subject, []);
+        if (dailyCount >= 1) continue;
         
         for (const teacher of availableTeachers) {
           if (!isTeacherAvailableForSlot(timetable, teacher, day, period)) continue;
