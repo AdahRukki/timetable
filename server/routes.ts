@@ -1352,6 +1352,10 @@ async function runSingleGenerationAttempt(
       for (const { subject } of subjectsWithQuota) {
         if (placed) break;
         
+        // STRICT QUOTA CHECK: Re-verify quota before attempting to place
+        const currentQuota = classQuotas.get(subject) || 0;
+        if (currentQuota <= 0) continue; // Skip if quota exhausted
+        
         // Find teachers who can teach this subject to this class
         const availableTeachers = teachers.filter(t =>
           t.subjects.includes(subject) &&
@@ -1361,6 +1365,10 @@ async function runSingleGenerationAttempt(
         
         for (const teacher of availableTeachers) {
           if (placed) break;
+          
+          // Double-check quota hasn't been exhausted
+          const quotaCheck = classQuotas.get(subject) || 0;
+          if (quotaCheck <= 0) break;
           
           // Check teacher unavailability
           const unavailable = teacher.unavailable[day] || [];
@@ -1393,8 +1401,7 @@ async function runSingleGenerationAttempt(
           await storage.setSlot(userId, newSlot);
           timetable.set(key, newSlot);
           
-          const currentQuota = classQuotas.get(subject) || 0;
-          classQuotas.set(subject, currentQuota - 1);
+          classQuotas.set(subject, quotaCheck - 1);
           slotsPlaced++;
           filledInRetry++;
           placed = true;
@@ -1404,6 +1411,90 @@ async function runSingleGenerationAttempt(
     
     // If no slots were filled in this retry, stop trying
     if (filledInRetry === 0) break;
+  }
+  
+  // ===== FINAL VALIDATION: Ensure no subject exceeds quota =====
+  // Count actual placements and compare against original quotas
+  timetable = await storage.getTimetable(userId);
+  
+  // Rebuild original quotas for comparison
+  const originalQuotas: Map<string, Map<string, number>> = new Map();
+  for (const schoolClass of CLASSES) {
+    const classQuotas = new Map<string, number>();
+    for (const quota of quotas) {
+      const required = getQuotaForClass(quota, schoolClass);
+      if (required > 0) {
+        classQuotas.set(quota.subject, required);
+      }
+    }
+    originalQuotas.set(schoolClass, classQuotas);
+  }
+  
+  // Count actual placements per subject per class
+  const actualCounts: Map<string, Map<string, number>> = new Map();
+  for (const schoolClass of CLASSES) {
+    actualCounts.set(schoolClass, new Map<string, number>());
+  }
+  
+  for (const slot of Array.from(timetable.values())) {
+    if (slot.status === "occupied" && slot.subject) {
+      const classCounts = actualCounts.get(slot.schoolClass)!;
+      const current = classCounts.get(slot.subject) || 0;
+      classCounts.set(slot.subject, current + 1);
+      
+      // Also count slash pair subjects
+      if (slot.slashPairSubject) {
+        const pairCurrent = classCounts.get(slot.slashPairSubject) || 0;
+        classCounts.set(slot.slashPairSubject, pairCurrent + 1);
+      }
+    }
+  }
+  
+  // Remove excess placements where subject exceeds quota
+  for (const schoolClass of CLASSES) {
+    const classOriginalQuotas = originalQuotas.get(schoolClass)!;
+    const classCounts = actualCounts.get(schoolClass)!;
+    
+    for (const [subject, actualCount] of Array.from(classCounts.entries())) {
+      const quota = classOriginalQuotas.get(subject) || 0;
+      if (actualCount > quota && quota > 0) {
+        // Find and remove excess slots (starting from later periods)
+        let toRemove = actualCount - quota;
+        warnings.push(`${schoolClass}: ${subject} exceeded quota (${actualCount}/${quota}), removing ${toRemove} excess`);
+        
+        // Collect slots for this subject in this class, sorted by period descending
+        const subjectSlots: Array<{ day: Day; period: number; key: string }> = [];
+        for (const [key, slot] of Array.from(timetable.entries())) {
+          if (slot.schoolClass === schoolClass && slot.subject === subject && slot.slotType !== "slash") {
+            subjectSlots.push({ day: slot.day, period: slot.period, key });
+          }
+        }
+        
+        // Sort by period descending (remove later periods first)
+        subjectSlots.sort((a, b) => b.period - a.period);
+        
+        for (const { day, period, key } of subjectSlots) {
+          if (toRemove <= 0) break;
+          
+          const slot = timetable.get(key);
+          if (slot && slot.slotType === "double") {
+            // Remove both slots of double period
+            await storage.clearSlot(userId, day, schoolClass, period);
+            timetable.delete(key);
+            const nextKey = `${day}-${schoolClass}-${period + 1}`;
+            await storage.clearSlot(userId, day, schoolClass, period + 1);
+            timetable.delete(nextKey);
+            toRemove -= 2;
+            slotsPlaced -= 2;
+          } else if (slot) {
+            await storage.clearSlot(userId, day, schoolClass, period);
+            timetable.delete(key);
+            toRemove -= 1;
+            slotsPlaced -= 1;
+          }
+        }
+      }
+    }
   }
   
   // Summary
