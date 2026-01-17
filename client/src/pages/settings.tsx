@@ -434,30 +434,44 @@ export default function SettingsPage() {
                     <div>
                       <p className="text-sm font-medium">Total Weekly Periods (All Classes)</p>
                       <p className="text-xs text-muted-foreground">
-                        Sum of all subject quotas across all 6 classes
+                        Each class has 40 periods/week. With up to 3 free periods allowed, target 37-40 periods per class.
                       </p>
                     </div>
                     <div className="text-right">
                       {(() => {
                         const slashSubjectNames = new Set(SLASH_SUBJECTS.flatMap(s => s.pair));
-                        const jssTotal = quotas.reduce((sum, q) => sum + q.jssQuota * 3, 0);
+                        const jssTotal = quotas.reduce((sum, q) => sum + q.jssQuota, 0);
                         const ss1Total = quotas.reduce((sum, q) => sum + q.ss1Quota, 0);
                         const ss2ss3SlashTotal = SLASH_SUBJECTS.reduce((sum, sp) => {
                           const q = quotas.find(q => q.subject === sp.pair[0]);
-                          return sum + (q?.ss2ss3Quota || 0) * 2;
+                          return sum + (q?.ss2ss3Quota || 0);
                         }, 0);
                         const ss2ss3RegularTotal = quotas
                           .filter(q => q.ss2ss3Quota > 0 && !slashSubjectNames.has(q.subject))
-                          .reduce((sum, q) => sum + q.ss2ss3Quota * 2, 0);
+                          .reduce((sum, q) => sum + q.ss2ss3Quota, 0);
                         const ss2ss3Total = ss2ss3SlashTotal + ss2ss3RegularTotal;
-                        const grandTotal = jssTotal + ss1Total + ss2ss3Total;
+                        
+                        const jssInRange = jssTotal >= 37 && jssTotal <= 40;
+                        const ss1InRange = ss1Total >= 37 && ss1Total <= 40;
+                        const ss2ss3InRange = ss2ss3Total >= 37 && ss2ss3Total <= 40;
+                        
                         return (
-                          <>
-                            <p className="text-2xl font-bold">{grandTotal}</p>
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-end gap-2">
+                              <span className={`text-sm ${jssInRange ? 'text-green-600' : jssTotal > 40 ? 'text-destructive' : 'text-amber-600'}`}>
+                                JSS: {jssTotal}/40
+                              </span>
+                              <span className={`text-sm ${ss1InRange ? 'text-green-600' : ss1Total > 40 ? 'text-destructive' : 'text-amber-600'}`}>
+                                SS1: {ss1Total}/40
+                              </span>
+                              <span className={`text-sm ${ss2ss3InRange ? 'text-green-600' : ss2ss3Total > 40 ? 'text-destructive' : 'text-amber-600'}`}>
+                                SS2/SS3: {ss2ss3Total}/40
+                              </span>
+                            </div>
                             <p className="text-xs text-muted-foreground">
-                              JSS: {jssTotal} | SS1: {ss1Total} | SS2/SS3: {ss2ss3Total}
+                              Target: 37-40 periods per class (up to 3 free periods allowed)
                             </p>
-                          </>
+                          </div>
                         );
                       })()}
                     </div>
@@ -470,7 +484,7 @@ export default function SettingsPage() {
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="font-medium">JSS Subjects (JSS1-JSS3)</h3>
                     <Badge variant="secondary">
-                      {quotas.filter(q => q.jssQuota > 0).reduce((sum, q) => sum + q.jssQuota * 3, 0)} periods total
+                      {quotas.reduce((sum, q) => sum + q.jssQuota, 0)} periods/class ({quotas.reduce((sum, q) => sum + q.jssQuota, 0) * 3} total for 3 classes)
                     </Badge>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -493,7 +507,7 @@ export default function SettingsPage() {
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="font-medium">SS1 Subjects</h3>
                     <Badge variant="secondary">
-                      {quotas.filter(q => q.ss1Quota > 0).reduce((sum, q) => sum + q.ss1Quota, 0)} periods total
+                      {quotas.reduce((sum, q) => sum + q.ss1Quota, 0)} periods/class
                     </Badge>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -520,13 +534,14 @@ export default function SettingsPage() {
                         const slashSubjectNames = new Set(SLASH_SUBJECTS.flatMap(s => s.pair));
                         const slashTotal = SLASH_SUBJECTS.reduce((sum, sp) => {
                           const q = quotas.find(q => q.subject === sp.pair[0]);
-                          return sum + (q?.ss2ss3Quota || 0) * 2;
+                          return sum + (q?.ss2ss3Quota || 0);
                         }, 0);
                         const regularTotal = quotas
                           .filter(q => q.ss2ss3Quota > 0 && !slashSubjectNames.has(q.subject))
-                          .reduce((sum, q) => sum + q.ss2ss3Quota * 2, 0);
-                        return slashTotal + regularTotal;
-                      })()} periods total
+                          .reduce((sum, q) => sum + q.ss2ss3Quota, 0);
+                        const perClass = slashTotal + regularTotal;
+                        return `${perClass} periods/class (${perClass * 2} total for 2 classes)`;
+                      })()}
                     </Badge>
                   </div>
                   
