@@ -72,7 +72,8 @@ function getConsecutiveSameSubjectCount(
   for (let period = 1; period <= maxPeriods; period++) {
     const key = `${day}-${schoolClass}-${period}`;
     const slot = timetable.get(key);
-    if (slot && slot.subject === subject) {
+    // Check both subject and slashPairSubject for slash subject handling
+    if (slot && (slot.subject === subject || slot.slashPairSubject === subject)) {
       subjectPeriods.add(period);
     }
   }
@@ -942,6 +943,11 @@ async function scheduleSlashSubject(
         const slot = timetable.get(key);
         if (slot && slot.status === "occupied") continue;
         
+        // Check if placing here would create triple period (3+ consecutive same subject) for either subject
+        const consecutiveCount1 = getConsecutiveSameSubjectCount(timetable, day, schoolClass, subject1, [period]);
+        const consecutiveCount2 = getConsecutiveSameSubjectCount(timetable, day, schoolClass, subject2, [period]);
+        if (consecutiveCount1 > 2 || consecutiveCount2 > 2) continue;
+        
         for (const t1 of teachers1) {
           if (slotPlaced) break;
           if (!isTeacherAvailableForSlot(timetable, t1, day, period)) continue;
@@ -1021,6 +1027,10 @@ async function scheduleSingleSubject(
         if (lockedSlots.has(key)) continue;
         const slot = timetable.get(key);
         if (slot && slot.status === "occupied") continue;
+        
+        // Check if placing here would create triple period (3+ consecutive same subject)
+        const consecutiveCount = getConsecutiveSameSubjectCount(timetable, day, schoolClass, subject, [period]);
+        if (consecutiveCount > 2) continue;
         
         for (const teacher of availableTeachers) {
           if (!isTeacherAvailableForSlot(timetable, teacher, day, period)) continue;

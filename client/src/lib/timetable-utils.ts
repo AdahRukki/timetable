@@ -210,7 +210,8 @@ export function getConsecutiveSameSubjectCount(
   
   for (let period = 1; period <= maxPeriods; period++) {
     const slot = getSlot(timetable, day, schoolClass, period);
-    if (slot && slot.subject === subject) {
+    // Check both subject and slashPairSubject for slash subject handling
+    if (slot && (slot.subject === subject || slot.slashPairSubject === subject)) {
       subjectPeriods.add(period);
     }
   }
