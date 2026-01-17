@@ -823,7 +823,7 @@ export async function registerRoutes(
   return httpServer;
 }
 
-// ===== AUTO-GENERATION ALGORITHM (Teacher-Focused) =====
+// ===== AUTO-GENERATION ALGORITHM (Multi-Attempt with Randomization) =====
 
 interface TeacherAssignment {
   teacher: Teacher;
@@ -832,11 +832,17 @@ interface TeacherAssignment {
   periodsNeeded: number;
 }
 
+// Shuffle array utility
+function shuffleArray<T>(array: T[]): T[] {
+  const result = [...array];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
 async function autoGenerateTimetable(userId: string, lockExisting: boolean, clearFirst: boolean): Promise<AutoGenerateResult> {
-  const warnings: string[] = [];
-  const errors: string[] = [];
-  let slotsPlaced = 0;
-  
   const teachers = await storage.getTeachers(userId);
   const quotas = await storage.getSubjectQuotas(userId);
   const userSettings = await storage.getUserSettings(userId);
@@ -854,17 +860,109 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
     });
   }
   
-  // Clear timetable if requested (but preserve locked slots)
-  if (clearFirst && !lockExisting) {
-    await storage.clearAllSlots(userId);
-  } else if (clearFirst && lockExisting) {
-    for (const entry of Array.from(existingTimetable.entries())) {
-      const [key, slot] = entry;
-      if (!lockedSlots.has(key) && slot.status === "occupied") {
-        await storage.clearSlot(userId, slot.day, slot.schoolClass, slot.period);
+  // Try multiple generation attempts with different randomizations
+  const NUM_ATTEMPTS = 8;
+  let bestAttempt: { slots: Map<string, TimetableSlot>; slotsPlaced: number; warnings: string[] } | null = null;
+  let bestEmptyCount = Infinity;
+  
+  for (let attempt = 0; attempt < NUM_ATTEMPTS; attempt++) {
+    // Clear timetable for this attempt (but preserve locked slots)
+    if (clearFirst && !lockExisting) {
+      await storage.clearAllSlots(userId);
+    } else if (clearFirst && lockExisting) {
+      for (const entry of Array.from(existingTimetable.entries())) {
+        const [key, slot] = entry;
+        if (!lockedSlots.has(key) && slot.status === "occupied") {
+          await storage.clearSlot(userId, slot.day, slot.schoolClass, slot.period);
+        }
+      }
+    } else if (attempt > 0) {
+      // For subsequent attempts, clear non-locked slots
+      const currentTimetable = await storage.getTimetable(userId);
+      for (const entry of Array.from(currentTimetable.entries())) {
+        const [key, slot] = entry;
+        if (!lockedSlots.has(key) && slot.status === "occupied") {
+          await storage.clearSlot(userId, slot.day, slot.schoolClass, slot.period);
+        }
       }
     }
+    
+    // Run a single generation attempt with randomization
+    const attemptResult = await runSingleGenerationAttempt(
+      userId, teachers, quotas, lockedSlots, fatigueLimit, attempt
+    );
+    
+    // Count empty slots in this attempt
+    const attemptTimetable = await storage.getTimetable(userId);
+    let emptyCount = 0;
+    for (const day of DAYS) {
+      const maxPeriods = PERIODS_PER_DAY[day];
+      for (const schoolClass of CLASSES) {
+        for (let period = 1; period <= maxPeriods; period++) {
+          const key = `${day}-${schoolClass}-${period}`;
+          const slot = attemptTimetable.get(key);
+          if (!slot || slot.status !== "occupied") {
+            emptyCount++;
+          }
+        }
+      }
+    }
+    
+    // Track best attempt
+    if (emptyCount < bestEmptyCount) {
+      bestEmptyCount = emptyCount;
+      bestAttempt = {
+        slots: new Map(attemptTimetable),
+        slotsPlaced: attemptResult.slotsPlaced,
+        warnings: attemptResult.warnings,
+      };
+      
+      // If we achieved a perfect or near-perfect fill, stop early
+      if (emptyCount <= 5) break;
+    }
   }
+  
+  // Restore best attempt to database
+  if (bestAttempt) {
+    // Clear and restore best result
+    await storage.clearAllSlots(userId);
+    for (const [key, slot] of Array.from(bestAttempt.slots.entries())) {
+      if (slot.status === "occupied") {
+        await storage.setSlot(userId, slot);
+      }
+    }
+    
+    if (bestEmptyCount > 0) {
+      bestAttempt.warnings.push(`${bestEmptyCount} slots remain empty (best of ${NUM_ATTEMPTS} attempts)`);
+    }
+    
+    return {
+      success: true,
+      slotsPlaced: bestAttempt.slotsPlaced,
+      warnings: bestAttempt.warnings,
+      errors: [],
+    };
+  }
+  
+  return {
+    success: false,
+    slotsPlaced: 0,
+    warnings: [],
+    errors: ["Failed to generate any valid timetable"],
+  };
+}
+
+// Single generation attempt with randomization
+async function runSingleGenerationAttempt(
+  userId: string,
+  teachers: Teacher[],
+  quotas: any[],
+  lockedSlots: Set<string>,
+  fatigueLimit: number,
+  attemptNumber: number
+): Promise<{ slotsPlaced: number; warnings: string[] }> {
+  const warnings: string[] = [];
+  let slotsPlaced = 0;
   
   // Get fresh timetable state
   let timetable = await storage.getTimetable(userId);
@@ -951,22 +1049,32 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
     }
   }
   
-  // Sort assignments: prioritize teachers with fewer total assignments (balance workload)
-  // Then by periods needed (higher first to schedule demanding subjects first)
+  // Sort assignments with randomization for variety between attempts
   const teacherLoadCount = new Map<string, number>();
   for (const assignment of teacherAssignments) {
     const current = teacherLoadCount.get(assignment.teacher.id) || 0;
     teacherLoadCount.set(assignment.teacher.id, current + assignment.periodsNeeded);
   }
   
-  teacherAssignments.sort((a, b) => {
+  // First shuffle to randomize, then sort by priority
+  // Different attempts will have different orderings
+  const shuffledAssignments = shuffleArray(teacherAssignments);
+  
+  shuffledAssignments.sort((a, b) => {
     const loadA = teacherLoadCount.get(a.teacher.id) || 0;
     const loadB = teacherLoadCount.get(b.teacher.id) || 0;
+    // Add some randomness to break ties
+    const tieBreaker = (attemptNumber % 3) - 1; // -1, 0, or 1
+    if (Math.abs(loadB - loadA) <= 2) return tieBreaker;
     // Teachers with higher loads first (they need more scheduling priority)
     if (loadB !== loadA) return loadB - loadA;
     // Then by periods needed
     return b.periodsNeeded - a.periodsNeeded;
   });
+  
+  // Replace original with shuffled
+  teacherAssignments.length = 0;
+  teacherAssignments.push(...shuffledAssignments);
   
   // ===== PHASE 3: Teacher-focused scheduling =====
   // Build set of slash subject names for quick lookup
@@ -1008,7 +1116,8 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
       let placed = false;
       
       // Only try days where this subject hasn't been scheduled yet
-      const availableDays = DAYS.filter(d => !daysUsed.has(d));
+      // Shuffle days to create variety between attempts
+      const availableDays = shuffleArray(DAYS.filter(d => !daysUsed.has(d)));
       
       // If no available days, we cannot place more periods for this subject
       if (availableDays.length === 0) {
@@ -1024,8 +1133,10 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
           if (placed) break;
           
           const maxPeriods = PERIODS_PER_DAY[day];
+          // Generate and shuffle period list for variety
+          const periodsToTry = shuffleArray(Array.from({ length: maxPeriods - 1 }, (_, i) => i + 1));
           
-          for (let period = 1; period <= maxPeriods - 1; period++) {
+          for (const period of periodsToTry) {
             if (placed) break;
             
             // Double period validation
@@ -1098,8 +1209,10 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
           if (placed) break;
           
           const maxPeriods = PERIODS_PER_DAY[day];
+          // Generate and shuffle period list for variety
+          const singlePeriodsToTry = shuffleArray(Array.from({ length: maxPeriods }, (_, i) => i + 1));
           
-          for (let period = 1; period <= maxPeriods; period++) {
+          for (const period of singlePeriodsToTry) {
             if (placed) break;
             
             const key = `${day}-${schoolClass}-${period}`;
@@ -1309,15 +1422,9 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
     }
   }
   
-  if (totalEmpty > 0) {
-    warnings.push(`${totalEmpty} slots remain empty`);
-  }
-  
   return {
-    success: errors.length === 0,
     slotsPlaced,
     warnings,
-    errors,
   };
 }
 
@@ -1371,11 +1478,15 @@ async function scheduleSlashSubject(
   for (let i = 0; i < count && placed < count; i++) {
     let slotPlaced = false;
     
-    for (const day of DAYS) {
+    // Shuffle days and periods for variety between attempts
+    const shuffledDays = shuffleArray([...DAYS]);
+    
+    for (const day of shuffledDays) {
       if (slotPlaced) break;
       const maxPeriods = PERIODS_PER_DAY[day];
+      const shuffledPeriods = shuffleArray(Array.from({ length: maxPeriods }, (_, i) => i + 1));
       
-      for (let period = 1; period <= maxPeriods; period++) {
+      for (const period of shuffledPeriods) {
         if (slotPlaced) break;
         const key = `${day}-${schoolClass}-${period}`;
         
@@ -1388,12 +1499,15 @@ async function scheduleSlashSubject(
         const dailyCount2 = getTotalSubjectCountForDay(timetable, day, schoolClass, subject2, []);
         if (dailyCount1 >= 1 || dailyCount2 >= 1) continue;
         
-        for (const t1 of teachers1) {
+        // Shuffle teacher ordering too
+        const shuffledTeachers1 = shuffleArray([...teachers1]);
+        for (const t1 of shuffledTeachers1) {
           if (slotPlaced) break;
           if (!isTeacherAvailableForSlot(timetable, t1, day, period)) continue;
           if (wouldExceedFatigue(timetable, t1.id, day, [period], fatigueLimit)) continue;
           
-          for (const t2 of teachers2) {
+          const shuffledTeachers2 = shuffleArray([...teachers2]);
+          for (const t2 of shuffledTeachers2) {
             if (t1.id === t2.id) continue;
             if (!isTeacherAvailableForSlot(timetable, t2, day, period)) continue;
             if (wouldExceedFatigue(timetable, t2.id, day, [period], fatigueLimit)) continue;
@@ -1460,9 +1574,13 @@ async function scheduleSingleSubject(
     const remaining = count - placed;
     let slotPlaced = false;
     
+    // Shuffle for variety
+    const shuffledDays = shuffleArray([...DAYS]);
+    const shuffledTeachers = shuffleArray([...availableTeachers]);
+    
     // Try double period first if we have 2+ remaining
     if (remaining >= 2) {
-      for (const day of DAYS) {
+      for (const day of shuffledDays) {
         if (slotPlaced) break;
         const maxPeriods = PERIODS_PER_DAY[day];
         
@@ -1470,7 +1588,8 @@ async function scheduleSingleSubject(
         const dailyCount = getTotalSubjectCountForDay(timetable, day, schoolClass, subject, []);
         if (dailyCount >= 1) continue;
         
-        for (let period = 1; period <= maxPeriods - 1; period++) {
+        const shuffledPeriods = shuffleArray(Array.from({ length: maxPeriods - 1 }, (_, i) => i + 1));
+        for (const period of shuffledPeriods) {
           if (slotPlaced) break;
           
           // Double period validation
@@ -1485,7 +1604,7 @@ async function scheduleSingleSubject(
           const slot2 = timetable.get(key2);
           if ((slot1 && slot1.status === "occupied") || (slot2 && slot2.status === "occupied")) continue;
           
-          for (const teacher of availableTeachers) {
+          for (const teacher of shuffledTeachers) {
             // Check teacher available for both periods
             if (!isTeacherAvailableForSlot(timetable, teacher, day, period)) continue;
             if (!isTeacherAvailableForSlot(timetable, teacher, day, period + 1)) continue;
@@ -1537,7 +1656,7 @@ async function scheduleSingleSubject(
     
     // If double didn't work or only need 1 more, try single period
     if (!slotPlaced) {
-      for (const day of DAYS) {
+      for (const day of shuffledDays) {
         if (slotPlaced) break;
         const maxPeriods = PERIODS_PER_DAY[day];
         
@@ -1545,7 +1664,8 @@ async function scheduleSingleSubject(
         const dailyCount = getTotalSubjectCountForDay(timetable, day, schoolClass, subject, []);
         if (dailyCount >= 1) continue;
         
-        for (let period = 1; period <= maxPeriods; period++) {
+        const singlePeriods = shuffleArray(Array.from({ length: maxPeriods }, (_, i) => i + 1));
+        for (const period of singlePeriods) {
           if (slotPlaced) break;
           const key = `${day}-${schoolClass}-${period}`;
           
@@ -1553,7 +1673,7 @@ async function scheduleSingleSubject(
           const slot = timetable.get(key);
           if (slot && slot.status === "occupied") continue;
           
-          for (const teacher of availableTeachers) {
+          for (const teacher of shuffledTeachers) {
             if (!isTeacherAvailableForSlot(timetable, teacher, day, period)) continue;
             if (wouldExceedFatigue(timetable, teacher.id, day, [period], fatigueLimit)) continue;
             
