@@ -438,12 +438,28 @@ export default function SettingsPage() {
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-2xl font-bold">
-                        {quotas.reduce((sum, q) => sum + (q.jssQuota * 3) + q.ss1Quota + (q.ss2ss3Quota * 2), 0)}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        JSS: {quotas.reduce((sum, q) => sum + q.jssQuota * 3, 0)} | SS1: {quotas.reduce((sum, q) => sum + q.ss1Quota, 0)} | SS2/SS3: {quotas.reduce((sum, q) => sum + q.ss2ss3Quota * 2, 0)}
-                      </p>
+                      {(() => {
+                        const slashSubjectNames = new Set(SLASH_SUBJECTS.flatMap(s => s.pair));
+                        const jssTotal = quotas.reduce((sum, q) => sum + q.jssQuota * 3, 0);
+                        const ss1Total = quotas.reduce((sum, q) => sum + q.ss1Quota, 0);
+                        const ss2ss3SlashTotal = SLASH_SUBJECTS.reduce((sum, sp) => {
+                          const q = quotas.find(q => q.subject === sp.pair[0]);
+                          return sum + (q?.ss2ss3Quota || 0) * 2;
+                        }, 0);
+                        const ss2ss3RegularTotal = quotas
+                          .filter(q => q.ss2ss3Quota > 0 && !slashSubjectNames.has(q.subject))
+                          .reduce((sum, q) => sum + q.ss2ss3Quota * 2, 0);
+                        const ss2ss3Total = ss2ss3SlashTotal + ss2ss3RegularTotal;
+                        const grandTotal = jssTotal + ss1Total + ss2ss3Total;
+                        return (
+                          <>
+                            <p className="text-2xl font-bold">{grandTotal}</p>
+                            <p className="text-xs text-muted-foreground">
+                              JSS: {jssTotal} | SS1: {ss1Total} | SS2/SS3: {ss2ss3Total}
+                            </p>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -500,7 +516,17 @@ export default function SettingsPage() {
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="font-medium">SS2/SS3 Subjects (includes slash pairing)</h3>
                     <Badge variant="secondary">
-                      {quotas.filter(q => q.ss2ss3Quota > 0).reduce((sum, q) => sum + q.ss2ss3Quota * 2, 0)} periods total
+                      {(() => {
+                        const slashSubjectNames = new Set(SLASH_SUBJECTS.flatMap(s => s.pair));
+                        const slashTotal = SLASH_SUBJECTS.reduce((sum, sp) => {
+                          const q = quotas.find(q => q.subject === sp.pair[0]);
+                          return sum + (q?.ss2ss3Quota || 0) * 2;
+                        }, 0);
+                        const regularTotal = quotas
+                          .filter(q => q.ss2ss3Quota > 0 && !slashSubjectNames.has(q.subject))
+                          .reduce((sum, q) => sum + q.ss2ss3Quota * 2, 0);
+                        return slashTotal + regularTotal;
+                      })()} periods total
                     </Badge>
                   </div>
                   
