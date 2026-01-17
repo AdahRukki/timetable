@@ -405,7 +405,7 @@ export default function Home() {
   }, [autoGenerateMutation]);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col min-h-full">
       <div className="p-4 border-b">
         <StatsHeader 
           timetable={timetable} 
@@ -415,7 +415,7 @@ export default function Home() {
         />
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0">
         <div className="flex-1 overflow-auto p-4">
           <TimetableGrid
             timetable={timetable}
