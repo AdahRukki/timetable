@@ -431,13 +431,14 @@ export default function SettingsPage() {
                 <div>
                   <h3 className="font-medium mb-3">JSS Subjects (JSS1-JSS3)</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {quotas.filter(q => q.jssQuota > 0).map((quota) => (
+                    {quotas.filter(q => q.jssQuota > 0).map((q) => (
                       <QuotaInput
-                        key={quota.subject}
-                        subject={quota.subject}
-                        value={quota.jssQuota}
-                        onChange={(v) => handleQuotaChange(quota.subject, "jssQuota", v)}
-                        isSlash={quota.isSlashSubject}
+                        key={q.subject}
+                        subject={q.subject}
+                        value={q.jssQuota}
+                        onChange={(v) => handleQuotaChange(q.subject, "jssQuota", v)}
+                        isSlash={q.isSlashSubject}
+                        quota={q}
                       />
                     ))}
                   </div>
@@ -448,13 +449,14 @@ export default function SettingsPage() {
                 <div>
                   <h3 className="font-medium mb-3">SS1 Subjects</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {quotas.filter(q => q.ss1Quota > 0).map((quota) => (
+                    {quotas.filter(q => q.ss1Quota > 0).map((q) => (
                       <QuotaInput
-                        key={quota.subject}
-                        subject={quota.subject}
-                        value={quota.ss1Quota}
-                        onChange={(v) => handleQuotaChange(quota.subject, "ss1Quota", v)}
-                        isSlash={quota.isSlashSubject}
+                        key={q.subject}
+                        subject={q.subject}
+                        value={q.ss1Quota}
+                        onChange={(v) => handleQuotaChange(q.subject, "ss1Quota", v)}
+                        isSlash={q.isSlashSubject}
+                        quota={q}
                       />
                     ))}
                   </div>
@@ -465,13 +467,14 @@ export default function SettingsPage() {
                 <div>
                   <h3 className="font-medium mb-3">SS2/SS3 Subjects (includes slash pairing)</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {quotas.filter(q => q.ss2ss3Quota > 0).map((quota) => (
+                    {quotas.filter(q => q.ss2ss3Quota > 0).map((q) => (
                       <QuotaInput
-                        key={quota.subject}
-                        subject={quota.subject}
-                        value={quota.ss2ss3Quota}
-                        onChange={(v) => handleQuotaChange(quota.subject, "ss2ss3Quota", v)}
-                        isSlash={quota.isSlashSubject}
+                        key={q.subject}
+                        subject={q.subject}
+                        value={q.ss2ss3Quota}
+                        onChange={(v) => handleQuotaChange(q.subject, "ss2ss3Quota", v)}
+                        isSlash={q.isSlashSubject}
+                        quota={q}
                       />
                     ))}
                   </div>
@@ -671,12 +674,14 @@ function QuotaInput({
   subject, 
   value, 
   onChange, 
-  isSlash 
+  isSlash,
+  quota
 }: { 
   subject: string; 
   value: number; 
   onChange: (value: number) => void;
   isSlash: boolean;
+  quota: SubjectQuota;
 }) {
   const [localValue, setLocalValue] = useState(value.toString());
   
@@ -693,6 +698,8 @@ function QuotaInput({
     }
   };
 
+  const total = (quota.jssQuota * 3) + (quota.ss1Quota * 1) + (quota.ss2ss3Quota * 2);
+
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1">
@@ -701,6 +708,7 @@ function QuotaInput({
           {isSlash && (
             <Badge variant="outline" className="text-xs ml-1">Slash</Badge>
           )}
+          <span className="text-xs text-muted-foreground ml-1">({total} total)</span>
         </Label>
       </div>
       <Input
