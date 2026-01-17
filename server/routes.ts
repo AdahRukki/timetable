@@ -1088,6 +1088,8 @@ async function runSingleGenerationAttempt(
   for (const assignment of teacherAssignments) {
     const { teacher, subject, schoolClass } = assignment;
     const classQuotas = quotaTracker.get(schoolClass)!;
+    
+    // Re-read remaining quota from tracker (another teacher may have placed some)
     let periodsToPlace = classQuotas.get(subject) || 0;
     
     if (periodsToPlace <= 0) continue;
@@ -1463,21 +1465,41 @@ async function runSingleGenerationAttempt(
         warnings.push(`${schoolClass}: ${subject} exceeded quota (${actualCount}/${quota}), removing ${toRemove} excess`);
         
         // Collect slots for this subject in this class, sorted by period descending
-        const subjectSlots: Array<{ day: Day; period: number; key: string }> = [];
+        // For double periods, only include the first slot to avoid duplicate processing
+        const subjectSlots: Array<{ day: Day; period: number; key: string; isDouble: boolean }> = [];
+        const processedKeys = new Set<string>();
+        
         for (const [key, slot] of Array.from(timetable.entries())) {
           if (slot.schoolClass === schoolClass && slot.subject === subject && slot.slotType !== "slash") {
-            subjectSlots.push({ day: slot.day, period: slot.period, key });
+            if (processedKeys.has(key)) continue;
+            
+            if (slot.slotType === "double") {
+              // Check if this is the first slot of the double period
+              const prevKey = `${slot.day}-${schoolClass}-${slot.period - 1}`;
+              const prevSlot = timetable.get(prevKey);
+              if (prevSlot && prevSlot.subject === subject && prevSlot.slotType === "double") {
+                // This is the second slot of a double, skip it
+                continue;
+              }
+              // This is the first slot of the double
+              const nextKey = `${slot.day}-${schoolClass}-${slot.period + 1}`;
+              processedKeys.add(key);
+              processedKeys.add(nextKey);
+              subjectSlots.push({ day: slot.day, period: slot.period, key, isDouble: true });
+            } else {
+              processedKeys.add(key);
+              subjectSlots.push({ day: slot.day, period: slot.period, key, isDouble: false });
+            }
           }
         }
         
         // Sort by period descending (remove later periods first)
         subjectSlots.sort((a, b) => b.period - a.period);
         
-        for (const { day, period, key } of subjectSlots) {
+        for (const { day, period, key, isDouble } of subjectSlots) {
           if (toRemove <= 0) break;
           
-          const slot = timetable.get(key);
-          if (slot && slot.slotType === "double") {
+          if (isDouble) {
             // Remove both slots of double period
             await storage.clearSlot(userId, day, schoolClass, period);
             timetable.delete(key);
@@ -1486,7 +1508,7 @@ async function runSingleGenerationAttempt(
             timetable.delete(nextKey);
             toRemove -= 2;
             slotsPlaced -= 2;
-          } else if (slot) {
+          } else {
             await storage.clearSlot(userId, day, schoolClass, period);
             timetable.delete(key);
             toRemove -= 1;
