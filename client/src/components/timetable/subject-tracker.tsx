@@ -1,5 +1,4 @@
-import { type TimetableSlot, type SchoolClass, CLASSES } from "@shared/schema";
-import { getSubjectPeriodCounts } from "@/lib/timetable-utils";
+import { type TimetableSlot, type SchoolClass, type SubjectQuota, CLASSES, DAYS, PERIODS_PER_DAY } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -17,17 +16,56 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { BookOpen, CheckCircle2, AlertCircle } from "lucide-react";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 
 interface SubjectTrackerProps {
   timetable: Map<string, TimetableSlot>;
+  quotas: SubjectQuota[];
 }
 
-export function SubjectTracker({ timetable }: SubjectTrackerProps) {
+function getQuotaForClass(quota: SubjectQuota, schoolClass: SchoolClass): number {
+  if (schoolClass.startsWith("JSS")) {
+    return quota.jssQuota;
+  } else if (schoolClass === "SS1") {
+    return quota.ss1Quota;
+  } else {
+    return quota.ss2ss3Quota;
+  }
+}
+
+export function SubjectTracker({ timetable, quotas }: SubjectTrackerProps) {
   const [selectedClass, setSelectedClass] = useState<SchoolClass>("JSS1");
 
-  const subjectCounts = getSubjectPeriodCounts(timetable, selectedClass);
+  const subjectCounts = useMemo(() => {
+    const counts: Map<string, number> = new Map();
+    
+    for (const day of DAYS) {
+      const maxPeriods = PERIODS_PER_DAY[day];
+      for (let period = 1; period <= maxPeriods; period++) {
+        const key = `${day}-${selectedClass}-${period}`;
+        const slot = timetable.get(key);
+        if (slot && slot.subject) {
+          const current = counts.get(slot.subject) || 0;
+          counts.set(slot.subject, current + 1);
+          
+          if (slot.slashPairSubject) {
+            const pairCurrent = counts.get(slot.slashPairSubject) || 0;
+            counts.set(slot.slashPairSubject, pairCurrent + 1);
+          }
+        }
+      }
+    }
+    
+    return quotas
+      .filter(q => getQuotaForClass(q, selectedClass) > 0)
+      .map(q => ({
+        schoolClass: selectedClass,
+        subject: q.subject,
+        allocated: counts.get(q.subject) || 0,
+        required: getQuotaForClass(q, selectedClass),
+      }));
+  }, [timetable, selectedClass, quotas]);
 
   const totalRequired = subjectCounts.reduce((sum, s) => sum + s.required, 0);
   const totalAllocated = subjectCounts.reduce((sum, s) => sum + s.allocated, 0);

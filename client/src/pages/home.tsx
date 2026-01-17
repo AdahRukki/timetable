@@ -7,6 +7,7 @@ import {
   type SlotType,
   type ValidationResult,
   type AutoGenerateResult,
+  type SubjectQuota,
   DAYS,
 } from "@shared/schema";
 import {
@@ -46,6 +47,10 @@ export default function Home() {
 
   const { data: timetableData } = useQuery<TimetableSlot[]>({
     queryKey: ["/api/timetable"],
+  });
+
+  const { data: quotas = [] } = useQuery<SubjectQuota[]>({
+    queryKey: ["/api/quotas"],
   });
 
   useEffect(() => {
@@ -431,7 +436,7 @@ export default function Home() {
         </div>
 
         <div className="w-72 border-l overflow-y-auto p-4 space-y-4 hidden xl:block">
-          <SubjectTracker timetable={timetable} />
+          <SubjectTracker timetable={timetable} quotas={quotas} />
           <ActionHistory
             actions={actions}
             currentIndex={actionIndex}
