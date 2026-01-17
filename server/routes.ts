@@ -1081,55 +1081,140 @@ async function scheduleSingleSubject(
     return 0;
   }
   
-  for (let i = 0; i < count && placed < count; i++) {
+  // Try to place double periods first if we need 2+ more periods
+  // This helps create more efficient schedules
+  while (placed < count) {
+    const remaining = count - placed;
     let slotPlaced = false;
     
-    for (const day of DAYS) {
-      if (slotPlaced) break;
-      const maxPeriods = PERIODS_PER_DAY[day];
-      
-      for (let period = 1; period <= maxPeriods; period++) {
+    // Try double period first if we have 2+ remaining
+    if (remaining >= 2) {
+      for (const day of DAYS) {
         if (slotPlaced) break;
-        const key = `${day}-${schoolClass}-${period}`;
-        
-        if (lockedSlots.has(key)) continue;
-        const slot = timetable.get(key);
-        if (slot && slot.status === "occupied") continue;
+        const maxPeriods = PERIODS_PER_DAY[day];
         
         // Check if subject already appears on this day for this class (max 1 occurrence per day)
         const dailyCount = getTotalSubjectCountForDay(timetable, day, schoolClass, subject, []);
         if (dailyCount >= 1) continue;
         
-        for (const teacher of availableTeachers) {
-          if (!isTeacherAvailableForSlot(timetable, teacher, day, period)) continue;
-          if (wouldExceedFatigue(timetable, teacher.id, day, [period], fatigueLimit)) continue;
+        for (let period = 1; period <= maxPeriods - 1; period++) {
+          if (slotPlaced) break;
           
-          if (subject === "Security") {
-            const prevKey = `${day}-${schoolClass}-${period - 1}`;
-            const prevSlot = timetable.get(prevKey);
-            if (prevSlot && prevSlot.subject === "English") continue;
+          // Double period validation
+          if (period >= 8) continue; // No doubles in P8/P9
+          if (wouldCrossBreak(day, period)) continue; // Can't cross breaks
+          
+          const key1 = `${day}-${schoolClass}-${period}`;
+          const key2 = `${day}-${schoolClass}-${period + 1}`;
+          
+          if (lockedSlots.has(key1) || lockedSlots.has(key2)) continue;
+          
+          const slot1 = timetable.get(key1);
+          const slot2 = timetable.get(key2);
+          if ((slot1 && slot1.status === "occupied") || (slot2 && slot2.status === "occupied")) continue;
+          
+          for (const teacher of availableTeachers) {
+            // Check teacher available for both periods
+            if (!isTeacherAvailableForSlot(timetable, teacher, day, period)) continue;
+            if (!isTeacherAvailableForSlot(timetable, teacher, day, period + 1)) continue;
+            if (wouldExceedFatigue(timetable, teacher.id, day, [period, period + 1], fatigueLimit)) continue;
+            
+            if (subject === "Security") {
+              const prevKey = `${day}-${schoolClass}-${period - 1}`;
+              const prevSlot = timetable.get(prevKey);
+              if (prevSlot && prevSlot.subject === "English") continue;
+            }
+            
+            // Place double period (first slot)
+            const newSlot1: TimetableSlot = {
+              day,
+              period,
+              schoolClass,
+              status: "occupied",
+              subject,
+              teacherId: teacher.id,
+              slotType: "double",
+              slashPairSubject: null,
+              slashPairTeacherId: null,
+            };
+            
+            // Place double period (second slot)
+            const newSlot2: TimetableSlot = {
+              day,
+              period: period + 1,
+              schoolClass,
+              status: "occupied",
+              subject,
+              teacherId: teacher.id,
+              slotType: "double",
+              slashPairSubject: null,
+              slashPairTeacherId: null,
+            };
+            
+            await storage.setSlot(userId, newSlot1);
+            await storage.setSlot(userId, newSlot2);
+            timetable.set(key1, newSlot1);
+            timetable.set(key2, newSlot2);
+            placed += 2;
+            slotPlaced = true;
+            break;
           }
-          
-          const newSlot: TimetableSlot = {
-            day,
-            period,
-            schoolClass,
-            status: "occupied",
-            subject,
-            teacherId: teacher.id,
-            slotType: "single",
-            slashPairSubject: null,
-            slashPairTeacherId: null,
-          };
-          
-          await storage.setSlot(userId, newSlot);
-          timetable.set(key, newSlot);
-          placed++;
-          slotPlaced = true;
-          break;
         }
       }
     }
+    
+    // If double didn't work or only need 1 more, try single period
+    if (!slotPlaced) {
+      for (const day of DAYS) {
+        if (slotPlaced) break;
+        const maxPeriods = PERIODS_PER_DAY[day];
+        
+        // Check if subject already appears on this day for this class (max 1 occurrence per day)
+        const dailyCount = getTotalSubjectCountForDay(timetable, day, schoolClass, subject, []);
+        if (dailyCount >= 1) continue;
+        
+        for (let period = 1; period <= maxPeriods; period++) {
+          if (slotPlaced) break;
+          const key = `${day}-${schoolClass}-${period}`;
+          
+          if (lockedSlots.has(key)) continue;
+          const slot = timetable.get(key);
+          if (slot && slot.status === "occupied") continue;
+          
+          for (const teacher of availableTeachers) {
+            if (!isTeacherAvailableForSlot(timetable, teacher, day, period)) continue;
+            if (wouldExceedFatigue(timetable, teacher.id, day, [period], fatigueLimit)) continue;
+            
+            if (subject === "Security") {
+              const prevKey = `${day}-${schoolClass}-${period - 1}`;
+              const prevSlot = timetable.get(prevKey);
+              if (prevSlot && prevSlot.subject === "English") continue;
+            }
+            
+            const newSlot: TimetableSlot = {
+              day,
+              period,
+              schoolClass,
+              status: "occupied",
+              subject,
+              teacherId: teacher.id,
+              slotType: "single",
+              slashPairSubject: null,
+              slashPairTeacherId: null,
+            };
+            
+            await storage.setSlot(userId, newSlot);
+            timetable.set(key, newSlot);
+            placed++;
+            slotPlaced = true;
+            break;
+          }
+        }
+      }
+    }
+    
+    // If we couldn't place anything, break to avoid infinite loop
+    if (!slotPlaced) break;
   }
   
   return placed;
