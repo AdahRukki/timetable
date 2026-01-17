@@ -1,7 +1,9 @@
-import { type TimetableSlot, type Teacher, DAYS, CLASSES } from "@shared/schema";
-import { getPeriodsForDay, getSlotKey } from "@/lib/timetable-utils";
+import { type TimetableSlot, type Teacher, type SchoolClass, DAYS, CLASSES } from "@shared/schema";
+import { getPeriodsForDay, getSlotKey, getFreePeriodStats, MAX_FREE_PERIODS_PER_WEEK, MAX_FREE_PERIODS_PER_DAY, TOTAL_PERIODS_PER_WEEK } from "@/lib/timetable-utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   CalendarDays,
   Users,
@@ -10,6 +12,7 @@ import {
   CheckCircle2,
   Wand2,
   Loader2,
+  Clock,
 } from "lucide-react";
 
 interface StatsHeaderProps {
@@ -111,6 +114,52 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating 
             </CardContent>
           </Card>
         ))}
+      </div>
+      
+      <div className="mt-3">
+        <div className="flex items-center gap-2 mb-2">
+          <Clock className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-medium">Free Periods by Class</span>
+          <span className="text-xs text-muted-foreground">(max {MAX_FREE_PERIODS_PER_WEEK}/week, {MAX_FREE_PERIODS_PER_DAY}/day)</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {CLASSES.map((schoolClass) => {
+            const stats = getFreePeriodStats(timetable, schoolClass as SchoolClass);
+            const filledCount = TOTAL_PERIODS_PER_WEEK - stats.weeklyTotal;
+            const hasIssues = stats.weeklyExceeded || stats.dailyExceededDays.length > 0;
+            
+            return (
+              <Tooltip key={schoolClass}>
+                <TooltipTrigger asChild>
+                  <Badge 
+                    variant={hasIssues ? "destructive" : stats.weeklyTotal > 0 ? "secondary" : "outline"}
+                    className="cursor-default"
+                    data-testid={`badge-free-periods-${schoolClass.toLowerCase()}`}
+                  >
+                    {schoolClass}: {filledCount}/{TOTAL_PERIODS_PER_WEEK}
+                    {hasIssues && <AlertTriangle className="h-3 w-3 ml-1" />}
+                    {stats.weeklyTotal === 0 && <CheckCircle2 className="h-3 w-3 ml-1 text-green-500" />}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <div className="text-sm">
+                    <p className="font-medium">{schoolClass} Periods</p>
+                    <p>Filled: {filledCount} / {TOTAL_PERIODS_PER_WEEK}</p>
+                    <p>Free: {stats.weeklyTotal} / {MAX_FREE_PERIODS_PER_WEEK} max</p>
+                    {stats.weeklyExceeded && (
+                      <p className="text-destructive">Exceeds weekly limit!</p>
+                    )}
+                    {stats.dailyExceededDays.length > 0 && (
+                      <p className="text-destructive">
+                        Exceeds daily limit on: {stats.dailyExceededDays.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
