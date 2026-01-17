@@ -459,7 +459,7 @@ export default function SettingsPage() {
                         value={q.jssQuota}
                         onChange={(v) => handleQuotaChange(q.subject, "jssQuota", v)}
                         isSlash={q.isSlashSubject}
-                        quota={q}
+                        sectionTotal={q.jssQuota * 3}
                       />
                     ))}
                   </div>
@@ -477,7 +477,7 @@ export default function SettingsPage() {
                         value={q.ss1Quota}
                         onChange={(v) => handleQuotaChange(q.subject, "ss1Quota", v)}
                         isSlash={q.isSlashSubject}
-                        quota={q}
+                        sectionTotal={q.ss1Quota}
                       />
                     ))}
                   </div>
@@ -495,7 +495,7 @@ export default function SettingsPage() {
                         value={q.ss2ss3Quota}
                         onChange={(v) => handleQuotaChange(q.subject, "ss2ss3Quota", v)}
                         isSlash={q.isSlashSubject}
-                        quota={q}
+                        sectionTotal={q.ss2ss3Quota * 2}
                       />
                     ))}
                   </div>
@@ -696,13 +696,13 @@ function QuotaInput({
   value, 
   onChange, 
   isSlash,
-  quota
+  sectionTotal
 }: { 
   subject: string; 
   value: number; 
   onChange: (value: number) => void;
   isSlash: boolean;
-  quota: SubjectQuota;
+  sectionTotal: number;
 }) {
   const [localValue, setLocalValue] = useState(value.toString());
   
@@ -719,8 +719,6 @@ function QuotaInput({
     }
   };
 
-  const total = (quota.jssQuota * 3) + (quota.ss1Quota * 1) + (quota.ss2ss3Quota * 2);
-
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1">
@@ -729,7 +727,7 @@ function QuotaInput({
           {isSlash && (
             <Badge variant="outline" className="text-xs ml-1">Slash</Badge>
           )}
-          <span className="text-xs text-muted-foreground ml-1">({total} total)</span>
+          <span className="text-xs text-muted-foreground ml-1">({sectionTotal} total)</span>
         </Label>
       </div>
       <Input
