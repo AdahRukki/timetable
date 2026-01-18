@@ -205,8 +205,17 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
       statsSheet["!cols"] = [{ wch: 20 }, { wch: 25 }, { wch: 25 }, { wch: 15 }, { wch: 15 }];
       XLSX.utils.book_append_sheet(workbook, statsSheet, "Statistics");
       
-      // Download the file
-      XLSX.writeFile(workbook, "timetable-complete.xlsx");
+      // Download the file using blob approach for browser compatibility
+      const wbout = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "timetable-complete.xlsx";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
       
       toast({
         title: "Download Complete",
