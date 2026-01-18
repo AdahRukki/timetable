@@ -24,6 +24,10 @@ export default function SettingsPage() {
   const [newSubjectSs1Quota, setNewSubjectSs1Quota] = useState(4);
   const [newSubjectSs2ss3Quota, setNewSubjectSs2ss3Quota] = useState(4);
   const [fatigueLimit, setFatigueLimit] = useState(5);
+  const [maxFreePeriodsPerWeek, setMaxFreePeriodsPerWeek] = useState(3);
+  const [maxFreePeriodsPerDay, setMaxFreePeriodsPerDay] = useState(2);
+  const [allowDoublePeriods, setAllowDoublePeriods] = useState(true);
+  const [allowDoubleInP8P9, setAllowDoubleInP8P9] = useState(true);
 
   const { data: quotas = [], isLoading: quotasLoading } = useQuery<SubjectQuota[]>({
     queryKey: ["/api/quotas"],
@@ -37,10 +41,14 @@ export default function SettingsPage() {
     queryKey: ["/api/settings"],
   });
 
-  // Sync fatigue limit from server
+  // Sync settings from server
   useEffect(() => {
-    if (userSettings?.fatigueLimit) {
-      setFatigueLimit(userSettings.fatigueLimit);
+    if (userSettings) {
+      if (userSettings.fatigueLimit) setFatigueLimit(userSettings.fatigueLimit);
+      if (userSettings.maxFreePeriodsPerWeek !== undefined) setMaxFreePeriodsPerWeek(userSettings.maxFreePeriodsPerWeek);
+      if (userSettings.maxFreePeriodsPerDay !== undefined) setMaxFreePeriodsPerDay(userSettings.maxFreePeriodsPerDay);
+      if (userSettings.allowDoublePeriods !== undefined) setAllowDoublePeriods(userSettings.allowDoublePeriods);
+      if (userSettings.allowDoubleInP8P9 !== undefined) setAllowDoubleInP8P9(userSettings.allowDoubleInP8P9);
     }
   }, [userSettings]);
 
@@ -658,6 +666,111 @@ export default function SettingsPage() {
                   )}
                 </Button>
               </div>
+            </div>
+            <Separator />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-0.5 flex-1">
+                <Label>Max Free Periods Per Week</Label>
+                <p className="text-sm text-muted-foreground">
+                  Maximum free periods allowed per class per week (0-10)
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={0}
+                  max={10}
+                  value={maxFreePeriodsPerWeek}
+                  onChange={(e) => setMaxFreePeriodsPerWeek(Math.min(10, Math.max(0, parseInt(e.target.value) || 0)))}
+                  className="w-20"
+                  data-testid="input-max-free-week"
+                />
+                <Button
+                  size="sm"
+                  onClick={() => updateSettingsMutation.mutate({ maxFreePeriodsPerWeek })}
+                  disabled={updateSettingsMutation.isPending || settingsLoading}
+                  data-testid="button-save-max-free-week"
+                >
+                  {updateSettingsMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4 mr-1" />
+                      Save
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+            <Separator />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-0.5 flex-1">
+                <Label>Max Free Periods Per Day</Label>
+                <p className="text-sm text-muted-foreground">
+                  Maximum free periods allowed per class per day (0-5)
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={0}
+                  max={5}
+                  value={maxFreePeriodsPerDay}
+                  onChange={(e) => setMaxFreePeriodsPerDay(Math.min(5, Math.max(0, parseInt(e.target.value) || 0)))}
+                  className="w-20"
+                  data-testid="input-max-free-day"
+                />
+                <Button
+                  size="sm"
+                  onClick={() => updateSettingsMutation.mutate({ maxFreePeriodsPerDay })}
+                  disabled={updateSettingsMutation.isPending || settingsLoading}
+                  data-testid="button-save-max-free-day"
+                >
+                  {updateSettingsMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4 mr-1" />
+                      Save
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-0.5">
+                <Label>Allow Double Periods</Label>
+                <p className="text-sm text-muted-foreground">
+                  Allow subjects to be scheduled as double periods (2 consecutive)
+                </p>
+              </div>
+              <Switch 
+                checked={allowDoublePeriods}
+                onCheckedChange={(checked) => {
+                  setAllowDoublePeriods(checked);
+                  updateSettingsMutation.mutate({ allowDoublePeriods: checked });
+                }}
+                data-testid="switch-allow-double"
+              />
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-0.5">
+                <Label>Allow Double Periods in P8/P9</Label>
+                <p className="text-sm text-muted-foreground">
+                  Allow double periods to be scheduled in periods 8 and 9
+                </p>
+              </div>
+              <Switch 
+                checked={allowDoubleInP8P9}
+                onCheckedChange={(checked) => {
+                  setAllowDoubleInP8P9(checked);
+                  updateSettingsMutation.mutate({ allowDoubleInP8P9: checked });
+                }}
+                disabled={!allowDoublePeriods}
+                data-testid="switch-allow-double-p8p9"
+              />
             </div>
             <Separator />
             <div className="flex items-center justify-between gap-4">

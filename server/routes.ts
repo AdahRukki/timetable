@@ -695,6 +695,10 @@ export async function registerRoutes(
       const userId = getUserId(req);
       const settingsSchema = z.object({
         fatigueLimit: z.number().min(1).max(10).optional(),
+        maxFreePeriodsPerWeek: z.number().min(0).max(10).optional(),
+        maxFreePeriodsPerDay: z.number().min(0).max(5).optional(),
+        allowDoublePeriods: z.boolean().optional(),
+        allowDoubleInP8P9: z.boolean().optional(),
       });
       const updates = settingsSchema.parse(req.body);
       const settings = await storage.updateUserSettings(userId, updates);

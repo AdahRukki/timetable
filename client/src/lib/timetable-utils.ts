@@ -131,7 +131,9 @@ export interface FreePeriodStats {
 // Calculate free periods for a class
 export function getFreePeriodStats(
   timetable: Map<string, TimetableSlot>,
-  schoolClass: SchoolClass
+  schoolClass: SchoolClass,
+  maxWeekly: number = MAX_FREE_PERIODS_PER_WEEK,
+  maxDaily: number = MAX_FREE_PERIODS_PER_DAY
 ): FreePeriodStats {
   const dailyCounts: Record<Day, number> = {
     Monday: 0,
@@ -154,8 +156,8 @@ export function getFreePeriodStats(
     }
   }
   
-  const weeklyExceeded = weeklyTotal > MAX_FREE_PERIODS_PER_WEEK;
-  const dailyExceededDays = DAYS.filter(day => dailyCounts[day] > MAX_FREE_PERIODS_PER_DAY);
+  const weeklyExceeded = weeklyTotal > maxWeekly;
+  const dailyExceededDays = DAYS.filter(day => dailyCounts[day] > maxDaily);
   const isValid = !weeklyExceeded && dailyExceededDays.length === 0;
   
   return {

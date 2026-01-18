@@ -584,11 +584,31 @@ export class DatabaseStorage implements IStorage {
   async getUserSettings(userId: string): Promise<UserSettings> {
     const results = await db.select().from(userSettings).where(eq(userSettings.userId, userId));
     if (results.length > 0) {
-      return { fatigueLimit: results[0].fatigueLimit };
+      const row = results[0];
+      return {
+        fatigueLimit: row.fatigueLimit,
+        maxFreePeriodsPerWeek: row.maxFreePeriodsPerWeek,
+        maxFreePeriodsPerDay: row.maxFreePeriodsPerDay,
+        allowDoublePeriods: row.allowDoublePeriods === 1,
+        allowDoubleInP8P9: row.allowDoubleInP8P9 === 1,
+      };
     }
     // Create default settings if none exist
-    await db.insert(userSettings).values({ userId, fatigueLimit: 5 });
-    return { fatigueLimit: 5 };
+    await db.insert(userSettings).values({
+      userId,
+      fatigueLimit: 5,
+      maxFreePeriodsPerWeek: 3,
+      maxFreePeriodsPerDay: 2,
+      allowDoublePeriods: 1,
+      allowDoubleInP8P9: 1,
+    });
+    return {
+      fatigueLimit: 5,
+      maxFreePeriodsPerWeek: 3,
+      maxFreePeriodsPerDay: 2,
+      allowDoublePeriods: true,
+      allowDoubleInP8P9: true,
+    };
   }
 
   async updateUserSettings(userId: string, settings: Partial<UserSettings>): Promise<UserSettings> {
@@ -596,7 +616,13 @@ export class DatabaseStorage implements IStorage {
     const existing = await this.getUserSettings(userId);
     
     const newSettings = { ...existing, ...settings };
-    await db.update(userSettings).set({ fatigueLimit: newSettings.fatigueLimit }).where(eq(userSettings.userId, userId));
+    await db.update(userSettings).set({
+      fatigueLimit: newSettings.fatigueLimit,
+      maxFreePeriodsPerWeek: newSettings.maxFreePeriodsPerWeek,
+      maxFreePeriodsPerDay: newSettings.maxFreePeriodsPerDay,
+      allowDoublePeriods: newSettings.allowDoublePeriods ? 1 : 0,
+      allowDoubleInP8P9: newSettings.allowDoubleInP8P9 ? 1 : 0,
+    }).where(eq(userSettings.userId, userId));
     return newSettings;
   }
 

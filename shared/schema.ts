@@ -173,6 +173,10 @@ export const userSettings = pgTable("user_settings", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull().unique(),
   fatigueLimit: integer("fatigue_limit").notNull().default(5),
+  maxFreePeriodsPerWeek: integer("max_free_periods_per_week").notNull().default(3),
+  maxFreePeriodsPerDay: integer("max_free_periods_per_day").notNull().default(2),
+  allowDoublePeriods: integer("allow_double_periods").notNull().default(1),
+  allowDoubleInP8P9: integer("allow_double_in_p8p9").notNull().default(1),
 });
 
 // Shared timetables table
@@ -384,6 +388,10 @@ export type AutoGenerateResult = z.infer<typeof autoGenerateResultSchema>;
 // User settings schema
 export const userSettingsSchema = z.object({
   fatigueLimit: z.number().min(1).max(10).default(5),
+  maxFreePeriodsPerWeek: z.number().min(0).max(10).default(3),
+  maxFreePeriodsPerDay: z.number().min(0).max(5).default(2),
+  allowDoublePeriods: z.boolean().default(true),
+  allowDoubleInP8P9: z.boolean().default(true),
 });
 
 export type UserSettings = z.infer<typeof userSettingsSchema>;

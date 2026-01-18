@@ -427,6 +427,8 @@ export default function Home() {
           isGenerating={autoGenerateMutation.isPending}
           selectedDay={selectedDay}
           gridRef={gridRef}
+          maxFreePeriodsPerWeek={userSettings?.maxFreePeriodsPerWeek}
+          maxFreePeriodsPerDay={userSettings?.maxFreePeriodsPerDay}
         />
       </div>
 

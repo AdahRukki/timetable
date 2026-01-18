@@ -47,9 +47,11 @@ interface StatsHeaderProps {
   isGenerating?: boolean;
   selectedDay: Day;
   gridRef?: React.RefObject<HTMLDivElement | null>;
+  maxFreePeriodsPerWeek?: number;
+  maxFreePeriodsPerDay?: number;
 }
 
-export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating, selectedDay, gridRef }: StatsHeaderProps) {
+export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating, selectedDay, gridRef, maxFreePeriodsPerWeek = MAX_FREE_PERIODS_PER_WEEK, maxFreePeriodsPerDay = MAX_FREE_PERIODS_PER_DAY }: StatsHeaderProps) {
   const { toast } = useToast();
   const [isDownloading, setIsDownloading] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
@@ -528,11 +530,11 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
         <div className="flex items-center gap-2 mb-2">
           <Clock className="h-4 w-4 text-muted-foreground" />
           <span className="text-sm font-medium">Free Periods by Class</span>
-          <span className="text-xs text-muted-foreground">(max {MAX_FREE_PERIODS_PER_WEEK}/week, {MAX_FREE_PERIODS_PER_DAY}/day)</span>
+          <span className="text-xs text-muted-foreground">(max {maxFreePeriodsPerWeek}/week, {maxFreePeriodsPerDay}/day)</span>
         </div>
         <div className="flex flex-wrap gap-2">
           {CLASSES.map((schoolClass) => {
-            const stats = getFreePeriodStats(timetable, schoolClass as SchoolClass);
+            const stats = getFreePeriodStats(timetable, schoolClass as SchoolClass, maxFreePeriodsPerWeek, maxFreePeriodsPerDay);
             const filledCount = TOTAL_PERIODS_PER_WEEK - stats.weeklyTotal;
             const hasIssues = stats.weeklyExceeded || stats.dailyExceededDays.length > 0;
             
