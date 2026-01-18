@@ -8,6 +8,7 @@ import {
   type ValidationResult,
   type AutoGenerateResult,
   type SubjectQuota,
+  type UserSettings,
   DAYS,
 } from "@shared/schema";
 import {
@@ -53,6 +54,12 @@ export default function Home() {
   const { data: quotas = [] } = useQuery<SubjectQuota[]>({
     queryKey: ["/api/quotas"],
   });
+
+  const { data: userSettings } = useQuery<UserSettings>({
+    queryKey: ["/api/settings"],
+  });
+
+  const fatigueLimit = userSettings?.fatigueLimit ?? 5;
 
   useEffect(() => {
     if (timetableData) {
@@ -120,11 +127,11 @@ export default function Home() {
         slotType,
         slashPairSubject,
         slashPairTeacherId,
-      });
+      }, fatigueLimit);
 
       setValidation(result);
     },
-    [selectedSlot, timetable, teachers]
+    [selectedSlot, timetable, teachers, fatigueLimit]
   );
 
   const handlePlace = useCallback(
@@ -146,7 +153,7 @@ export default function Home() {
         slotType,
         slashPairSubject,
         slashPairTeacherId,
-      });
+      }, fatigueLimit);
 
       if (!validationResult.isValid) {
         toast({
@@ -226,7 +233,7 @@ export default function Home() {
       setSelectedSlot(null);
       setValidation(null);
     },
-    [selectedSlot, timetable, teachers, toast, actionIndex]
+    [selectedSlot, timetable, teachers, toast, actionIndex, fatigueLimit]
   );
 
   const handleRemove = useCallback(() => {
