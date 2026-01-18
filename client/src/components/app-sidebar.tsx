@@ -13,6 +13,8 @@ import {
 import { Calendar, LayoutDashboard, Users, Settings, HelpCircle } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Badge } from "@/components/ui/badge";
+import { useQuery } from "@tanstack/react-query";
+import type { UserSettings } from "@shared/schema";
 
 const menuItems = [
   {
@@ -50,6 +52,12 @@ const bottomItems = [
 
 export function AppSidebar() {
   const [location] = useLocation();
+  
+  const { data: userSettings } = useQuery<UserSettings>({
+    queryKey: ["/api/settings"],
+  });
+  
+  const fatigueLimit = userSettings?.fatigueLimit ?? 5;
 
   return (
     <Sidebar>
@@ -123,7 +131,7 @@ export function AppSidebar() {
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-green-500" />
-                <span className="text-xs">Fatigue limit (5 consecutive)</span>
+                <span className="text-xs">Fatigue limit ({fatigueLimit} consecutive)</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-green-500" />
