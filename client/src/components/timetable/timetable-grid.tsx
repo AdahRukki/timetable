@@ -34,10 +34,34 @@ export function TimetableGrid({
   const getTeacher = (teacherId: string | null): Teacher | undefined =>
     teacherId ? teachers.find((t) => t.id === teacherId) : undefined;
 
+  // Period times for regular days (Mon-Thu)
+  const regularPeriodTimes: Record<number, string> = {
+    1: "8:30",
+    2: "9:15",
+    3: "10:00",
+    4: "10:45",
+    5: "12:00",
+    6: "12:45",
+    7: "1:30",
+    8: "2:30",
+    9: "3:15",
+  };
+
+  // Period times for Friday (different after break)
+  const fridayPeriodTimes: Record<number, string> = {
+    1: "8:30",
+    2: "9:15",
+    3: "10:00",
+    4: "10:45",
+    5: "12:30",
+    6: "1:15",
+  };
+
   const getPeriodLabel = (period: number): string => {
-    const startHour = 8 + Math.floor((period - 1) * 40 / 60);
-    const startMin = ((period - 1) * 40) % 60;
-    return `${startHour.toString().padStart(2, "0")}:${startMin.toString().padStart(2, "0")}`;
+    if (selectedDay === "Friday") {
+      return fridayPeriodTimes[period] || "";
+    }
+    return regularPeriodTimes[period] || "";
   };
 
   const getSlotForCell = (day: Day, schoolClass: string, period: number): TimetableSlot => {
