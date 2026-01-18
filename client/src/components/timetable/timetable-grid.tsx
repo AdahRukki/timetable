@@ -34,34 +34,71 @@ export function TimetableGrid({
   const getTeacher = (teacherId: string | null): Teacher | undefined =>
     teacherId ? teachers.find((t) => t.id === teacherId) : undefined;
 
-  // Period times for regular days (Mon-Thu)
-  const regularPeriodTimes: Record<number, string> = {
-    1: "8:30",
-    2: "9:15",
-    3: "10:00",
-    4: "10:45",
-    5: "12:00",
-    6: "12:45",
-    7: "1:30",
-    8: "2:30",
-    9: "3:15",
+  // Period times for regular days (Mon-Thu) with start and end
+  const regularPeriodTimes: Record<number, { start: string; end: string }> = {
+    1: { start: "8:30", end: "9:15" },
+    2: { start: "9:15", end: "10:00" },
+    3: { start: "10:00", end: "10:45" },
+    4: { start: "10:45", end: "11:30" },
+    5: { start: "12:00", end: "12:45" },
+    6: { start: "12:45", end: "1:30" },
+    7: { start: "1:30", end: "2:15" },
+    8: { start: "2:30", end: "3:15" },
+    9: { start: "3:15", end: "4:00" },
   };
 
   // Period times for Friday (different after break)
-  const fridayPeriodTimes: Record<number, string> = {
-    1: "8:30",
-    2: "9:15",
-    3: "10:00",
-    4: "10:45",
-    5: "12:30",
-    6: "1:15",
+  const fridayPeriodTimes: Record<number, { start: string; end: string }> = {
+    1: { start: "8:30", end: "9:15" },
+    2: { start: "9:15", end: "10:00" },
+    3: { start: "10:00", end: "10:45" },
+    4: { start: "10:45", end: "11:30" },
+    5: { start: "12:30", end: "1:15" },
+    6: { start: "1:15", end: "2:00" },
   };
 
   const getPeriodLabel = (period: number): string => {
-    if (selectedDay === "Friday") {
-      return fridayPeriodTimes[period] || "";
+    const times = selectedDay === "Friday" ? fridayPeriodTimes[period] : regularPeriodTimes[period];
+    if (!times) return "";
+    return `${times.start} - ${times.end}`;
+  };
+
+  // Define schedule items (periods + breaks) for display
+  type ScheduleItem = 
+    | { type: "period"; period: number }
+    | { type: "break"; label: string; time: string };
+
+  const getScheduleItems = (day: Day): ScheduleItem[] => {
+    if (day === "Friday") {
+      return [
+        { type: "period", period: 1 },
+        { type: "period", period: 2 },
+        { type: "period", period: 3 },
+        { type: "period", period: 4 },
+        { type: "break", label: "Prayer", time: "11:30 - 12:00" },
+        { type: "break", label: "Break", time: "12:00 - 12:30" },
+        { type: "period", period: 5 },
+        { type: "period", period: 6 },
+      ];
     }
-    return regularPeriodTimes[period] || "";
+    // Regular days (Mon-Thu)
+    const items: ScheduleItem[] = [
+      { type: "period", period: 1 },
+      { type: "period", period: 2 },
+      { type: "period", period: 3 },
+      { type: "period", period: 4 },
+      { type: "break", label: "Break", time: "11:30 - 12:00" },
+      { type: "period", period: 5 },
+      { type: "period", period: 6 },
+      { type: "period", period: 7 },
+    ];
+    // Only add second break and P8/P9 for days that have them
+    if (day !== "Tuesday") {
+      items.push({ type: "break", label: "Break", time: "2:15 - 2:30" });
+      items.push({ type: "period", period: 8 });
+      items.push({ type: "period", period: 9 });
+    }
+    return items;
   };
 
   const getSlotForCell = (day: Day, schoolClass: string, period: number): TimetableSlot => {
@@ -226,7 +263,7 @@ export function TimetableGrid({
           </div>
 
           {DAYS.map((day) => {
-            const periods = getPeriodsForDay(day);
+            const scheduleItems = getScheduleItems(day);
             
             return (
               <TabsContent
@@ -245,18 +282,33 @@ export function TimetableGrid({
                               Class
                             </div>
                           </th>
-                          {periods.map((period) => (
-                            <th
-                              key={period}
-                              className="p-2 text-center min-w-[90px]"
-                            >
-                              <div className="text-xs font-medium text-foreground">
-                                P{period}
-                              </div>
-                              <div className="text-[10px] text-muted-foreground">
-                                {getPeriodLabel(period)}
-                              </div>
-                            </th>
+                          {scheduleItems.map((item, idx) => (
+                            item.type === "period" ? (
+                              <th
+                                key={`p-${item.period}`}
+                                className="p-2 text-center min-w-[90px]"
+                              >
+                                <div className="text-xs font-medium text-foreground">
+                                  P{item.period}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground">
+                                  {getPeriodLabel(item.period)}
+                                </div>
+                              </th>
+                            ) : (
+                              <th
+                                key={`break-${idx}`}
+                                className="p-2 text-center min-w-[70px] bg-muted/30"
+                              >
+                                <div className="text-xs font-medium text-muted-foreground flex items-center justify-center gap-1">
+                                  <Coffee className="h-3 w-3" />
+                                  {item.label}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground">
+                                  {item.time}
+                                </div>
+                              </th>
+                            )
                           ))}
                         </tr>
                       </thead>
@@ -278,8 +330,16 @@ export function TimetableGrid({
                                   {schoolClass}
                                 </Badge>
                               </td>
-                              {periods.map((period) => 
-                                renderCell(day, schoolClass, period, skipDoubleCheck)
+                              {scheduleItems.map((item, idx) => 
+                                item.type === "period" 
+                                  ? renderCell(day, schoolClass, item.period, skipDoubleCheck)
+                                  : (
+                                    <td key={`break-${idx}`} className="p-1 bg-muted/20">
+                                      <div className="h-14 flex items-center justify-center">
+                                        <Coffee className="h-4 w-4 text-muted-foreground/50" />
+                                      </div>
+                                    </td>
+                                  )
                               )}
                             </tr>
                           );
