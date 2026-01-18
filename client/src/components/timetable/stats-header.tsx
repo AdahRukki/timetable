@@ -7,7 +7,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import {
   CalendarDays,
   Users,
@@ -99,20 +100,36 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
   const handleDownload = async () => {
     setIsDownloading(true);
     try {
-      const workbook = XLSX.utils.book_new();
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
       
-      // Create a sheet for each day
+      // Add each day as a page
+      let isFirstPage = true;
       for (const day of DAYS) {
+        if (!isFirstPage) {
+          doc.addPage();
+        }
+        isFirstPage = false;
+        
         const periods = getPeriodsForDay(day);
         const periodTimes = day === "Friday" ? fridayPeriodTimes : regularPeriodTimes;
         
-        // Build header row with period info
-        const headerRow = ["Class"];
-        for (const period of periods) {
-          headerRow.push(`P${period} (${periodTimes[period] || ""})`);
-        }
+        // Title
+        doc.setFontSize(16);
+        doc.text(`${day} Timetable`, 14, 15);
         
-        // Build data rows for each class
+        // Break info
+        doc.setFontSize(10);
+        const breakText = day === "Friday" 
+          ? "Prayer: 11:30-12:00, Break: 12:00-12:30"
+          : day === "Tuesday"
+          ? "Break: 11:30-12:00"
+          : "Break 1: 11:30-12:00, Break 2: 2:15-2:30";
+        doc.text(breakText, 14, 22);
+        
+        // Build header row
+        const headerRow = ["Class", ...periods.map(p => `P${p}\n${periodTimes[p] || ""}`)];
+        
+        // Build data rows
         const dataRows: string[][] = [];
         for (const schoolClass of CLASSES) {
           const row: string[] = [schoolClass];
@@ -123,9 +140,10 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
               const teacherName = teacher?.name || "";
               if (slot.slotType === "slash") {
                 const slashTeacher = teachers.find(t => t.id === slot.slashPairTeacherId);
-                row.push(`${slot.subject || ""} (${teacherName}) / ${slot.slashPairSubject || ""} (${slashTeacher?.name || ""})`);
+                row.push(`${slot.subject || ""}\n(${teacherName})\n/\n${slot.slashPairSubject || ""}\n(${slashTeacher?.name || ""})`);
               } else {
-                row.push(`${slot.subject || ""} (${teacherName})${slot.slotType === "double" ? " [D]" : ""}`);
+                const doubleMarker = slot.slotType === "double" ? " [D]" : "";
+                row.push(`${slot.subject || ""}${doubleMarker}\n(${teacherName})`);
               }
             } else {
               row.push("");
@@ -134,37 +152,35 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
           dataRows.push(row);
         }
         
-        // Add break info at the bottom
-        const breakInfo = day === "Friday" 
-          ? ["", "", "", "", "", "Prayer: 11:30-12:00, Break: 12:00-12:30"]
-          : day === "Tuesday"
-          ? ["", "", "", "", "", "Break: 11:30-12:00"]
-          : ["", "", "", "", "", "Break 1: 11:30-12:00, Break 2: 2:15-2:30"];
-        
-        const sheetData = [headerRow, ...dataRows, [], breakInfo];
-        const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
-        
-        // Set column widths
-        worksheet["!cols"] = [{ wch: 8 }, ...periods.map(() => ({ wch: 30 }))];
-        
-        XLSX.utils.book_append_sheet(workbook, worksheet, day);
+        autoTable(doc, {
+          head: [headerRow],
+          body: dataRows,
+          startY: 26,
+          theme: "grid",
+          styles: { fontSize: 8, cellPadding: 2, valign: "middle", halign: "center" },
+          headStyles: { fillColor: [66, 139, 202], textColor: 255, fontStyle: "bold" },
+          columnStyles: { 0: { fontStyle: "bold", halign: "left" } },
+        });
       }
       
-      // Create Statistics sheet
-      const statsData: (string | number)[][] = [
-        ["TIMETABLE STATISTICS"],
-        [],
-        ["Metric", "Value"],
-        ["Total Slots", totalSlots],
-        ["Scheduled Slots", occupiedSlots],
-        ["Free Slots", freeSlots],
-        ["Completion Rate", `${completionPercent}%`],
-        ["Total Teachers", teachers.length],
-        [],
-        ["FREE PERIODS BY CLASS"],
-        ["Class", "Filled", "Free", "Weekly Limit", "Status"],
-      ];
+      // Add Statistics page
+      doc.addPage();
+      doc.setFontSize(16);
+      doc.text("Timetable Statistics", 14, 15);
       
+      // Summary stats
+      doc.setFontSize(12);
+      doc.text(`Total Slots: ${totalSlots}`, 14, 25);
+      doc.text(`Scheduled: ${occupiedSlots}`, 14, 32);
+      doc.text(`Free: ${freeSlots}`, 14, 39);
+      doc.text(`Completion: ${completionPercent}%`, 14, 46);
+      doc.text(`Teachers: ${teachers.length}`, 14, 53);
+      
+      // Free periods by class table
+      doc.setFontSize(14);
+      doc.text("Free Periods by Class", 14, 65);
+      
+      const freePeriodRows: string[][] = [];
       for (const schoolClass of CLASSES) {
         const classStats = getFreePeriodStats(timetable, schoolClass as SchoolClass);
         const filledCount = TOTAL_PERIODS_PER_WEEK - classStats.weeklyTotal;
@@ -173,13 +189,24 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
           : classStats.weeklyTotal === 0 
           ? "Complete" 
           : "OK";
-        statsData.push([schoolClass, filledCount, classStats.weeklyTotal, MAX_FREE_PERIODS_PER_WEEK, status]);
+        freePeriodRows.push([schoolClass, String(filledCount), String(classStats.weeklyTotal), String(MAX_FREE_PERIODS_PER_WEEK), status]);
       }
       
-      statsData.push([]);
-      statsData.push(["TEACHER WORKLOAD"]);
-      statsData.push(["Teacher", "Subjects", "Classes", "Total Periods Assigned"]);
+      autoTable(doc, {
+        head: [["Class", "Filled", "Free", "Limit", "Status"]],
+        body: freePeriodRows,
+        startY: 70,
+        theme: "grid",
+        styles: { fontSize: 10 },
+        headStyles: { fillColor: [66, 139, 202] },
+      });
       
+      // Teacher workload table
+      const finalY = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY || 120;
+      doc.setFontSize(14);
+      doc.text("Teacher Workload", 14, finalY + 15);
+      
+      const teacherRows: string[][] = [];
       for (const teacher of teachers) {
         let periodCount = 0;
         for (const day of DAYS) {
@@ -193,39 +220,35 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
             }
           }
         }
-        statsData.push([
+        teacherRows.push([
           teacher.name,
           teacher.subjects.join(", "),
           teacher.classes.join(", "),
-          periodCount,
+          String(periodCount),
         ]);
       }
       
-      const statsSheet = XLSX.utils.aoa_to_sheet(statsData);
-      statsSheet["!cols"] = [{ wch: 20 }, { wch: 25 }, { wch: 25 }, { wch: 15 }, { wch: 15 }];
-      XLSX.utils.book_append_sheet(workbook, statsSheet, "Statistics");
+      autoTable(doc, {
+        head: [["Teacher", "Subjects", "Classes", "Periods"]],
+        body: teacherRows,
+        startY: finalY + 20,
+        theme: "grid",
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [66, 139, 202] },
+      });
       
-      // Download the file using blob approach for browser compatibility
-      const wbout = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
-      const blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "timetable-complete.xlsx";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      // Save the PDF
+      doc.save("timetable-complete.pdf");
       
       toast({
         title: "Download Complete",
-        description: "Timetable exported to Excel with all days and statistics",
+        description: "Timetable exported to PDF with all days and statistics",
       });
     } catch (error) {
       console.error("Download error:", error);
       toast({
         title: "Download Failed",
-        description: "Could not generate Excel file. Please try again.",
+        description: "Could not generate PDF file. Please try again.",
         variant: "destructive",
       });
     } finally {
