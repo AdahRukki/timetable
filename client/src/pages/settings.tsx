@@ -625,7 +625,7 @@ export default function SettingsPage() {
               <Switch defaultChecked disabled />
             </div>
             <Separator />
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="space-y-0.5 flex-1">
                 <Label>Teacher Fatigue Limit</Label>
                 <p className="text-sm text-muted-foreground">
@@ -645,13 +645,16 @@ export default function SettingsPage() {
                 <Button
                   size="sm"
                   onClick={() => updateSettingsMutation.mutate({ fatigueLimit })}
-                  disabled={updateSettingsMutation.isPending || settingsLoading || fatigueLimit === userSettings?.fatigueLimit}
+                  disabled={updateSettingsMutation.isPending || settingsLoading}
                   data-testid="button-save-fatigue-limit"
                 >
                   {updateSettingsMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
-                    <Save className="h-4 w-4" />
+                    <>
+                      <Save className="h-4 w-4 mr-1" />
+                      Save
+                    </>
                   )}
                 </Button>
               </div>
