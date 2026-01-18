@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import html2canvas from "html2canvas";
+import * as XLSX from "xlsx";
 import {
   CalendarDays,
   Users,
@@ -73,38 +73,150 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
     },
   });
 
+  // Period times for regular days
+  const regularPeriodTimes: Record<number, string> = {
+    1: "8:30 - 9:15",
+    2: "9:15 - 10:00",
+    3: "10:00 - 10:45",
+    4: "10:45 - 11:30",
+    5: "12:00 - 12:45",
+    6: "12:45 - 1:30",
+    7: "1:30 - 2:15",
+    8: "2:30 - 3:15",
+    9: "3:15 - 4:00",
+  };
+
+  // Period times for Friday
+  const fridayPeriodTimes: Record<number, string> = {
+    1: "8:30 - 9:15",
+    2: "9:15 - 10:00",
+    3: "10:00 - 10:45",
+    4: "10:45 - 11:30",
+    5: "12:30 - 1:15",
+    6: "1:15 - 2:00",
+  };
+
   const handleDownload = async () => {
-    if (!gridRef?.current) {
-      toast({
-        title: "Download Error",
-        description: "Timetable grid not found. Please try again.",
-        variant: "destructive",
-      });
-      return;
-    }
-    
     setIsDownloading(true);
     try {
-      const canvas = await html2canvas(gridRef.current, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-        useCORS: true,
-      });
+      const workbook = XLSX.utils.book_new();
       
-      const link = document.createElement("a");
-      link.download = `timetable-${selectedDay.toLowerCase()}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
+      // Create a sheet for each day
+      for (const day of DAYS) {
+        const periods = getPeriodsForDay(day);
+        const periodTimes = day === "Friday" ? fridayPeriodTimes : regularPeriodTimes;
+        
+        // Build header row with period info
+        const headerRow = ["Class"];
+        for (const period of periods) {
+          headerRow.push(`P${period} (${periodTimes[period] || ""})`);
+        }
+        
+        // Build data rows for each class
+        const dataRows: string[][] = [];
+        for (const schoolClass of CLASSES) {
+          const row: string[] = [schoolClass];
+          for (const period of periods) {
+            const slot = timetable.get(getSlotKey(day, schoolClass, period));
+            if (slot && slot.status === "occupied") {
+              const teacher = teachers.find(t => t.id === slot.teacherId);
+              const teacherName = teacher?.name || "";
+              if (slot.slotType === "slash") {
+                const slashTeacher = teachers.find(t => t.id === slot.slashPairTeacherId);
+                row.push(`${slot.subject || ""} (${teacherName}) / ${slot.slashPairSubject || ""} (${slashTeacher?.name || ""})`);
+              } else {
+                row.push(`${slot.subject || ""} (${teacherName})${slot.slotType === "double" ? " [D]" : ""}`);
+              }
+            } else {
+              row.push("");
+            }
+          }
+          dataRows.push(row);
+        }
+        
+        // Add break info at the bottom
+        const breakInfo = day === "Friday" 
+          ? ["", "", "", "", "", "Prayer: 11:30-12:00, Break: 12:00-12:30"]
+          : day === "Tuesday"
+          ? ["", "", "", "", "", "Break: 11:30-12:00"]
+          : ["", "", "", "", "", "Break 1: 11:30-12:00, Break 2: 2:15-2:30"];
+        
+        const sheetData = [headerRow, ...dataRows, [], breakInfo];
+        const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+        
+        // Set column widths
+        worksheet["!cols"] = [{ wch: 8 }, ...periods.map(() => ({ wch: 30 }))];
+        
+        XLSX.utils.book_append_sheet(workbook, worksheet, day);
+      }
+      
+      // Create Statistics sheet
+      const statsData: (string | number)[][] = [
+        ["TIMETABLE STATISTICS"],
+        [],
+        ["Metric", "Value"],
+        ["Total Slots", totalSlots],
+        ["Scheduled Slots", occupiedSlots],
+        ["Free Slots", freeSlots],
+        ["Completion Rate", `${completionPercent}%`],
+        ["Total Teachers", teachers.length],
+        [],
+        ["FREE PERIODS BY CLASS"],
+        ["Class", "Filled", "Free", "Weekly Limit", "Status"],
+      ];
+      
+      for (const schoolClass of CLASSES) {
+        const classStats = getFreePeriodStats(timetable, schoolClass as SchoolClass);
+        const filledCount = TOTAL_PERIODS_PER_WEEK - classStats.weeklyTotal;
+        const status = classStats.weeklyExceeded || classStats.dailyExceededDays.length > 0 
+          ? "Exceeds Limit" 
+          : classStats.weeklyTotal === 0 
+          ? "Complete" 
+          : "OK";
+        statsData.push([schoolClass, filledCount, classStats.weeklyTotal, MAX_FREE_PERIODS_PER_WEEK, status]);
+      }
+      
+      statsData.push([]);
+      statsData.push(["TEACHER WORKLOAD"]);
+      statsData.push(["Teacher", "Subjects", "Classes", "Total Periods Assigned"]);
+      
+      for (const teacher of teachers) {
+        let periodCount = 0;
+        for (const day of DAYS) {
+          const periods = getPeriodsForDay(day);
+          for (const period of periods) {
+            for (const schoolClass of CLASSES) {
+              const slot = timetable.get(getSlotKey(day, schoolClass, period));
+              if (slot && (slot.teacherId === teacher.id || slot.slashPairTeacherId === teacher.id)) {
+                periodCount++;
+              }
+            }
+          }
+        }
+        statsData.push([
+          teacher.name,
+          teacher.subjects.join(", "),
+          teacher.classes.join(", "),
+          periodCount,
+        ]);
+      }
+      
+      const statsSheet = XLSX.utils.aoa_to_sheet(statsData);
+      statsSheet["!cols"] = [{ wch: 20 }, { wch: 25 }, { wch: 25 }, { wch: 15 }, { wch: 15 }];
+      XLSX.utils.book_append_sheet(workbook, statsSheet, "Statistics");
+      
+      // Download the file
+      XLSX.writeFile(workbook, "timetable-complete.xlsx");
       
       toast({
         title: "Download Complete",
-        description: `Timetable for ${selectedDay} saved as image`,
+        description: "Timetable exported to Excel with all days and statistics",
       });
     } catch (error) {
       console.error("Download error:", error);
       toast({
         title: "Download Failed",
-        description: "Could not generate image. Please try again.",
+        description: "Could not generate Excel file. Please try again.",
         variant: "destructive",
       });
     } finally {
