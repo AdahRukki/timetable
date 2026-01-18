@@ -4,11 +4,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 import {
   CalendarDays,
   Users,
@@ -22,6 +24,9 @@ import {
   Share2,
   Copy,
   Check,
+  FileText,
+  FileSpreadsheet,
+  ChevronDown,
 } from "lucide-react";
 import { useState, useRef } from "react";
 import {
@@ -256,6 +261,120 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
     }
   };
 
+  const handleDownloadExcel = async () => {
+    setIsDownloading(true);
+    try {
+      const workbook = XLSX.utils.book_new();
+      
+      // Add each day as a sheet
+      for (const day of DAYS) {
+        const periods = getPeriodsForDay(day);
+        const periodTimes = day === "Friday" ? fridayPeriodTimes : regularPeriodTimes;
+        
+        // Build header row
+        const headerRow = ["Class", ...periods.map(p => `P${p} (${periodTimes[p] || ""})`)];
+        
+        // Build data rows
+        const dataRows: string[][] = [];
+        for (const schoolClass of CLASSES) {
+          const row: string[] = [schoolClass];
+          for (const period of periods) {
+            const slot = timetable.get(getSlotKey(day, schoolClass, period));
+            if (slot && slot.status === "occupied") {
+              const teacher = teachers.find(t => t.id === slot.teacherId);
+              const teacherName = teacher?.name || "";
+              if (slot.slotType === "slash") {
+                const slashTeacher = teachers.find(t => t.id === slot.slashPairTeacherId);
+                row.push(`${slot.subject || ""} (${teacherName}) / ${slot.slashPairSubject || ""} (${slashTeacher?.name || ""})`);
+              } else {
+                const doubleMarker = slot.slotType === "double" ? " [D]" : "";
+                row.push(`${slot.subject || ""}${doubleMarker} (${teacherName})`);
+              }
+            } else {
+              row.push("");
+            }
+          }
+          dataRows.push(row);
+        }
+        
+        const sheetData = [headerRow, ...dataRows];
+        const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+        
+        // Set column widths
+        worksheet["!cols"] = [{ wch: 8 }, ...periods.map(() => ({ wch: 25 }))];
+        
+        XLSX.utils.book_append_sheet(workbook, worksheet, day);
+      }
+      
+      // Add Statistics sheet
+      const statsData: (string | number)[][] = [
+        ["Timetable Statistics"],
+        [],
+        ["Summary"],
+        ["Total Slots", totalSlots],
+        ["Scheduled", occupiedSlots],
+        ["Free", freeSlots],
+        ["Completion %", `${completionPercent}%`],
+        ["Teachers", teachers.length],
+        [],
+        ["Free Periods by Class"],
+        ["Class", "Filled", "Free", "Limit", "Status"],
+      ];
+      
+      for (const schoolClass of CLASSES) {
+        const classStats = getFreePeriodStats(timetable, schoolClass as SchoolClass);
+        const filledCount = TOTAL_PERIODS_PER_WEEK - classStats.weeklyTotal;
+        const status = classStats.weeklyExceeded || classStats.dailyExceededDays.length > 0 
+          ? "Exceeds Limit" 
+          : classStats.weeklyTotal === 0 
+          ? "Complete" 
+          : "OK";
+        statsData.push([schoolClass, filledCount, classStats.weeklyTotal, MAX_FREE_PERIODS_PER_WEEK, status]);
+      }
+      
+      statsData.push([]);
+      statsData.push(["Teacher Workload"]);
+      statsData.push(["Teacher", "Subjects", "Classes", "Periods"]);
+      
+      for (const teacher of teachers) {
+        let periodCount = 0;
+        for (const day of DAYS) {
+          const periods = getPeriodsForDay(day);
+          for (const period of periods) {
+            for (const schoolClass of CLASSES) {
+              const slot = timetable.get(getSlotKey(day, schoolClass, period));
+              if (slot && (slot.teacherId === teacher.id || slot.slashPairTeacherId === teacher.id)) {
+                periodCount++;
+              }
+            }
+          }
+        }
+        statsData.push([teacher.name, teacher.subjects.join(", "), teacher.classes.join(", "), periodCount]);
+      }
+      
+      const statsSheet = XLSX.utils.aoa_to_sheet(statsData);
+      statsSheet["!cols"] = [{ wch: 20 }, { wch: 30 }, { wch: 20 }, { wch: 10 }, { wch: 15 }];
+      XLSX.utils.book_append_sheet(workbook, statsSheet, "Statistics");
+      
+      // Save the file
+      XLSX.writeFile(workbook, "timetable-complete.xlsx");
+      
+      toast({
+        title: "Download Complete",
+        description: "Timetable exported to Excel with all days and statistics",
+      });
+    } catch (error) {
+      console.error("Download error:", error);
+      toast({
+        title: "Download Failed",
+        description: "Could not generate Excel file. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   const handleShare = () => {
     setShareUrl(null);
     setShareTitle("");
@@ -336,19 +455,33 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <h2 className="text-lg font-semibold">Timetable Overview</h2>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button
-            onClick={handleDownload}
-            disabled={isDownloading}
-            variant="outline"
-            data-testid="button-download"
-          >
-            {isDownloading ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <Download className="h-4 w-4 mr-2" />
-            )}
-            Download
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                disabled={isDownloading}
+                variant="outline"
+                data-testid="button-download"
+              >
+                {isDownloading ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4 mr-2" />
+                )}
+                Download
+                <ChevronDown className="h-4 w-4 ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={handleDownload} data-testid="menu-download-pdf">
+                <FileText className="h-4 w-4 mr-2" />
+                Download as PDF
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleDownloadExcel} data-testid="menu-download-excel">
+                <FileSpreadsheet className="h-4 w-4 mr-2" />
+                Download as Excel
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             onClick={handleShare}
             variant="outline"
