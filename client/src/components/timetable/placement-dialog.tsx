@@ -6,6 +6,7 @@ import {
   type Day,
   type SlotType,
   type ValidationResult,
+  type Subject,
   getSubjectsForClass,
   usesSlashSubjects,
   SLASH_SUBJECTS,
@@ -46,6 +47,7 @@ interface PlacementDialogProps {
   onOpenChange: (open: boolean) => void;
   slot: TimetableSlot | null;
   teachers: Teacher[];
+  customSubjects: Subject[];
   onPlace: (
     subject: string,
     teacherId: string,
@@ -69,6 +71,7 @@ export function PlacementDialog({
   onOpenChange,
   slot,
   teachers,
+  customSubjects,
   onPlace,
   onRemove,
   validation,
@@ -87,8 +90,23 @@ export function PlacementDialog({
 
   const availableSubjects = useMemo(() => {
     if (!schoolClass) return [];
-    return Object.keys(getSubjectsForClass(schoolClass));
-  }, [schoolClass]);
+    const defaultSubjects = Object.keys(getSubjectsForClass(schoolClass));
+    
+    const customSubjectNames = customSubjects
+      .filter((s) => {
+        if (schoolClass.startsWith("JSS")) {
+          return s.jssQuota > 0;
+        } else if (schoolClass === "SS1") {
+          return s.ss1Quota > 0;
+        } else {
+          return s.ss2ss3Quota > 0;
+        }
+      })
+      .map((s) => s.name);
+    
+    const allSubjects = Array.from(new Set([...defaultSubjects, ...customSubjectNames]));
+    return allSubjects.sort();
+  }, [schoolClass, customSubjects]);
 
   const availableTeachers = useMemo(() => {
     if (!subject) return [];

@@ -9,6 +9,7 @@ import {
   type AutoGenerateResult,
   type SubjectQuota,
   type UserSettings,
+  type Subject,
   DAYS,
 } from "@shared/schema";
 import {
@@ -57,6 +58,10 @@ export default function Home() {
 
   const { data: userSettings } = useQuery<UserSettings>({
     queryKey: ["/api/settings"],
+  });
+
+  const { data: customSubjects = [] } = useQuery<Subject[]>({
+    queryKey: ["/api/subjects"],
   });
 
   const fatigueLimit = userSettings?.fatigueLimit ?? 5;
@@ -467,6 +472,7 @@ export default function Home() {
         onOpenChange={setDialogOpen}
         slot={selectedSlot}
         teachers={teachers}
+        customSubjects={customSubjects}
         onPlace={handlePlace}
         onRemove={handleRemove}
         validation={validation}
