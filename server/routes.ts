@@ -1185,13 +1185,15 @@ function countTeacherLoad(timetable: Timetable, teacherId: string): number {
   return count;
 }
 
-function removeExcess(timetable: Timetable, cls: SchoolClass, subject: string, excess: number): void {
+function removeExcess(timetable: Timetable, cls: SchoolClass, subject: string, excess: number, lockedSlots: Timetable): void {
   const toRemove: string[] = [];
   for (const day of [...DAYS].reverse() as Day[]) {
     for (let p = PERIODS_PER_DAY[day]; p >= 1; p--) {
       const key = slotKey(day, cls, p);
+      if (lockedSlots.has(key)) continue; // never remove locked slots
       const slot = timetable.get(key);
       if (!slot || slot.status !== "occupied") continue;
+      if (slot.slotType === "slash") continue; // do not break slash pairings
       if (slot.subject === subject || slot.slashPairSubject === subject) toRemove.push(key);
     }
   }
@@ -1215,17 +1217,22 @@ function swapRepairPass(
   subject: string,
   teacher: Teacher,
   fatigueLimit: number,
+  allTeachers: Teacher[],
+  lockedSlots: Timetable,
   _warnings: string[]
 ): number {
   for (const day of shuffle([...DAYS] as Day[])) {
     if (subjectAlreadyTodayForClass(timetable, cls, day, subject)) continue;
     for (let p = 1; p <= PERIODS_PER_DAY[day]; p++) {
       const targetKey = slotKey(day, cls, p);
+      if (lockedSlots.has(targetKey)) continue; // never disturb locked slots
       const targetSlot = timetable.get(targetKey);
       if (!targetSlot || targetSlot.status !== "occupied") continue;
-      if (targetSlot.slotType === "slash") continue;
+      if (targetSlot.slotType === "slash" || targetSlot.slotType === "double") continue;
       const existingSubject = targetSlot.subject!;
       const existingTeacherId = targetSlot.teacherId!;
+      const existingTeacher = allTeachers.find(t => t.id === existingTeacherId);
+      if (!existingTeacher) continue;
       for (const altDay of shuffle([...DAYS] as Day[])) {
         if (altDay === day) continue;
         if (subjectAlreadyTodayForClass(timetable, cls, altDay, existingSubject)) continue;
@@ -1233,7 +1240,11 @@ function swapRepairPass(
           const altKey = slotKey(altDay, cls, altP);
           const altSlot = timetable.get(altKey);
           if (!altSlot || altSlot.status !== "empty") continue;
+          // Existing teacher must be available + free + fatigue-safe at the new period,
+          // and the move must not violate the security rule for the existing subject.
+          if (isTeacherUnavailable(existingTeacher, altDay, altP)) continue;
           if (!isTeacherFreeAt(timetable, existingTeacherId, altDay, altP)) continue;
+          if (violatesSecurityRule(timetable, cls, altDay, altP, existingSubject)) continue;
           const savedStatus: TimetableSlot["status"] = targetSlot.status;
           const savedSubject: TimetableSlot["subject"] = targetSlot.subject;
           const savedTeacherId: TimetableSlot["teacherId"] = targetSlot.teacherId;
@@ -1242,7 +1253,9 @@ function swapRepairPass(
           targetSlot.subject = null;
           targetSlot.teacherId = null;
           targetSlot.slotType = null;
+          const existingFatigueOk = !wouldExceedFatigue(timetable, existingTeacherId, altDay, [altP], fatigueLimit);
           const canPlace =
+            existingFatigueOk &&
             !isTeacherUnavailable(teacher, day, p) &&
             isTeacherFreeAt(timetable, teacher.id, day, p) &&
             !wouldExceedFatigue(timetable, teacher.id, day, [p], fatigueLimit) &&
@@ -1398,7 +1411,8 @@ function runAttempt(
     scheduleSubject(timetable, cls, subject, remaining, teachers, fatigueLimit, warnings, false);
   }
 
-  // PHASE 4: Retry passes (up to 3) with relaxed daily rule
+  // PHASE 4: Retry passes (up to 3) — daily-occurrence rule remains enforced
+  // Different random ordering can still uncover new placements without violating constraints.
   for (let pass = 0; pass < 3; pass++) {
     let anyProgress = false;
     for (const cls of shuffle([...CLASSES] as SchoolClass[])) {
@@ -1409,7 +1423,7 @@ function runAttempt(
         const alreadyPlaced = countPlacements(timetable, cls, quota.subject);
         const remaining = needed - alreadyPlaced;
         if (remaining <= 0) continue;
-        const p = scheduleSubject(timetable, cls, quota.subject, remaining, teachers, fatigueLimit, warnings, true);
+        const p = scheduleSubject(timetable, cls, quota.subject, remaining, teachers, fatigueLimit, warnings, false);
         if (p > 0) anyProgress = true;
       }
     }
@@ -1426,18 +1440,18 @@ function runAttempt(
       if (alreadyPlaced >= needed) continue;
       const eligible = teachers.filter(t => teacherCanTeachSubjectToClass(t, quota.subject, cls));
       for (const teacher of shuffle(eligible)) {
-        const repaired = swapRepairPass(timetable, cls, quota.subject, teacher, fatigueLimit, warnings);
+        const repaired = swapRepairPass(timetable, cls, quota.subject, teacher, fatigueLimit, teachers, lockedSlots, warnings);
         if (repaired > 0) break;
       }
     }
   }
 
-  // PHASE 6: Remove excess (over-quota)
+  // PHASE 6: Remove excess (over-quota) — never touches locked slots
   for (const cls of CLASSES) {
     for (const quota of quotas) {
       const needed = getQuotaForClass(quota, cls);
       const placed = countPlacements(timetable, cls, quota.subject);
-      if (placed > needed) removeExcess(timetable, cls, quota.subject, placed - needed);
+      if (placed > needed) removeExcess(timetable, cls, quota.subject, placed - needed, lockedSlots);
     }
   }
 
