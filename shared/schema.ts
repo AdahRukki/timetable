@@ -132,6 +132,15 @@ export const sharedTimetables = pgTable("shared_timetables", {
   title: text("title"),
 });
 
+// Saved timetables table (named snapshots that can be reloaded into the live grid)
+export const savedTimetables = pgTable("saved_timetables", {
+  id: varchar("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  name: text("name").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  timetableData: jsonb("timetable_data").notNull(),
+});
+
 // ===== ZOD SCHEMAS =====
 
 // Teacher schema
@@ -322,3 +331,19 @@ export const sharedTimetableSchema = z.object({
 });
 
 export type SharedTimetable = z.infer<typeof sharedTimetableSchema>;
+
+// Saved timetable schema
+export const savedTimetableSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  name: z.string().min(1, "Name is required"),
+  createdAt: z.number(),
+  timetableData: z.array(timetableSlotSchema),
+});
+
+export type SavedTimetable = z.infer<typeof savedTimetableSchema>;
+
+export const insertSavedTimetableSchema = z.object({
+  name: z.string().min(1, "Name is required").max(100),
+});
+export type InsertSavedTimetable = z.infer<typeof insertSavedTimetableSchema>;

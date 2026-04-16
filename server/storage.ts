@@ -10,6 +10,7 @@ import {
   type InsertSubject,
   type UserSettings,
   type SharedTimetable,
+  type SavedTimetable,
   DAYS,
   CLASSES,
   PERIODS_PER_DAY,
@@ -20,6 +21,7 @@ import {
   subjects,
   userSettings,
   sharedTimetables,
+  savedTimetables,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
@@ -69,7 +71,15 @@ export interface IStorage {
   getSharedTimetable(shareId: string): Promise<SharedTimetable | undefined>;
   deleteSharedTimetable(userId: string, shareId: string): Promise<boolean>;
   getUserSharedTimetables(userId: string): Promise<SharedTimetable[]>;
-  
+
+  // Saved timetables
+  listSavedTimetables(userId: string): Promise<SavedTimetable[]>;
+  getSavedTimetable(userId: string, id: string): Promise<SavedTimetable | undefined>;
+  createSavedTimetable(userId: string, name: string, slots: TimetableSlot[]): Promise<SavedTimetable>;
+  renameSavedTimetable(userId: string, id: string, name: string): Promise<SavedTimetable | undefined>;
+  deleteSavedTimetable(userId: string, id: string): Promise<boolean>;
+  loadSavedTimetable(userId: string, id: string): Promise<boolean>;
+
   // Initialize user data
   initializeUserData(userId: string): Promise<void>;
 }
@@ -571,6 +581,86 @@ export class DatabaseStorage implements IStorage {
       teacherData: row.teacherData as Teacher[],
       title: row.title,
     }));
+  }
+
+  // ===== Saved timetables =====
+  async listSavedTimetables(userId: string): Promise<SavedTimetable[]> {
+    const rows = await db.select().from(savedTimetables).where(eq(savedTimetables.userId, userId));
+    return rows
+      .map((row) => ({
+        id: row.id,
+        userId: row.userId,
+        name: row.name,
+        createdAt: row.createdAt,
+        timetableData: row.timetableData as TimetableSlot[],
+      }))
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  async getSavedTimetable(userId: string, id: string): Promise<SavedTimetable | undefined> {
+    const rows = await db.select().from(savedTimetables).where(
+      and(eq(savedTimetables.id, id), eq(savedTimetables.userId, userId))
+    );
+    if (rows.length === 0) return undefined;
+    const row = rows[0];
+    return {
+      id: row.id,
+      userId: row.userId,
+      name: row.name,
+      createdAt: row.createdAt,
+      timetableData: row.timetableData as TimetableSlot[],
+    };
+  }
+
+  async createSavedTimetable(userId: string, name: string, slots: TimetableSlot[]): Promise<SavedTimetable> {
+    const id = randomUUID();
+    const createdAt = Date.now();
+    await db.insert(savedTimetables).values({
+      id,
+      userId,
+      name,
+      createdAt,
+      timetableData: slots as any,
+    });
+    return { id, userId, name, createdAt, timetableData: slots };
+  }
+
+  async renameSavedTimetable(userId: string, id: string, name: string): Promise<SavedTimetable | undefined> {
+    await db.update(savedTimetables)
+      .set({ name })
+      .where(and(eq(savedTimetables.id, id), eq(savedTimetables.userId, userId)));
+    return this.getSavedTimetable(userId, id);
+  }
+
+  async deleteSavedTimetable(userId: string, id: string): Promise<boolean> {
+    await db.delete(savedTimetables).where(
+      and(eq(savedTimetables.id, id), eq(savedTimetables.userId, userId))
+    );
+    return true;
+  }
+
+  async loadSavedTimetable(userId: string, id: string): Promise<boolean> {
+    const saved = await this.getSavedTimetable(userId, id);
+    if (!saved) return false;
+    await this.clearAllSlots(userId);
+    const occupied = saved.timetableData.filter((s) => s.status === "occupied");
+    if (occupied.length > 0) {
+      await db.insert(timetableSlots).values(
+        occupied.map((slot) => ({
+          userId,
+          day: slot.day,
+          period: slot.period,
+          schoolClass: slot.schoolClass,
+          status: slot.status,
+          subject: slot.subject,
+          teacherId: slot.teacherId,
+          slotType: slot.slotType,
+          slashPairSubject: slot.slashPairSubject,
+          slashPairTeacherId: slot.slashPairTeacherId,
+        }))
+      );
+    }
+    return true;
   }
 }
 

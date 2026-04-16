@@ -10,7 +10,7 @@ import {
   SidebarMenuItem,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { Calendar, LayoutDashboard, Users, Settings, HelpCircle } from "lucide-react";
+import { Calendar, LayoutDashboard, Users, Settings, HelpCircle, Save } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
@@ -34,6 +34,12 @@ const menuItems = [
     url: "/dashboard",
     icon: LayoutDashboard,
     description: "Analytics and reports",
+  },
+  {
+    title: "Saved Timetables",
+    url: "/saved-timetables",
+    icon: Save,
+    description: "Load, rename, or delete saved timetables",
   },
 ];
 

@@ -18,6 +18,7 @@ import SettingsPage from "@/pages/settings";
 import HelpPage from "@/pages/help";
 import LandingPage from "@/pages/landing";
 import SharedTimetablePage from "@/pages/shared-timetable";
+import SavedTimetablesPage from "@/pages/saved-timetables";
 
 function Router() {
   return (
@@ -25,6 +26,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/teachers" component={TeachersPage} />
       <Route path="/dashboard" component={DashboardPage} />
+      <Route path="/saved-timetables" component={SavedTimetablesPage} />
       <Route path="/settings" component={SettingsPage} />
       <Route path="/help" component={HelpPage} />
       <Route component={NotFound} />

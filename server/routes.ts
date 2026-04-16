@@ -865,6 +865,104 @@ export async function registerRoutes(
     }
   });
 
+  // ===== Saved Timetables =====
+
+  app.get("/api/saved-timetables", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const items = await storage.listSavedTimetables(userId);
+      res.json(items);
+    } catch (error) {
+      console.error("List saved error:", error);
+      res.status(500).json({ error: "Failed to list saved timetables" });
+    }
+  });
+
+  app.post("/api/saved-timetables", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const nameSchema = z.object({ name: z.string().min(1).max(100) });
+      const { name } = nameSchema.parse(req.body);
+      const timetable = await storage.getTimetable(userId);
+      const slots = Array.from(timetable.values()).filter((s) => s.status === "occupied");
+      if (slots.length === 0) {
+        res.status(400).json({ error: "Cannot save an empty timetable" });
+        return;
+      }
+      const saved = await storage.createSavedTimetable(userId, name.trim(), slots);
+      res.status(201).json(saved);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid name", details: error.errors });
+      } else {
+        console.error("Create saved error:", error);
+        res.status(500).json({ error: "Failed to save timetable" });
+      }
+    }
+  });
+
+  app.get("/api/saved-timetables/:id", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const saved = await storage.getSavedTimetable(userId, req.params.id);
+      if (!saved) {
+        res.status(404).json({ error: "Saved timetable not found" });
+        return;
+      }
+      res.json(saved);
+    } catch (error) {
+      console.error("Get saved error:", error);
+      res.status(500).json({ error: "Failed to get saved timetable" });
+    }
+  });
+
+  app.patch("/api/saved-timetables/:id", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const nameSchema = z.object({ name: z.string().min(1).max(100) });
+      const { name } = nameSchema.parse(req.body);
+      const saved = await storage.renameSavedTimetable(userId, req.params.id, name.trim());
+      if (!saved) {
+        res.status(404).json({ error: "Saved timetable not found" });
+        return;
+      }
+      res.json(saved);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid name", details: error.errors });
+      } else {
+        console.error("Rename saved error:", error);
+        res.status(500).json({ error: "Failed to rename saved timetable" });
+      }
+    }
+  });
+
+  app.delete("/api/saved-timetables/:id", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      await storage.deleteSavedTimetable(userId, req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Delete saved error:", error);
+      res.status(500).json({ error: "Failed to delete saved timetable" });
+    }
+  });
+
+  app.post("/api/saved-timetables/:id/load", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const ok = await storage.loadSavedTimetable(userId, req.params.id);
+      if (!ok) {
+        res.status(404).json({ error: "Saved timetable not found" });
+        return;
+      }
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Load saved error:", error);
+      res.status(500).json({ error: "Failed to load saved timetable" });
+    }
+  });
+
   return httpServer;
 }
 
