@@ -754,16 +754,6 @@ export default function SettingsPage() {
             <Separator />
             <div className="flex items-center justify-between gap-4">
               <div className="space-y-0.5">
-                <Label>English-Security Separation</Label>
-                <p className="text-sm text-muted-foreground">
-                  Prevent Security from immediately following English
-                </p>
-              </div>
-              <Switch defaultChecked disabled />
-            </div>
-            <Separator />
-            <div className="flex items-center justify-between gap-4">
-              <div className="space-y-0.5">
                 <Label>Period Quota Warnings</Label>
                 <p className="text-sm text-muted-foreground">
                   Show warnings when subject quotas are exceeded

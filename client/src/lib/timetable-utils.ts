@@ -540,18 +540,6 @@ export function validatePlacement(
     }
   }
   
-  // Check English followed by Security rule
-  if (subject === "Security") {
-    const prevSlot = getSlot(timetable, day, schoolClass, period - 1);
-    if (prevSlot && prevSlot.subject === "English") {
-      errors.push({
-        code: "ENGLISH_SECURITY",
-        message: "Security cannot immediately follow English",
-        severity: "error",
-      });
-    }
-  }
-  
   // Slash subject validation for SS2/SS3
   if (slotType === "slash" && usesSlashSubjects(schoolClass)) {
     const slashPair = SLASH_SUBJECTS.find(

@@ -12,7 +12,6 @@ import {
   Users,
   AlertTriangle,
   Clock,
-  BookOpen,
   Layers,
 } from "lucide-react";
 
@@ -78,12 +77,6 @@ export default function HelpPage() {
       title: "No Doubles in P8/P9",
       description: "Double periods are not allowed in late periods",
       icon: Layers,
-      severity: "error",
-    },
-    {
-      title: "English-Security Rule",
-      description: "Security cannot immediately follow English for the same class",
-      icon: BookOpen,
       severity: "error",
     },
   ];

@@ -404,19 +404,6 @@ async function validatePlacement(
     });
   }
   
-  // English-Security rule
-  if (subject === "Security") {
-    const prevKey = `${day}-${schoolClass}-${period - 1}`;
-    const prevSlot = timetable.get(prevKey);
-    if (prevSlot && prevSlot.subject === "English") {
-      errors.push({
-        code: "ENGLISH_SECURITY",
-        message: "Security cannot immediately follow English",
-        severity: "error",
-      });
-    }
-  }
-  
   // Subject can only appear once per day per class
   const dailySubjectCount = getTotalSubjectCountForDay(timetable, day, schoolClass, subject, []);
   if (dailySubjectCount >= 1) {
@@ -956,13 +943,6 @@ function wouldExceedFatigue(
   return maxConsecutive > fatigueLimit;
 }
 
-function violatesSecurityRule(timetable: Timetable, cls: SchoolClass, day: Day, period: number, subject: string): boolean {
-  if (subject !== "Security") return false;
-  if (period <= 1) return false;
-  const prev = timetable.get(slotKey(day, cls, period - 1));
-  return prev?.subject === "English";
-}
-
 function subjectAlreadyTodayForClass(timetable: Timetable, cls: SchoolClass, day: Day, subject: string): boolean {
   const periodsToday = PERIODS_PER_DAY[day];
   for (let p = 1; p <= periodsToday; p++) {
@@ -1023,7 +1003,6 @@ function tryPlace(
   const slot = timetable.get(slotKey(day, cls, period));
   if (!slot || slot.status !== "empty") return 0;
   if (!relaxDailyRule && subjectAlreadyTodayForClass(timetable, cls, day, subject)) return 0;
-  if (violatesSecurityRule(timetable, cls, day, period, subject)) return 0;
   if (isTeacherUnavailable(teacher, day, period)) return 0;
   if (!isTeacherFreeAt(timetable, teacher.id, day, period)) return 0;
 
@@ -1125,10 +1104,6 @@ function scheduleSlashPair(
           if (isTeacherUnavailable(t2, day, period)) continue;
           if (!isTeacherFreeAt(timetable, t2.id, day, period)) continue;
           if (wouldExceedFatigue(timetable, t2.id, day, [period], fatigueLimit)) continue;
-          if (subject1 === "Security" || subject2 === "Security") {
-            const prev = timetable.get(slotKey(day, cls, period - 1));
-            if (prev?.subject === "English") continue;
-          }
           slot.status = "occupied";
           slot.subject = subject1;
           slot.teacherId = t1.id;
@@ -1228,11 +1203,9 @@ function swapRepairPass(
           const altKey = slotKey(altDay, cls, altP);
           const altSlot = timetable.get(altKey);
           if (!altSlot || altSlot.status !== "empty") continue;
-          // Existing teacher must be available + free + fatigue-safe at the new period,
-          // and the move must not violate the security rule for the existing subject.
+          // Existing teacher must be available + free + fatigue-safe at the new period.
           if (isTeacherUnavailable(existingTeacher, altDay, altP)) continue;
           if (!isTeacherFreeAt(timetable, existingTeacherId, altDay, altP)) continue;
-          if (violatesSecurityRule(timetable, cls, altDay, altP, existingSubject)) continue;
           const savedStatus: TimetableSlot["status"] = targetSlot.status;
           const savedSubject: TimetableSlot["subject"] = targetSlot.subject;
           const savedTeacherId: TimetableSlot["teacherId"] = targetSlot.teacherId;
@@ -1246,8 +1219,7 @@ function swapRepairPass(
             existingFatigueOk &&
             !isTeacherUnavailable(teacher, day, p) &&
             isTeacherFreeAt(timetable, teacher.id, day, p) &&
-            !wouldExceedFatigue(timetable, teacher.id, day, [p], fatigueLimit) &&
-            !violatesSecurityRule(timetable, cls, day, p, subject);
+            !wouldExceedFatigue(timetable, teacher.id, day, [p], fatigueLimit);
           if (canPlace) {
             altSlot.status = "occupied";
             altSlot.subject = existingSubject;

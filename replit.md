@@ -89,10 +89,9 @@ PostgreSQL with Drizzle ORM. Tables:
 2. **Fatigue Limit**: Configurable max consecutive teaching periods per teacher per day (default: 5, range: 1-10)
 3. **Break Enforcement**: Double periods cannot cross breaks
 4. **No Doubles in P8/P9**: Double periods restricted to earlier slots
-5. **English-Security Rule**: Security cannot follow English immediately
-6. **Period Quotas**: Tracks weekly allocation per subject
-7. **Subject-Class Mapping**: Teachers can be assigned to teach specific subjects to specific classes only
-8. **Daily Occurrence Rule**: Each subject can only appear once per day per class
+5. **Period Quotas**: Tracks weekly allocation per subject
+6. **Subject-Class Mapping**: Teachers can be assigned to teach specific subjects to specific classes only
+7. **Daily Occurrence Rule**: Each subject can only appear once per day per class
 
 ### Subjects
 Users create and manage all subjects in the Settings page with:
