@@ -6,6 +6,7 @@ import {
   insertTeacherSchema,
   insertSubjectSchema,
   placementRequestSchema,
+  timetableSlotSchema,
   type Day,
   type SchoolClass,
   type SubjectQuota,
@@ -881,19 +882,23 @@ export async function registerRoutes(
   app.post("/api/saved-timetables", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const nameSchema = z.object({ name: z.string().min(1).max(100) });
-      const { name } = nameSchema.parse(req.body);
-      const timetable = await storage.getTimetable(userId);
-      const slots = Array.from(timetable.values()).filter((s) => s.status === "occupied");
-      if (slots.length === 0) {
+      // The live grid is maintained client-side, so the snapshot's source of
+      // truth is the slots posted by the client (validated server-side).
+      const bodySchema = z.object({
+        name: z.string().min(1).max(100),
+        slots: z.array(timetableSlotSchema),
+      });
+      const { name, slots } = bodySchema.parse(req.body);
+      const occupied = slots.filter((s) => s.status === "occupied");
+      if (occupied.length === 0) {
         res.status(400).json({ error: "Cannot save an empty timetable" });
         return;
       }
-      const saved = await storage.createSavedTimetable(userId, name.trim(), slots);
+      const saved = await storage.createSavedTimetable(userId, name.trim(), occupied);
       res.status(201).json(saved);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        res.status(400).json({ error: "Invalid name", details: error.errors });
+        res.status(400).json({ error: "Invalid request", details: error.errors });
       } else {
         console.error("Create saved error:", error);
         res.status(500).json({ error: "Failed to save timetable" });

@@ -439,7 +439,9 @@ export default function Home() {
 
   const saveTimetableMutation = useMutation({
     mutationFn: async (name: string) => {
-      const response = await apiRequest("POST", "/api/saved-timetables", { name });
+      // Snapshot the live client grid (source of truth for unsaved edits)
+      const slots = Array.from(timetable.values());
+      const response = await apiRequest("POST", "/api/saved-timetables", { name, slots });
       return response.json();
     },
     onSuccess: () => {
@@ -554,6 +556,10 @@ export default function Home() {
         onGenerate={handleAutoGenerate}
         isGenerating={autoGenerateMutation.isPending}
         result={autoGenerateMutation.data}
+        onSave={() => {
+          setAutoGenDialogOpen(false);
+          handleOpenSaveDialog();
+        }}
       />
 
       <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>

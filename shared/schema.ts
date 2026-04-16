@@ -132,13 +132,28 @@ export const sharedTimetables = pgTable("shared_timetables", {
   title: text("title"),
 });
 
+// Shape used by the savedTimetables.timetableData jsonb column. Mirrors
+// timetableSlotSchema below but is declared inline so it can be referenced
+// at table-definition time (before the zod schemas are introduced).
+type SavedSlotShape = {
+  day: typeof DAYS[number];
+  period: number;
+  schoolClass: typeof CLASSES[number];
+  status: "empty" | "occupied" | "break";
+  subject: string | null;
+  teacherId: string | null;
+  slotType: "single" | "double" | "slash" | null;
+  slashPairSubject: string | null;
+  slashPairTeacherId: string | null;
+};
+
 // Saved timetables table (named snapshots that can be reloaded into the live grid)
 export const savedTimetables = pgTable("saved_timetables", {
   id: varchar("id").primaryKey(),
   userId: varchar("user_id").notNull(),
   name: text("name").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
-  timetableData: jsonb("timetable_data").notNull(),
+  timetableData: jsonb("timetable_data").$type<SavedSlotShape[]>().notNull(),
 });
 
 // ===== ZOD SCHEMAS =====

@@ -620,7 +620,7 @@ export class DatabaseStorage implements IStorage {
       userId,
       name,
       createdAt,
-      timetableData: slots as any,
+      timetableData: slots,
     });
     return { id, userId, name, createdAt, timetableData: slots };
   }
@@ -642,24 +642,30 @@ export class DatabaseStorage implements IStorage {
   async loadSavedTimetable(userId: string, id: string): Promise<boolean> {
     const saved = await this.getSavedTimetable(userId, id);
     if (!saved) return false;
-    await this.clearAllSlots(userId);
     const occupied = saved.timetableData.filter((s) => s.status === "occupied");
-    if (occupied.length > 0) {
-      await db.insert(timetableSlots).values(
-        occupied.map((slot) => ({
-          userId,
-          day: slot.day,
-          period: slot.period,
-          schoolClass: slot.schoolClass,
-          status: slot.status,
-          subject: slot.subject,
-          teacherId: slot.teacherId,
-          slotType: slot.slotType,
-          slashPairSubject: slot.slashPairSubject,
-          slashPairTeacherId: slot.slashPairTeacherId,
-        }))
-      );
-    }
+
+    // Atomic replace: clear current slots + audit history, then insert snapshot.
+    // If any step fails the transaction rolls back, leaving the prior grid intact.
+    await db.transaction(async (tx) => {
+      await tx.delete(timetableSlots).where(eq(timetableSlots.userId, userId));
+      await tx.delete(timetableActions).where(eq(timetableActions.userId, userId));
+      if (occupied.length > 0) {
+        await tx.insert(timetableSlots).values(
+          occupied.map((slot) => ({
+            userId,
+            day: slot.day,
+            period: slot.period,
+            schoolClass: slot.schoolClass,
+            status: slot.status,
+            subject: slot.subject,
+            teacherId: slot.teacherId,
+            slotType: slot.slotType,
+            slashPairSubject: slot.slashPairSubject,
+            slashPairTeacherId: slot.slashPairTeacherId,
+          }))
+        );
+      }
+    });
     return true;
   }
 }
