@@ -1218,8 +1218,7 @@ function swapRepairPass(
   teacher: Teacher,
   fatigueLimit: number,
   allTeachers: Teacher[],
-  lockedSlots: Timetable,
-  _warnings: string[]
+  lockedSlots: Timetable
 ): number {
   for (const day of shuffle([...DAYS] as Day[])) {
     if (subjectAlreadyTodayForClass(timetable, cls, day, subject)) continue;
@@ -1288,7 +1287,6 @@ function swapRepairPass(
 }
 
 function preValidate(teachers: Teacher[], quotas: SubjectQuota[], warnings: string[]): void {
-  const JSS_CLASSES: SchoolClass[] = ["JSS1", "JSS2", "JSS3"];
   for (const cls of CLASSES) {
     for (const quota of quotas) {
       const needed = getQuotaForClass(quota, cls);
@@ -1440,7 +1438,7 @@ function runAttempt(
       if (alreadyPlaced >= needed) continue;
       const eligible = teachers.filter(t => teacherCanTeachSubjectToClass(t, quota.subject, cls));
       for (const teacher of shuffle(eligible)) {
-        const repaired = swapRepairPass(timetable, cls, quota.subject, teacher, fatigueLimit, teachers, lockedSlots, warnings);
+        const repaired = swapRepairPass(timetable, cls, quota.subject, teacher, fatigueLimit, teachers, lockedSlots);
         if (repaired > 0) break;
       }
     }
