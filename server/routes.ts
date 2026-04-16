@@ -1084,7 +1084,12 @@ function scheduleSubject(
     for (const period of periods) {
       if (placed >= needed) break;
       const remainingNeeded = needed - placed;
-      for (const teacher of shuffle(eligible)) {
+      // Load-balancing: sort eligible teachers by current load (lightest first),
+      // with a shuffled base order so equally-loaded teachers are randomly tie-broken.
+      const sortedEligible = shuffle([...eligible]).sort(
+        (a, b) => countTeacherLoad(timetable, a.id) - countTeacherLoad(timetable, b.id)
+      );
+      for (const teacher of sortedEligible) {
         const result = tryPlace(
           timetable, cls, day, period, subject, teacher,
           fatigueLimit, remainingNeeded >= 2, relaxDailyRule
@@ -1452,7 +1457,11 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
   const existingTimetable = await storage.getTimetable(userId);
   const lockedSlots: Timetable = new Map();
 
-  if (lockExisting) {
+  // Treat existing occupied slots as locked when:
+  //   - the user explicitly chose "lock existing", OR
+  //   - clearFirst is false (preserve current timetable; only fill empty cells)
+  const preserveExisting = lockExisting || !clearFirst;
+  if (preserveExisting) {
     for (const [key, slot] of Array.from(existingTimetable.entries())) {
       if (slot.status === "occupied") {
         lockedSlots.set(key, { ...slot });
@@ -1479,14 +1488,22 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
     return { success: false, slotsPlaced: 0, warnings: preWarnings, errors: ["Failed to generate timetable"] };
   }
 
-  // Write best result to DB in a single pass
-  await storage.clearAllSlots(userId);
+  // Write best result to DB.
+  // - clearFirst=true: wipe everything first, then write the full new timetable.
+  // - clearFirst=false: leave existing slots alone (they are locked above) and
+  //   only persist the newly-placed occupied slots.
+  if (clearFirst) {
+    await storage.clearAllSlots(userId);
+  }
   let slotsPlaced = 0;
   for (const slot of Array.from(best.timetable.values())) {
-    if (slot.status === "occupied") {
-      await storage.setSlot(userId, slot);
-      slotsPlaced++;
+    if (slot.status !== "occupied") continue;
+    if (!clearFirst && lockedSlots.has(slotKey(slot.day, slot.schoolClass, slot.period))) {
+      // Already in DB, no need to rewrite
+      continue;
     }
+    await storage.setSlot(userId, slot);
+    slotsPlaced++;
   }
 
   const allWarnings = [...preWarnings, ...best.warnings];
