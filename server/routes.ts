@@ -1154,7 +1154,7 @@ function scheduleSlashPair(
 
 function countEmpty(timetable: Timetable): number {
   let count = 0;
-  for (const slot of timetable.values()) {
+  for (const slot of Array.from(timetable.values())) {
     if (slot.status === "empty") count++;
   }
   return count;
@@ -1162,10 +1162,20 @@ function countEmpty(timetable: Timetable): number {
 
 function countPlacements(timetable: Timetable, cls: SchoolClass, subject: string): number {
   let count = 0;
-  for (const slot of timetable.values()) {
+  for (const slot of Array.from(timetable.values())) {
     if (slot.schoolClass !== cls || slot.status !== "occupied") continue;
     if (slot.subject === subject) count++;
     if (slot.slashPairSubject === subject) count++;
+  }
+  return count;
+}
+
+function countTeacherLoad(timetable: Timetable, teacherId: string): number {
+  let count = 0;
+  for (const slot of Array.from(timetable.values())) {
+    if (slot.status === "occupied" && (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId)) {
+      count++;
+    }
   }
   return count;
 }
@@ -1219,10 +1229,10 @@ function swapRepairPass(
           const altSlot = timetable.get(altKey);
           if (!altSlot || altSlot.status !== "empty") continue;
           if (!isTeacherFreeAt(timetable, existingTeacherId, altDay, altP)) continue;
-          const savedStatus = targetSlot.status;
-          const savedSubject = targetSlot.subject;
-          const savedTeacherId = targetSlot.teacherId;
-          const savedSlotType = targetSlot.slotType;
+          const savedStatus: TimetableSlot["status"] = targetSlot.status;
+          const savedSubject: TimetableSlot["subject"] = targetSlot.subject;
+          const savedTeacherId: TimetableSlot["teacherId"] = targetSlot.teacherId;
+          const savedSlotType: TimetableSlot["slotType"] = targetSlot.slotType;
           targetSlot.status = "empty";
           targetSlot.subject = null;
           targetSlot.teacherId = null;
