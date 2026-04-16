@@ -892,1071 +892,602 @@ export async function registerRoutes(
   return httpServer;
 }
 
-// ===== AUTO-GENERATION ALGORITHM (Multi-Attempt with Randomization) =====
+// ===== AUTO-GENERATION ALGORITHM (Improved: In-Memory, Bottleneck-First, Swap-Repair) =====
 
-interface TeacherAssignment {
-  teacher: Teacher;
-  subject: string;
-  schoolClass: SchoolClass;
-  periodsNeeded: number;
-}
+type Timetable = Map<string, TimetableSlot>;
 
-// Shuffle array utility
-function shuffleArray<T>(array: T[]): T[] {
-  const result = [...array];
-  for (let i = result.length - 1; i > 0; i--) {
+// Break-after map: which period numbers have a break immediately after them
+const BREAK_AFTER: Record<Day, number[]> = {
+  Monday: [4, 7],
+  Tuesday: [4],
+  Wednesday: [4, 7],
+  Thursday: [4, 7],
+  Friday: [4],
+};
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
+    [a[i], a[j]] = [a[j], a[i]];
   }
-  return result;
+  return a;
 }
+
+function slotKey(day: Day, schoolClass: SchoolClass, period: number): string {
+  return `${day}-${schoolClass}-${period}`;
+}
+
+function isTeacherFreeAt(timetable: Timetable, teacherId: string, day: Day, period: number): boolean {
+  for (const cls of CLASSES) {
+    const slot = timetable.get(slotKey(day, cls, period));
+    if (!slot || slot.status !== "occupied") continue;
+    if (slot.teacherId === teacherId) return false;
+    if (slot.slashPairTeacherId === teacherId) return false;
+  }
+  return true;
+}
+
+function isTeacherUnavailable(teacher: Teacher, day: Day, period: number): boolean {
+  const blocked = teacher.unavailable[day];
+  return blocked ? blocked.includes(period) : false;
+}
+
+function wouldExceedFatigue(
+  timetable: Timetable,
+  teacherId: string,
+  day: Day,
+  proposedPeriods: number[],
+  fatigueLimit: number
+): boolean {
+  const periodsToday = PERIODS_PER_DAY[day];
+  const breaks = BREAK_AFTER[day];
+  const teaching = new Set<number>(proposedPeriods);
+  for (let p = 1; p <= periodsToday; p++) {
+    for (const cls of CLASSES) {
+      const slot = timetable.get(slotKey(day, cls, p));
+      if (!slot || slot.status !== "occupied") continue;
+      if (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId) {
+        teaching.add(p);
+        break;
+      }
+    }
+  }
+  let maxConsecutive = 0;
+  let current = 0;
+  for (let p = 1; p <= periodsToday; p++) {
+    if (teaching.has(p)) {
+      current++;
+      maxConsecutive = Math.max(maxConsecutive, current);
+    } else {
+      current = 0;
+    }
+    if (breaks.includes(p)) current = 0;
+  }
+  return maxConsecutive > fatigueLimit;
+}
+
+function violatesSecurityRule(timetable: Timetable, cls: SchoolClass, day: Day, period: number, subject: string): boolean {
+  if (subject !== "Security") return false;
+  if (period <= 1) return false;
+  const prev = timetable.get(slotKey(day, cls, period - 1));
+  return prev?.subject === "English";
+}
+
+function subjectAlreadyTodayForClass(timetable: Timetable, cls: SchoolClass, day: Day, subject: string): boolean {
+  const periodsToday = PERIODS_PER_DAY[day];
+  for (let p = 1; p <= periodsToday; p++) {
+    const slot = timetable.get(slotKey(day, cls, p));
+    if (slot?.status === "occupied" && slot.subject === subject) return true;
+    if (slot?.status === "occupied" && slot.slashPairSubject === subject) return true;
+  }
+  return false;
+}
+
+function teacherCanTeachSubjectToClass(teacher: Teacher, subject: string, cls: SchoolClass): boolean {
+  if (!teacher.subjects.includes(subject)) return false;
+  if (!teacher.classes.includes(cls)) return false;
+  const subjectClasses = teacher.subjectClasses?.[subject];
+  if (subjectClasses && subjectClasses.length > 0) return subjectClasses.includes(cls);
+  return true;
+}
+
+function placeSlot(
+  timetable: Timetable,
+  cls: SchoolClass,
+  day: Day,
+  period: number,
+  subject: string,
+  teacherId: string,
+  slotType: "single" | "double",
+  extraPeriod?: number
+): void {
+  const slot = timetable.get(slotKey(day, cls, period))!;
+  slot.status = "occupied";
+  slot.subject = subject;
+  slot.teacherId = teacherId;
+  slot.slotType = slotType;
+  slot.slashPairSubject = null;
+  slot.slashPairTeacherId = null;
+  if (slotType === "double" && extraPeriod !== undefined) {
+    const slot2 = timetable.get(slotKey(day, cls, extraPeriod))!;
+    slot2.status = "occupied";
+    slot2.subject = subject;
+    slot2.teacherId = teacherId;
+    slot2.slotType = "double";
+    slot2.slashPairSubject = null;
+    slot2.slashPairTeacherId = null;
+  }
+}
+
+function tryPlace(
+  timetable: Timetable,
+  cls: SchoolClass,
+  day: Day,
+  period: number,
+  subject: string,
+  teacher: Teacher,
+  fatigueLimit: number,
+  allowDouble: boolean,
+  relaxDailyRule = false
+): number {
+  const slot = timetable.get(slotKey(day, cls, period));
+  if (!slot || slot.status !== "empty") return 0;
+  if (!relaxDailyRule && subjectAlreadyTodayForClass(timetable, cls, day, subject)) return 0;
+  if (violatesSecurityRule(timetable, cls, day, period, subject)) return 0;
+  if (isTeacherUnavailable(teacher, day, period)) return 0;
+  if (!isTeacherFreeAt(timetable, teacher.id, day, period)) return 0;
+
+  // Try double first
+  if (allowDouble && period < PERIODS_PER_DAY[day] && !wouldCrossBreak(day, period)) {
+    const next = period + 1;
+    const slot2 = timetable.get(slotKey(day, cls, next));
+    if (
+      slot2?.status === "empty" &&
+      !isTeacherUnavailable(teacher, day, next) &&
+      isTeacherFreeAt(timetable, teacher.id, day, next) &&
+      !wouldExceedFatigue(timetable, teacher.id, day, [period, next], fatigueLimit)
+    ) {
+      placeSlot(timetable, cls, day, period, subject, teacher.id, "double", next);
+      return 2;
+    }
+  }
+
+  // Single
+  if (!wouldExceedFatigue(timetable, teacher.id, day, [period], fatigueLimit)) {
+    placeSlot(timetable, cls, day, period, subject, teacher.id, "single");
+    return 1;
+  }
+  return 0;
+}
+
+function scheduleSubject(
+  timetable: Timetable,
+  cls: SchoolClass,
+  subject: string,
+  needed: number,
+  teachers: Teacher[],
+  fatigueLimit: number,
+  warnings: string[],
+  relaxDailyRule = false
+): number {
+  const eligible = teachers.filter(t => teacherCanTeachSubjectToClass(t, subject, cls));
+  if (eligible.length === 0) {
+    warnings.push(`No teacher for ${subject} → ${cls}`);
+    return 0;
+  }
+  let placed = 0;
+  const days = shuffle([...DAYS] as Day[]);
+  for (const day of days) {
+    if (placed >= needed) break;
+    const periods = shuffle(Array.from({ length: PERIODS_PER_DAY[day] }, (_, i) => i + 1));
+    for (const period of periods) {
+      if (placed >= needed) break;
+      const remainingNeeded = needed - placed;
+      for (const teacher of shuffle(eligible)) {
+        const result = tryPlace(
+          timetable, cls, day, period, subject, teacher,
+          fatigueLimit, remainingNeeded >= 2, relaxDailyRule
+        );
+        if (result > 0) { placed += result; break; }
+      }
+    }
+  }
+  return placed;
+}
+
+function scheduleSlashPair(
+  timetable: Timetable,
+  cls: SchoolClass,
+  subject1: string,
+  subject2: string,
+  needed: number,
+  teachers: Teacher[],
+  fatigueLimit: number,
+  warnings: string[]
+): number {
+  const t1List = teachers.filter(t => teacherCanTeachSubjectToClass(t, subject1, cls));
+  const t2List = teachers.filter(t => teacherCanTeachSubjectToClass(t, subject2, cls));
+  if (t1List.length === 0) { warnings.push(`No teacher for slash subject ${subject1} → ${cls}`); return 0; }
+  if (t2List.length === 0) { warnings.push(`No teacher for slash subject ${subject2} → ${cls}`); return 0; }
+  let placed = 0;
+  const days = shuffle([...DAYS] as Day[]);
+  for (const day of days) {
+    if (placed >= needed) break;
+    const periods = shuffle(Array.from({ length: PERIODS_PER_DAY[day] }, (_, i) => i + 1));
+    for (const period of periods) {
+      if (placed >= needed) break;
+      if (subjectAlreadyTodayForClass(timetable, cls, day, subject1)) continue;
+      if (subjectAlreadyTodayForClass(timetable, cls, day, subject2)) continue;
+      const slot = timetable.get(slotKey(day, cls, period));
+      if (!slot || slot.status !== "empty") continue;
+      let found = false;
+      for (const t1 of shuffle(t1List)) {
+        if (isTeacherUnavailable(t1, day, period)) continue;
+        if (!isTeacherFreeAt(timetable, t1.id, day, period)) continue;
+        if (wouldExceedFatigue(timetable, t1.id, day, [period], fatigueLimit)) continue;
+        for (const t2 of shuffle(t2List)) {
+          if (t2.id === t1.id) continue;
+          if (isTeacherUnavailable(t2, day, period)) continue;
+          if (!isTeacherFreeAt(timetable, t2.id, day, period)) continue;
+          if (wouldExceedFatigue(timetable, t2.id, day, [period], fatigueLimit)) continue;
+          if (subject1 === "Security" || subject2 === "Security") {
+            const prev = timetable.get(slotKey(day, cls, period - 1));
+            if (prev?.subject === "English") continue;
+          }
+          slot.status = "occupied";
+          slot.subject = subject1;
+          slot.teacherId = t1.id;
+          slot.slotType = "slash";
+          slot.slashPairSubject = subject2;
+          slot.slashPairTeacherId = t2.id;
+          placed++;
+          found = true;
+          break;
+        }
+        if (found) break;
+      }
+    }
+  }
+  return placed;
+}
+
+function countEmpty(timetable: Timetable): number {
+  let count = 0;
+  for (const slot of timetable.values()) {
+    if (slot.status === "empty") count++;
+  }
+  return count;
+}
+
+function countPlacements(timetable: Timetable, cls: SchoolClass, subject: string): number {
+  let count = 0;
+  for (const slot of timetable.values()) {
+    if (slot.schoolClass !== cls || slot.status !== "occupied") continue;
+    if (slot.subject === subject) count++;
+    if (slot.slashPairSubject === subject) count++;
+  }
+  return count;
+}
+
+function removeExcess(timetable: Timetable, cls: SchoolClass, subject: string, excess: number): void {
+  const toRemove: string[] = [];
+  for (const day of [...DAYS].reverse() as Day[]) {
+    for (let p = PERIODS_PER_DAY[day]; p >= 1; p--) {
+      const key = slotKey(day, cls, p);
+      const slot = timetable.get(key);
+      if (!slot || slot.status !== "occupied") continue;
+      if (slot.subject === subject || slot.slashPairSubject === subject) toRemove.push(key);
+    }
+  }
+  let removed = 0;
+  for (const key of toRemove) {
+    if (removed >= excess) break;
+    const slot = timetable.get(key)!;
+    slot.status = "empty";
+    slot.subject = null;
+    slot.teacherId = null;
+    slot.slotType = null;
+    slot.slashPairSubject = null;
+    slot.slashPairTeacherId = null;
+    removed++;
+  }
+}
+
+function swapRepairPass(
+  timetable: Timetable,
+  cls: SchoolClass,
+  subject: string,
+  teacher: Teacher,
+  fatigueLimit: number,
+  _warnings: string[]
+): number {
+  for (const day of shuffle([...DAYS] as Day[])) {
+    if (subjectAlreadyTodayForClass(timetable, cls, day, subject)) continue;
+    for (let p = 1; p <= PERIODS_PER_DAY[day]; p++) {
+      const targetKey = slotKey(day, cls, p);
+      const targetSlot = timetable.get(targetKey);
+      if (!targetSlot || targetSlot.status !== "occupied") continue;
+      if (targetSlot.slotType === "slash") continue;
+      const existingSubject = targetSlot.subject!;
+      const existingTeacherId = targetSlot.teacherId!;
+      for (const altDay of shuffle([...DAYS] as Day[])) {
+        if (altDay === day) continue;
+        if (subjectAlreadyTodayForClass(timetable, cls, altDay, existingSubject)) continue;
+        for (let altP = 1; altP <= PERIODS_PER_DAY[altDay]; altP++) {
+          const altKey = slotKey(altDay, cls, altP);
+          const altSlot = timetable.get(altKey);
+          if (!altSlot || altSlot.status !== "empty") continue;
+          if (!isTeacherFreeAt(timetable, existingTeacherId, altDay, altP)) continue;
+          const savedStatus = targetSlot.status;
+          const savedSubject = targetSlot.subject;
+          const savedTeacherId = targetSlot.teacherId;
+          const savedSlotType = targetSlot.slotType;
+          targetSlot.status = "empty";
+          targetSlot.subject = null;
+          targetSlot.teacherId = null;
+          targetSlot.slotType = null;
+          const canPlace =
+            !isTeacherUnavailable(teacher, day, p) &&
+            isTeacherFreeAt(timetable, teacher.id, day, p) &&
+            !wouldExceedFatigue(timetable, teacher.id, day, [p], fatigueLimit) &&
+            !violatesSecurityRule(timetable, cls, day, p, subject);
+          if (canPlace) {
+            altSlot.status = "occupied";
+            altSlot.subject = existingSubject;
+            altSlot.teacherId = existingTeacherId;
+            altSlot.slotType = "single";
+            altSlot.slashPairSubject = null;
+            altSlot.slashPairTeacherId = null;
+            targetSlot.status = "occupied";
+            targetSlot.subject = subject;
+            targetSlot.teacherId = teacher.id;
+            targetSlot.slotType = "single";
+            targetSlot.slashPairSubject = null;
+            targetSlot.slashPairTeacherId = null;
+            return 1;
+          } else {
+            targetSlot.status = savedStatus;
+            targetSlot.subject = savedSubject;
+            targetSlot.teacherId = savedTeacherId;
+            targetSlot.slotType = savedSlotType;
+          }
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+function preValidate(teachers: Teacher[], quotas: SubjectQuota[], warnings: string[]): void {
+  const JSS_CLASSES: SchoolClass[] = ["JSS1", "JSS2", "JSS3"];
+  for (const cls of CLASSES) {
+    for (const quota of quotas) {
+      const needed = getQuotaForClass(quota, cls);
+      if (needed === 0) continue;
+      const eligible = teachers.filter(t => teacherCanTeachSubjectToClass(t, quota.subject, cls));
+      if (eligible.length === 0) {
+        warnings.push(`PRE-VALIDATE: No teacher for "${quota.subject}" → ${cls} (needs ${needed}/week)`);
+        continue;
+      }
+      const maxPlaceable = eligible.reduce((best, t) => {
+        let avail = 0;
+        for (const day of DAYS) {
+          for (let p = 1; p <= PERIODS_PER_DAY[day]; p++) {
+            if (!isTeacherUnavailable(t, day, p)) avail++;
+          }
+        }
+        return Math.max(best, avail);
+      }, 0);
+      if (maxPlaceable < needed) {
+        warnings.push(`PRE-VALIDATE: "${quota.subject}" → ${cls} needs ${needed} periods but best teacher only has ${maxPlaceable} available slots`);
+      }
+    }
+  }
+}
+
+function initTimetable(lockedSlots: Timetable): Timetable {
+  const timetable: Timetable = new Map();
+  for (const cls of CLASSES) {
+    for (const day of DAYS) {
+      for (let p = 1; p <= PERIODS_PER_DAY[day]; p++) {
+        const key = slotKey(day, cls, p);
+        if (lockedSlots.has(key)) {
+          timetable.set(key, { ...lockedSlots.get(key)! });
+        } else {
+          timetable.set(key, {
+            day, period: p, schoolClass: cls,
+            status: "empty",
+            subject: null, teacherId: null,
+            slotType: null,
+            slashPairSubject: null, slashPairTeacherId: null,
+          });
+        }
+      }
+    }
+  }
+  return timetable;
+}
+
+function runAttempt(
+  teachers: Teacher[],
+  quotas: SubjectQuota[],
+  lockedSlots: Timetable,
+  fatigueLimit: number,
+  attemptNumber: number
+): { timetable: Timetable; emptyCount: number; warnings: string[] } {
+  const timetable = initTimetable(lockedSlots);
+  const warnings: string[] = [];
+
+  // PHASE 1: Slash subjects for SS2 & SS3
+  for (const slashPair of SLASH_SUBJECTS) {
+    for (const cls of ["SS2", "SS3"] as SchoolClass[]) {
+      const placed = scheduleSlashPair(
+        timetable, cls,
+        slashPair.pair[0], slashPair.pair[1],
+        slashPair.periods,
+        teachers, fatigueLimit, warnings
+      );
+      if (placed < slashPair.periods) {
+        warnings.push(`Attempt ${attemptNumber}: Slash ${slashPair.pair.join("/")} → ${cls}: placed ${placed}/${slashPair.periods}`);
+      }
+    }
+  }
+
+  // PHASE 2: Build assignment list, bottleneck teachers first
+  type Assignment = { subject: string; cls: SchoolClass; needed: number };
+  const assignments: Assignment[] = [];
+
+  for (const cls of CLASSES) {
+    for (const quota of quotas) {
+      const needed = getQuotaForClass(quota, cls);
+      if (needed === 0) continue;
+      if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) continue;
+      const eligible = teachers.filter(t => teacherCanTeachSubjectToClass(t, quota.subject, cls));
+      if (eligible.length === 0) continue;
+      const alreadyPlaced = countPlacements(timetable, cls, quota.subject);
+      const remaining = needed - alreadyPlaced;
+      if (remaining > 0) {
+        assignments.push({ subject: quota.subject, cls, needed: remaining });
+      }
+    }
+  }
+
+  // Count teacher availability for bottleneck ordering
+  const teacherAvailCount = new Map<string, number>();
+  for (const t of teachers) {
+    let avail = 0;
+    for (const day of DAYS) {
+      for (let p = 1; p <= PERIODS_PER_DAY[day]; p++) {
+        if (!isTeacherUnavailable(t, day, p)) avail++;
+      }
+    }
+    teacherAvailCount.set(t.id, avail);
+  }
+
+  const shuffledAssignments = shuffle(assignments);
+  shuffledAssignments.sort((a, b) => {
+    const aEligible = teachers.filter(t => teacherCanTeachSubjectToClass(t, a.subject, a.cls));
+    const bEligible = teachers.filter(t => teacherCanTeachSubjectToClass(t, b.subject, b.cls));
+    const aAvail = Math.min(...aEligible.map(t => teacherAvailCount.get(t.id) ?? 999));
+    const bAvail = Math.min(...bEligible.map(t => teacherAvailCount.get(t.id) ?? 999));
+    if (aAvail !== bAvail) return aAvail - bAvail;
+    return b.needed - a.needed;
+  });
+
+  // PHASE 3: Schedule each assignment
+  for (const { subject, cls, needed } of shuffledAssignments) {
+    const alreadyPlaced = countPlacements(timetable, cls, subject);
+    const remaining = needed - alreadyPlaced;
+    if (remaining <= 0) continue;
+    scheduleSubject(timetable, cls, subject, remaining, teachers, fatigueLimit, warnings, false);
+  }
+
+  // PHASE 4: Retry passes (up to 3) with relaxed daily rule
+  for (let pass = 0; pass < 3; pass++) {
+    let anyProgress = false;
+    for (const cls of shuffle([...CLASSES] as SchoolClass[])) {
+      for (const quota of shuffle(quotas)) {
+        const needed = getQuotaForClass(quota, cls);
+        if (needed === 0) continue;
+        if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) continue;
+        const alreadyPlaced = countPlacements(timetable, cls, quota.subject);
+        const remaining = needed - alreadyPlaced;
+        if (remaining <= 0) continue;
+        const p = scheduleSubject(timetable, cls, quota.subject, remaining, teachers, fatigueLimit, warnings, true);
+        if (p > 0) anyProgress = true;
+      }
+    }
+    if (!anyProgress) break;
+  }
+
+  // PHASE 5: Swap repair for subjects still short
+  for (const cls of CLASSES) {
+    for (const quota of quotas) {
+      const needed = getQuotaForClass(quota, cls);
+      if (needed === 0) continue;
+      if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) continue;
+      const alreadyPlaced = countPlacements(timetable, cls, quota.subject);
+      if (alreadyPlaced >= needed) continue;
+      const eligible = teachers.filter(t => teacherCanTeachSubjectToClass(t, quota.subject, cls));
+      for (const teacher of shuffle(eligible)) {
+        const repaired = swapRepairPass(timetable, cls, quota.subject, teacher, fatigueLimit, warnings);
+        if (repaired > 0) break;
+      }
+    }
+  }
+
+  // PHASE 6: Remove excess (over-quota)
+  for (const cls of CLASSES) {
+    for (const quota of quotas) {
+      const needed = getQuotaForClass(quota, cls);
+      const placed = countPlacements(timetable, cls, quota.subject);
+      if (placed > needed) removeExcess(timetable, cls, quota.subject, placed - needed);
+    }
+  }
+
+  return { timetable, emptyCount: countEmpty(timetable), warnings };
+}
+
+const MAX_ATTEMPTS = 12;
+const EARLY_EXIT_EMPTY = 3;
 
 async function autoGenerateTimetable(userId: string, lockExisting: boolean, clearFirst: boolean): Promise<AutoGenerateResult> {
   const teachers = await storage.getTeachers(userId);
   const quotas = await storage.getSubjectQuotas(userId);
   const userSettings = await storage.getUserSettings(userId);
   const fatigueLimit = userSettings.fatigueLimit;
-  
-  // Get existing slots to optionally preserve
+
+  // Load existing timetable to determine locked slots
   const existingTimetable = await storage.getTimetable(userId);
-  const lockedSlots = new Set<string>();
-  
+  const lockedSlots: Timetable = new Map();
+
   if (lockExisting) {
-    Array.from(existingTimetable.entries()).forEach(([key, slot]) => {
+    for (const [key, slot] of Array.from(existingTimetable.entries())) {
       if (slot.status === "occupied") {
-        lockedSlots.add(key);
+        lockedSlots.set(key, { ...slot });
       }
-    });
-  }
-  
-  // Try multiple generation attempts with different randomizations
-  const NUM_ATTEMPTS = 8;
-  let bestAttempt: { slots: Map<string, TimetableSlot>; slotsPlaced: number; warnings: string[] } | null = null;
-  let bestEmptyCount = Infinity;
-  
-  for (let attempt = 0; attempt < NUM_ATTEMPTS; attempt++) {
-    // Clear timetable for this attempt (but preserve locked slots)
-    if (clearFirst && !lockExisting) {
-      await storage.clearAllSlots(userId);
-    } else if (clearFirst && lockExisting) {
-      for (const entry of Array.from(existingTimetable.entries())) {
-        const [key, slot] = entry;
-        if (!lockedSlots.has(key) && slot.status === "occupied") {
-          await storage.clearSlot(userId, slot.day, slot.schoolClass, slot.period);
-        }
-      }
-    } else if (attempt > 0) {
-      // For subsequent attempts, clear non-locked slots
-      const currentTimetable = await storage.getTimetable(userId);
-      for (const entry of Array.from(currentTimetable.entries())) {
-        const [key, slot] = entry;
-        if (!lockedSlots.has(key) && slot.status === "occupied") {
-          await storage.clearSlot(userId, slot.day, slot.schoolClass, slot.period);
-        }
-      }
-    }
-    
-    // Run a single generation attempt with randomization
-    const attemptResult = await runSingleGenerationAttempt(
-      userId, teachers, quotas, lockedSlots, fatigueLimit, attempt
-    );
-    
-    // Count empty slots in this attempt
-    const attemptTimetable = await storage.getTimetable(userId);
-    let emptyCount = 0;
-    for (const day of DAYS) {
-      const maxPeriods = PERIODS_PER_DAY[day];
-      for (const schoolClass of CLASSES) {
-        for (let period = 1; period <= maxPeriods; period++) {
-          const key = `${day}-${schoolClass}-${period}`;
-          const slot = attemptTimetable.get(key);
-          if (!slot || slot.status !== "occupied") {
-            emptyCount++;
-          }
-        }
-      }
-    }
-    
-    // Track best attempt
-    if (emptyCount < bestEmptyCount) {
-      bestEmptyCount = emptyCount;
-      bestAttempt = {
-        slots: new Map(attemptTimetable),
-        slotsPlaced: attemptResult.slotsPlaced,
-        warnings: attemptResult.warnings,
-      };
-      
-      // If we achieved a perfect or near-perfect fill, stop early
-      if (emptyCount <= 5) break;
     }
   }
-  
-  // Restore best attempt to database
-  if (bestAttempt) {
-    // Clear and restore best result
-    await storage.clearAllSlots(userId);
-    for (const [key, slot] of Array.from(bestAttempt.slots.entries())) {
-      if (slot.status === "occupied") {
-        await storage.setSlot(userId, slot);
-      }
-    }
-    
-    if (bestEmptyCount > 0) {
-      bestAttempt.warnings.push(`${bestEmptyCount} slots remain empty (best of ${NUM_ATTEMPTS} attempts)`);
-    }
-    
-    return {
-      success: true,
-      slotsPlaced: bestAttempt.slotsPlaced,
-      warnings: bestAttempt.warnings,
-      errors: [],
-    };
-  }
-  
-  return {
-    success: false,
-    slotsPlaced: 0,
-    warnings: [],
-    errors: ["Failed to generate any valid timetable"],
-  };
-}
 
-// Single generation attempt with randomization
-async function runSingleGenerationAttempt(
-  userId: string,
-  teachers: Teacher[],
-  quotas: any[],
-  lockedSlots: Set<string>,
-  fatigueLimit: number,
-  attemptNumber: number
-): Promise<{ slotsPlaced: number; warnings: string[] }> {
-  const warnings: string[] = [];
+  // Pre-validate: warn about impossible assignments before wasting attempts
+  const preWarnings: string[] = [];
+  preValidate(teachers, quotas, preWarnings);
+
+  // Run up to MAX_ATTEMPTS fully in-memory, pick the attempt with fewest empty slots
+  let best: { timetable: Timetable; emptyCount: number; warnings: string[] } | null = null;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const result = runAttempt(teachers, quotas, lockedSlots, fatigueLimit, attempt);
+    if (!best || result.emptyCount < best.emptyCount) {
+      best = result;
+    }
+    if (best.emptyCount <= EARLY_EXIT_EMPTY) break;
+  }
+
+  if (!best) {
+    return { success: false, slotsPlaced: 0, warnings: preWarnings, errors: ["Failed to generate timetable"] };
+  }
+
+  // Write best result to DB in a single pass
+  await storage.clearAllSlots(userId);
   let slotsPlaced = 0;
-  
-  // Get fresh timetable state
-  let timetable = await storage.getTimetable(userId);
-  
-  // Build quota tracking per class
-  const quotaTracker: Map<string, Map<string, number>> = new Map();
-  for (const schoolClass of CLASSES) {
-    const classQuotas = new Map<string, number>();
-    for (const quota of quotas) {
-      const required = getQuotaForClass(quota, schoolClass);
-      if (required > 0) {
-        classQuotas.set(quota.subject, required);
-      }
-    }
-    quotaTracker.set(schoolClass, classQuotas);
-  }
-  
-  // Reduce quotas by already placed slots
-  Array.from(timetable.values()).forEach(slot => {
-    if (slot.status === "occupied" && slot.subject) {
-      const classQuotas = quotaTracker.get(slot.schoolClass);
-      if (classQuotas) {
-        const remaining = classQuotas.get(slot.subject) || 0;
-        if (remaining > 0) {
-          classQuotas.set(slot.subject, remaining - 1);
-        }
-        if (slot.slashPairSubject) {
-          const pairRemaining = classQuotas.get(slot.slashPairSubject) || 0;
-          if (pairRemaining > 0) {
-            classQuotas.set(slot.slashPairSubject, pairRemaining - 1);
-          }
-        }
-      }
-    }
-  });
-  
-  // ===== PHASE 1: Schedule slash subjects for SS2/SS3 =====
-  for (const schoolClass of CLASSES) {
-    if (!usesSlashSubjects(schoolClass)) continue;
-    
-    const classQuotas = quotaTracker.get(schoolClass)!;
-    for (const slashPair of SLASH_SUBJECTS) {
-      const [subj1, subj2] = slashPair.pair;
-      const quota1 = classQuotas.get(subj1) || 0;
-      const quota2 = classQuotas.get(subj2) || 0;
-      const toSchedule = Math.min(quota1, quota2);
-      
-      if (toSchedule > 0) {
-        const placed = await scheduleSlashSubject(
-          userId, schoolClass, subj1, subj2, toSchedule,
-          teachers, timetable, lockedSlots, warnings, fatigueLimit
-        );
-        slotsPlaced += placed;
-        classQuotas.set(subj1, quota1 - placed);
-        classQuotas.set(subj2, quota2 - placed);
-        timetable = await storage.getTimetable(userId);
-      }
+  for (const slot of Array.from(best.timetable.values())) {
+    if (slot.status === "occupied") {
+      await storage.setSlot(userId, slot);
+      slotsPlaced++;
     }
   }
-  
-  // ===== PHASE 2: Build teacher assignments =====
-  // For each teacher, determine what they need to teach
-  const teacherAssignments: TeacherAssignment[] = [];
-  
-  for (const teacher of teachers) {
-    for (const subject of teacher.subjects) {
-      const assignedClasses = getTeacherSubjectClasses(teacher, subject);
-      for (const schoolClass of assignedClasses) {
-        if (!teacher.classes.includes(schoolClass)) continue;
-        
-        const classQuotas = quotaTracker.get(schoolClass);
-        if (!classQuotas) continue;
-        
-        const periodsNeeded = classQuotas.get(subject) || 0;
-        if (periodsNeeded > 0) {
-          teacherAssignments.push({
-            teacher,
-            subject,
-            schoolClass,
-            periodsNeeded,
-          });
-        }
-      }
-    }
+
+  const allWarnings = [...preWarnings, ...best.warnings];
+  if (best.emptyCount > 0) {
+    allWarnings.push(`${best.emptyCount} slot(s) remain empty after ${MAX_ATTEMPTS} attempts`);
   }
-  
-  // Sort assignments with randomization for variety between attempts
-  const teacherLoadCount = new Map<string, number>();
-  for (const assignment of teacherAssignments) {
-    const current = teacherLoadCount.get(assignment.teacher.id) || 0;
-    teacherLoadCount.set(assignment.teacher.id, current + assignment.periodsNeeded);
-  }
-  
-  // First shuffle to randomize, then sort by priority
-  // Different attempts will have different orderings
-  const shuffledAssignments = shuffleArray(teacherAssignments);
-  
-  shuffledAssignments.sort((a, b) => {
-    const loadA = teacherLoadCount.get(a.teacher.id) || 0;
-    const loadB = teacherLoadCount.get(b.teacher.id) || 0;
-    // Add some randomness to break ties
-    const tieBreaker = (attemptNumber % 3) - 1; // -1, 0, or 1
-    if (Math.abs(loadB - loadA) <= 2) return tieBreaker;
-    // Teachers with higher loads first (they need more scheduling priority)
-    if (loadB !== loadA) return loadB - loadA;
-    // Then by periods needed
-    return b.periodsNeeded - a.periodsNeeded;
-  });
-  
-  // Replace original with shuffled
-  teacherAssignments.length = 0;
-  teacherAssignments.push(...shuffledAssignments);
-  
-  // ===== PHASE 3: Teacher-focused scheduling =====
-  // Build set of slash subject names for quick lookup
-  const slashSubjectNames = new Set<string>();
-  for (const slashPair of SLASH_SUBJECTS) {
-    slashSubjectNames.add(slashPair.pair[0]);
-    slashSubjectNames.add(slashPair.pair[1]);
-  }
-  
-  // Process each teacher assignment, distributing across days
-  for (const assignment of teacherAssignments) {
-    const { teacher, subject, schoolClass } = assignment;
-    const classQuotas = quotaTracker.get(schoolClass)!;
-    
-    // Re-read remaining quota from tracker (another teacher may have placed some)
-    let periodsToPlace = classQuotas.get(subject) || 0;
-    
-    if (periodsToPlace <= 0) continue;
-    
-    // Skip slash subjects for SS2/SS3 - they're handled in Phase 1 only
-    if (usesSlashSubjects(schoolClass) && slashSubjectNames.has(subject)) {
-      if (periodsToPlace > 0) {
-        warnings.push(`${schoolClass}: ${subject} is a slash subject - ${periodsToPlace} period(s) could not be paired`);
-      }
-      continue;
-    }
-    
-    // Track which days we've used for this subject-class combo (for daily distribution)
-    const daysUsed = new Set<Day>();
-    
-    // Check existing placements for this subject-class
-    for (const [_, slot] of Array.from(timetable.entries())) {
-      if (slot.schoolClass === schoolClass && slot.subject === subject) {
-        daysUsed.add(slot.day);
-      }
-    }
-    
-    // Try to place periods, spreading across different days
-    // Strictly enforce: one subject per day per class (no exceptions)
-    while (periodsToPlace > 0) {
-      let placed = false;
-      
-      // Only try days where this subject hasn't been scheduled yet
-      // Shuffle days to create variety between attempts
-      const availableDays = shuffleArray(DAYS.filter(d => !daysUsed.has(d)));
-      
-      // If no available days, we cannot place more periods for this subject
-      if (availableDays.length === 0) {
-        if (periodsToPlace > 0) {
-          warnings.push(`${schoolClass}: Cannot place ${periodsToPlace} more period(s) for ${subject} - all 5 days already used`);
-        }
-        break;
-      }
-      
-      // Try double period first if we need 2+ periods
-      if (periodsToPlace >= 2) {
-        for (const day of availableDays) {
-          if (placed) break;
-          
-          const maxPeriods = PERIODS_PER_DAY[day];
-          // Generate and shuffle period list for variety
-          const periodsToTry = shuffleArray(Array.from({ length: maxPeriods - 1 }, (_, i) => i + 1));
-          
-          for (const period of periodsToTry) {
-            if (placed) break;
-            
-            // Double period validation
-            if (wouldCrossBreak(day, period)) continue;
-            
-            const key1 = `${day}-${schoolClass}-${period}`;
-            const key2 = `${day}-${schoolClass}-${period + 1}`;
-            
-            if (lockedSlots.has(key1) || lockedSlots.has(key2)) continue;
-            
-            const slot1 = timetable.get(key1);
-            const slot2 = timetable.get(key2);
-            if ((slot1 && slot1.status === "occupied") || (slot2 && slot2.status === "occupied")) continue;
-            
-            // Check teacher availability
-            const unavailable = teacher.unavailable[day] || [];
-            if (unavailable.includes(period) || unavailable.includes(period + 1)) continue;
-            
-            // Check teacher not teaching elsewhere at these periods
-            if (!isTeacherFreeAt(timetable, teacher.id, day, period)) continue;
-            if (!isTeacherFreeAt(timetable, teacher.id, day, period + 1)) continue;
-            
-            // Check fatigue
-            if (wouldExceedFatigue(timetable, teacher.id, day, [period, period + 1], fatigueLimit)) continue;
-            
-            // Security rule
-            if (subject === "Security") {
-              const prevKey = `${day}-${schoolClass}-${period - 1}`;
-              const prevSlot = timetable.get(prevKey);
-              if (prevSlot && prevSlot.subject === "English") continue;
-            }
-            
-            // Place double period
-            const newSlot1: TimetableSlot = {
-              day, period, schoolClass,
-              status: "occupied",
-              subject,
-              teacherId: teacher.id,
-              slotType: "double",
-              slashPairSubject: null,
-              slashPairTeacherId: null,
-            };
-            const newSlot2: TimetableSlot = {
-              day, period: period + 1, schoolClass,
-              status: "occupied",
-              subject,
-              teacherId: teacher.id,
-              slotType: "double",
-              slashPairSubject: null,
-              slashPairTeacherId: null,
-            };
-            
-            await storage.setSlot(userId, newSlot1);
-            await storage.setSlot(userId, newSlot2);
-            timetable.set(key1, newSlot1);
-            timetable.set(key2, newSlot2);
-            
-            periodsToPlace -= 2;
-            classQuotas.set(subject, periodsToPlace);
-            slotsPlaced += 2;
-            daysUsed.add(day);
-            placed = true;
-          }
-        }
-      }
-      
-      // If double didn't work, try single period
-      if (!placed) {
-        for (const day of availableDays) {
-          if (placed) break;
-          
-          const maxPeriods = PERIODS_PER_DAY[day];
-          // Generate and shuffle period list for variety
-          const singlePeriodsToTry = shuffleArray(Array.from({ length: maxPeriods }, (_, i) => i + 1));
-          
-          for (const period of singlePeriodsToTry) {
-            if (placed) break;
-            
-            const key = `${day}-${schoolClass}-${period}`;
-            if (lockedSlots.has(key)) continue;
-            
-            const slot = timetable.get(key);
-            if (slot && slot.status === "occupied") continue;
-            
-            // Check teacher availability
-            const unavailable = teacher.unavailable[day] || [];
-            if (unavailable.includes(period)) continue;
-            
-            // Check teacher not teaching elsewhere
-            if (!isTeacherFreeAt(timetable, teacher.id, day, period)) continue;
-            
-            // Check fatigue
-            if (wouldExceedFatigue(timetable, teacher.id, day, [period], fatigueLimit)) continue;
-            
-            // Security rule
-            if (subject === "Security") {
-              const prevKey = `${day}-${schoolClass}-${period - 1}`;
-              const prevSlot = timetable.get(prevKey);
-              if (prevSlot && prevSlot.subject === "English") continue;
-            }
-            
-            // Place single period
-            const newSlot: TimetableSlot = {
-              day, period, schoolClass,
-              status: "occupied",
-              subject,
-              teacherId: teacher.id,
-              slotType: "single",
-              slashPairSubject: null,
-              slashPairTeacherId: null,
-            };
-            
-            await storage.setSlot(userId, newSlot);
-            timetable.set(key, newSlot);
-            
-            periodsToPlace -= 1;
-            classQuotas.set(subject, periodsToPlace);
-            slotsPlaced += 1;
-            daysUsed.add(day);
-            placed = true;
-          }
-        }
-      }
-      
-      // If we couldn't place anything, break to avoid infinite loop
-      if (!placed) {
-        if (periodsToPlace > 0) {
-          warnings.push(`${schoolClass}: Could not place ${periodsToPlace} period(s) for ${subject} (Teacher: ${teacher.name})`);
-        }
-        break;
-      }
-    }
-  }
-  
-  // ===== PHASE 4: Report unfulfilled quotas =====
-  for (const schoolClass of CLASSES) {
-    const classQuotas = quotaTracker.get(schoolClass)!;
-    for (const [subject, remaining] of Array.from(classQuotas.entries())) {
-      if (remaining > 0) {
-        // Check if any teacher can teach this
-        const canTeach = teachers.some(t => 
-          t.subjects.includes(subject) && 
-          t.classes.includes(schoolClass) &&
-          getTeacherSubjectClasses(t, subject).includes(schoolClass)
-        );
-        if (!canTeach) {
-          warnings.push(`${schoolClass}: No teacher assigned to teach ${subject} - ${remaining} period(s) unfilled`);
-        }
-      }
-    }
-  }
-  
-  // ===== PHASE 5: Retry to fill remaining empty slots =====
-  // This phase aggressively tries to fill any remaining empty slots
-  // by relaxing the daily occurrence constraint and trying all available subjects
-  let retryCount = 0;
-  const maxRetries = 3;
-  
-  while (retryCount < maxRetries) {
-    retryCount++;
-    let filledInRetry = 0;
-    timetable = await storage.getTimetable(userId);
-    
-    // Find all empty slots
-    const emptySlots: Array<{ day: Day; schoolClass: SchoolClass; period: number }> = [];
-    for (const day of DAYS) {
-      const maxPeriods = PERIODS_PER_DAY[day];
-      for (const schoolClass of CLASSES) {
-        for (let period = 1; period <= maxPeriods; period++) {
-          const key = `${day}-${schoolClass}-${period}`;
-          if (lockedSlots.has(key)) continue;
-          const slot = timetable.get(key);
-          if (!slot || slot.status !== "occupied") {
-            emptySlots.push({ day, schoolClass, period });
-          }
-        }
-      }
-    }
-    
-    if (emptySlots.length === 0) break;
-    
-    // Shuffle empty slots for variety
-    for (let i = emptySlots.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [emptySlots[i], emptySlots[j]] = [emptySlots[j], emptySlots[i]];
-    }
-    
-    // Try to fill each empty slot
-    for (const { day, schoolClass, period } of emptySlots) {
-      const key = `${day}-${schoolClass}-${period}`;
-      
-      // Re-check if slot is still empty
-      const currentSlot = timetable.get(key);
-      if (currentSlot && currentSlot.status === "occupied") continue;
-      
-      const classQuotas = quotaTracker.get(schoolClass)!;
-      
-      // Get subjects with remaining quota for this class
-      const subjectsWithQuota: Array<{ subject: string; remaining: number }> = [];
-      for (const [subject, remaining] of Array.from(classQuotas.entries())) {
-        if (remaining > 0) {
-          // Skip slash subjects for SS2/SS3 in retry phase
-          if (usesSlashSubjects(schoolClass) && slashSubjectNames.has(subject)) continue;
-          subjectsWithQuota.push({ subject, remaining });
-        }
-      }
-      
-      // Sort by remaining quota (higher first)
-      subjectsWithQuota.sort((a, b) => b.remaining - a.remaining);
-      
-      let placed = false;
-      
-      for (const { subject } of subjectsWithQuota) {
-        if (placed) break;
-        
-        // STRICT QUOTA CHECK: Re-verify quota before attempting to place
-        const currentQuota = classQuotas.get(subject) || 0;
-        if (currentQuota <= 0) continue; // Skip if quota exhausted
-        
-        // Find teachers who can teach this subject to this class
-        const availableTeachers = teachers.filter(t =>
-          t.subjects.includes(subject) &&
-          t.classes.includes(schoolClass) &&
-          getTeacherSubjectClasses(t, subject).includes(schoolClass)
-        );
-        
-        for (const teacher of availableTeachers) {
-          if (placed) break;
-          
-          // Double-check quota hasn't been exhausted
-          const quotaCheck = classQuotas.get(subject) || 0;
-          if (quotaCheck <= 0) break;
-          
-          // Check teacher unavailability
-          const unavailable = teacher.unavailable[day] || [];
-          if (unavailable.includes(period)) continue;
-          
-          // Check teacher not teaching elsewhere
-          if (!isTeacherFreeAt(timetable, teacher.id, day, period)) continue;
-          
-          // Check fatigue
-          if (wouldExceedFatigue(timetable, teacher.id, day, [period], fatigueLimit)) continue;
-          
-          // Security rule
-          if (subject === "Security") {
-            const prevKey = `${day}-${schoolClass}-${period - 1}`;
-            const prevSlot = timetable.get(prevKey);
-            if (prevSlot && prevSlot.subject === "English") continue;
-          }
-          
-          // Place the period
-          const newSlot: TimetableSlot = {
-            day, period, schoolClass,
-            status: "occupied",
-            subject,
-            teacherId: teacher.id,
-            slotType: "single",
-            slashPairSubject: null,
-            slashPairTeacherId: null,
-          };
-          
-          await storage.setSlot(userId, newSlot);
-          timetable.set(key, newSlot);
-          
-          classQuotas.set(subject, quotaCheck - 1);
-          slotsPlaced++;
-          filledInRetry++;
-          placed = true;
-        }
-      }
-    }
-    
-    // If no slots were filled in this retry, stop trying
-    if (filledInRetry === 0) break;
-  }
-  
-  // ===== FINAL VALIDATION: Ensure no subject exceeds quota =====
-  // Count actual placements and compare against original quotas
-  timetable = await storage.getTimetable(userId);
-  
-  // Rebuild original quotas for comparison
-  const originalQuotas: Map<string, Map<string, number>> = new Map();
-  for (const schoolClass of CLASSES) {
-    const classQuotas = new Map<string, number>();
-    for (const quota of quotas) {
-      const required = getQuotaForClass(quota, schoolClass);
-      if (required > 0) {
-        classQuotas.set(quota.subject, required);
-      }
-    }
-    originalQuotas.set(schoolClass, classQuotas);
-  }
-  
-  // Count actual placements per subject per class
-  const actualCounts: Map<string, Map<string, number>> = new Map();
-  for (const schoolClass of CLASSES) {
-    actualCounts.set(schoolClass, new Map<string, number>());
-  }
-  
-  for (const slot of Array.from(timetable.values())) {
-    if (slot.status === "occupied" && slot.subject) {
-      const classCounts = actualCounts.get(slot.schoolClass)!;
-      const current = classCounts.get(slot.subject) || 0;
-      classCounts.set(slot.subject, current + 1);
-      
-      // Also count slash pair subjects
-      if (slot.slashPairSubject) {
-        const pairCurrent = classCounts.get(slot.slashPairSubject) || 0;
-        classCounts.set(slot.slashPairSubject, pairCurrent + 1);
-      }
-    }
-  }
-  
-  // Remove excess placements where subject exceeds quota
-  for (const schoolClass of CLASSES) {
-    const classOriginalQuotas = originalQuotas.get(schoolClass)!;
-    const classCounts = actualCounts.get(schoolClass)!;
-    
-    for (const [subject, actualCount] of Array.from(classCounts.entries())) {
-      const quota = classOriginalQuotas.get(subject) || 0;
-      if (actualCount > quota && quota > 0) {
-        // Find and remove excess slots (starting from later periods)
-        let toRemove = actualCount - quota;
-        warnings.push(`${schoolClass}: ${subject} exceeded quota (${actualCount}/${quota}), removing ${toRemove} excess`);
-        
-        // Collect slots for this subject in this class, sorted by period descending
-        // For double periods, only include the first slot to avoid duplicate processing
-        const subjectSlots: Array<{ day: Day; period: number; key: string; isDouble: boolean }> = [];
-        const processedKeys = new Set<string>();
-        
-        for (const [key, slot] of Array.from(timetable.entries())) {
-          if (slot.schoolClass === schoolClass && slot.subject === subject && slot.slotType !== "slash") {
-            if (processedKeys.has(key)) continue;
-            
-            if (slot.slotType === "double") {
-              // Check if this is the first slot of the double period
-              const prevKey = `${slot.day}-${schoolClass}-${slot.period - 1}`;
-              const prevSlot = timetable.get(prevKey);
-              if (prevSlot && prevSlot.subject === subject && prevSlot.slotType === "double") {
-                // This is the second slot of a double, skip it
-                continue;
-              }
-              // This is the first slot of the double
-              const nextKey = `${slot.day}-${schoolClass}-${slot.period + 1}`;
-              processedKeys.add(key);
-              processedKeys.add(nextKey);
-              subjectSlots.push({ day: slot.day, period: slot.period, key, isDouble: true });
-            } else {
-              processedKeys.add(key);
-              subjectSlots.push({ day: slot.day, period: slot.period, key, isDouble: false });
-            }
-          }
-        }
-        
-        // Sort by period descending (remove later periods first)
-        subjectSlots.sort((a, b) => b.period - a.period);
-        
-        for (const { day, period, key, isDouble } of subjectSlots) {
-          if (toRemove <= 0) break;
-          
-          if (isDouble) {
-            // Remove both slots of double period
-            await storage.clearSlot(userId, day, schoolClass, period);
-            timetable.delete(key);
-            const nextKey = `${day}-${schoolClass}-${period + 1}`;
-            await storage.clearSlot(userId, day, schoolClass, period + 1);
-            timetable.delete(nextKey);
-            toRemove -= 2;
-            slotsPlaced -= 2;
-          } else {
-            await storage.clearSlot(userId, day, schoolClass, period);
-            timetable.delete(key);
-            toRemove -= 1;
-            slotsPlaced -= 1;
-          }
-        }
-      }
-    }
-  }
-  
-  // Summary
-  const finalTimetable = await storage.getTimetable(userId);
-  let totalEmpty = 0;
-  for (const day of DAYS) {
-    for (const schoolClass of CLASSES) {
-      const maxPeriods = PERIODS_PER_DAY[day];
-      for (let period = 1; period <= maxPeriods; period++) {
-        const key = `${day}-${schoolClass}-${period}`;
-        const slot = finalTimetable.get(key);
-        if (!slot || slot.status !== "occupied") {
-          totalEmpty++;
-        }
-      }
-    }
-  }
-  
+
   return {
+    success: true,
     slotsPlaced,
-    warnings,
+    warnings: allWarnings,
+    errors: [],
   };
-}
-
-// Check if teacher is free at a specific day/period (not teaching any class)
-function isTeacherFreeAt(
-  timetable: Map<string, TimetableSlot>,
-  teacherId: string,
-  day: Day,
-  period: number
-): boolean {
-  for (const schoolClass of CLASSES) {
-    const key = `${day}-${schoolClass}-${period}`;
-    const slot = timetable.get(key);
-    if (slot && (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-async function scheduleSlashSubject(
-  userId: string,
-  schoolClass: SchoolClass,
-  subject1: string,
-  subject2: string,
-  count: number,
-  teachers: Teacher[],
-  timetable: Map<string, TimetableSlot>,
-  lockedSlots: Set<string>,
-  warnings: string[],
-  fatigueLimit: number = 5
-): Promise<number> {
-  let placed = 0;
-  
-  const teachers1 = teachers.filter(t => 
-    t.subjects.includes(subject1) && 
-    t.classes.includes(schoolClass) &&
-    getTeacherSubjectClasses(t, subject1).includes(schoolClass)
-  );
-  const teachers2 = teachers.filter(t => 
-    t.subjects.includes(subject2) && 
-    t.classes.includes(schoolClass) &&
-    getTeacherSubjectClasses(t, subject2).includes(schoolClass)
-  );
-  
-  if (teachers1.length === 0 || teachers2.length === 0) {
-    warnings.push(`${schoolClass}: No teacher available for slash pair ${subject1}/${subject2}`);
-    return 0;
-  }
-  
-  for (let i = 0; i < count && placed < count; i++) {
-    let slotPlaced = false;
-    
-    // Shuffle days and periods for variety between attempts
-    const shuffledDays = shuffleArray([...DAYS]);
-    
-    for (const day of shuffledDays) {
-      if (slotPlaced) break;
-      const maxPeriods = PERIODS_PER_DAY[day];
-      const shuffledPeriods = shuffleArray(Array.from({ length: maxPeriods }, (_, i) => i + 1));
-      
-      for (const period of shuffledPeriods) {
-        if (slotPlaced) break;
-        const key = `${day}-${schoolClass}-${period}`;
-        
-        if (lockedSlots.has(key)) continue;
-        const slot = timetable.get(key);
-        if (slot && slot.status === "occupied") continue;
-        
-        // Check if either subject already appears on this day for this class (max 1 occurrence per day)
-        const dailyCount1 = getTotalSubjectCountForDay(timetable, day, schoolClass, subject1, []);
-        const dailyCount2 = getTotalSubjectCountForDay(timetable, day, schoolClass, subject2, []);
-        if (dailyCount1 >= 1 || dailyCount2 >= 1) continue;
-        
-        // Shuffle teacher ordering too
-        const shuffledTeachers1 = shuffleArray([...teachers1]);
-        for (const t1 of shuffledTeachers1) {
-          if (slotPlaced) break;
-          if (!isTeacherAvailableForSlot(timetable, t1, day, period)) continue;
-          if (wouldExceedFatigue(timetable, t1.id, day, [period], fatigueLimit)) continue;
-          
-          const shuffledTeachers2 = shuffleArray([...teachers2]);
-          for (const t2 of shuffledTeachers2) {
-            if (t1.id === t2.id) continue;
-            if (!isTeacherAvailableForSlot(timetable, t2, day, period)) continue;
-            if (wouldExceedFatigue(timetable, t2.id, day, [period], fatigueLimit)) continue;
-            
-            if (subject1 === "Security" || subject2 === "Security") {
-              const prevKey = `${day}-${schoolClass}-${period - 1}`;
-              const prevSlot = timetable.get(prevKey);
-              if (prevSlot && prevSlot.subject === "English") continue;
-            }
-            
-            const newSlot: TimetableSlot = {
-              day,
-              period,
-              schoolClass,
-              status: "occupied",
-              subject: subject1,
-              teacherId: t1.id,
-              slotType: "slash",
-              slashPairSubject: subject2,
-              slashPairTeacherId: t2.id,
-            };
-            
-            await storage.setSlot(userId, newSlot);
-            timetable.set(key, newSlot);
-            placed++;
-            slotPlaced = true;
-            break;
-          }
-        }
-      }
-    }
-  }
-  
-  return placed;
-}
-
-async function scheduleSingleSubject(
-  userId: string,
-  schoolClass: SchoolClass,
-  subject: string,
-  count: number,
-  teachers: Teacher[],
-  timetable: Map<string, TimetableSlot>,
-  lockedSlots: Set<string>,
-  warnings: string[],
-  fatigueLimit: number = 5
-): Promise<number> {
-  let placed = 0;
-  
-  const availableTeachers = teachers.filter(t => 
-    t.subjects.includes(subject) && 
-    t.classes.includes(schoolClass) &&
-    getTeacherSubjectClasses(t, subject).includes(schoolClass)
-  );
-  
-  if (availableTeachers.length === 0) {
-    warnings.push(`${schoolClass}: No teacher available for ${subject}`);
-    return 0;
-  }
-  
-  // Try to place double periods first if we need 2+ more periods
-  // This helps create more efficient schedules
-  while (placed < count) {
-    const remaining = count - placed;
-    let slotPlaced = false;
-    
-    // Shuffle for variety
-    const shuffledDays = shuffleArray([...DAYS]);
-    const shuffledTeachers = shuffleArray([...availableTeachers]);
-    
-    // Try double period first if we have 2+ remaining
-    if (remaining >= 2) {
-      for (const day of shuffledDays) {
-        if (slotPlaced) break;
-        const maxPeriods = PERIODS_PER_DAY[day];
-        
-        // Check if subject already appears on this day for this class (max 1 occurrence per day)
-        const dailyCount = getTotalSubjectCountForDay(timetable, day, schoolClass, subject, []);
-        if (dailyCount >= 1) continue;
-        
-        const shuffledPeriods = shuffleArray(Array.from({ length: maxPeriods - 1 }, (_, i) => i + 1));
-        for (const period of shuffledPeriods) {
-          if (slotPlaced) break;
-          
-          // Double period validation
-          if (wouldCrossBreak(day, period)) continue; // Can't cross breaks
-          
-          const key1 = `${day}-${schoolClass}-${period}`;
-          const key2 = `${day}-${schoolClass}-${period + 1}`;
-          
-          if (lockedSlots.has(key1) || lockedSlots.has(key2)) continue;
-          
-          const slot1 = timetable.get(key1);
-          const slot2 = timetable.get(key2);
-          if ((slot1 && slot1.status === "occupied") || (slot2 && slot2.status === "occupied")) continue;
-          
-          for (const teacher of shuffledTeachers) {
-            // Check teacher available for both periods
-            if (!isTeacherAvailableForSlot(timetable, teacher, day, period)) continue;
-            if (!isTeacherAvailableForSlot(timetable, teacher, day, period + 1)) continue;
-            if (wouldExceedFatigue(timetable, teacher.id, day, [period, period + 1], fatigueLimit)) continue;
-            
-            if (subject === "Security") {
-              const prevKey = `${day}-${schoolClass}-${period - 1}`;
-              const prevSlot = timetable.get(prevKey);
-              if (prevSlot && prevSlot.subject === "English") continue;
-            }
-            
-            // Place double period (first slot)
-            const newSlot1: TimetableSlot = {
-              day,
-              period,
-              schoolClass,
-              status: "occupied",
-              subject,
-              teacherId: teacher.id,
-              slotType: "double",
-              slashPairSubject: null,
-              slashPairTeacherId: null,
-            };
-            
-            // Place double period (second slot)
-            const newSlot2: TimetableSlot = {
-              day,
-              period: period + 1,
-              schoolClass,
-              status: "occupied",
-              subject,
-              teacherId: teacher.id,
-              slotType: "double",
-              slashPairSubject: null,
-              slashPairTeacherId: null,
-            };
-            
-            await storage.setSlot(userId, newSlot1);
-            await storage.setSlot(userId, newSlot2);
-            timetable.set(key1, newSlot1);
-            timetable.set(key2, newSlot2);
-            placed += 2;
-            slotPlaced = true;
-            break;
-          }
-        }
-      }
-    }
-    
-    // If double didn't work or only need 1 more, try single period
-    if (!slotPlaced) {
-      for (const day of shuffledDays) {
-        if (slotPlaced) break;
-        const maxPeriods = PERIODS_PER_DAY[day];
-        
-        // Check if subject already appears on this day for this class (max 1 occurrence per day)
-        const dailyCount = getTotalSubjectCountForDay(timetable, day, schoolClass, subject, []);
-        if (dailyCount >= 1) continue;
-        
-        const singlePeriods = shuffleArray(Array.from({ length: maxPeriods }, (_, i) => i + 1));
-        for (const period of singlePeriods) {
-          if (slotPlaced) break;
-          const key = `${day}-${schoolClass}-${period}`;
-          
-          if (lockedSlots.has(key)) continue;
-          const slot = timetable.get(key);
-          if (slot && slot.status === "occupied") continue;
-          
-          for (const teacher of shuffledTeachers) {
-            if (!isTeacherAvailableForSlot(timetable, teacher, day, period)) continue;
-            if (wouldExceedFatigue(timetable, teacher.id, day, [period], fatigueLimit)) continue;
-            
-            if (subject === "Security") {
-              const prevKey = `${day}-${schoolClass}-${period - 1}`;
-              const prevSlot = timetable.get(prevKey);
-              if (prevSlot && prevSlot.subject === "English") continue;
-            }
-            
-            const newSlot: TimetableSlot = {
-              day,
-              period,
-              schoolClass,
-              status: "occupied",
-              subject,
-              teacherId: teacher.id,
-              slotType: "single",
-              slashPairSubject: null,
-              slashPairTeacherId: null,
-            };
-            
-            await storage.setSlot(userId, newSlot);
-            timetable.set(key, newSlot);
-            placed++;
-            slotPlaced = true;
-            break;
-          }
-        }
-      }
-    }
-    
-    // If we couldn't place anything, break to avoid infinite loop
-    if (!slotPlaced) break;
-  }
-  
-  return placed;
-}
-
-function isTeacherAvailableForSlot(
-  timetable: Map<string, TimetableSlot>,
-  teacher: Teacher,
-  day: Day,
-  period: number
-): boolean {
-  const unavailablePeriods = teacher.unavailable[day] || [];
-  if (unavailablePeriods.includes(period)) return false;
-  
-  for (const schoolClass of CLASSES) {
-    const key = `${day}-${schoolClass}-${period}`;
-    const slot = timetable.get(key);
-    if (slot && (slot.teacherId === teacher.id || slot.slashPairTeacherId === teacher.id)) {
-      return false;
-    }
-  }
-  
-  return true;
-}
-
-function wouldExceedFatigue(
-  timetable: Map<string, TimetableSlot>,
-  teacherId: string,
-  day: Day,
-  newPeriods: number[],
-  fatigueLimit: number = 5
-): boolean {
-  const maxPeriods = PERIODS_PER_DAY[day];
-  const teachingPeriods = new Set<number>(newPeriods);
-  
-  for (let period = 1; period <= maxPeriods; period++) {
-    for (const schoolClass of CLASSES) {
-      const key = `${day}-${schoolClass}-${period}`;
-      const slot = timetable.get(key);
-      if (slot && (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId)) {
-        teachingPeriods.add(period);
-        break;
-      }
-    }
-  }
-  
-  const sorted = Array.from(teachingPeriods).sort((a, b) => a - b);
-  let maxConsecutive = 0;
-  let current = 0;
-  
-  for (let i = 0; i < sorted.length; i++) {
-    if (i === 0) {
-      current = 1;
-    } else {
-      const prev = sorted[i - 1];
-      const curr = sorted[i];
-      const hasBreak =
-        (prev <= BREAK_AFTER_P4 && curr > BREAK_AFTER_P4) ||
-        (day !== "Friday" && day !== "Tuesday" && prev <= BREAK_AFTER_P7 && curr > BREAK_AFTER_P7);
-      
-      if (curr === prev + 1 && !hasBreak) {
-        current++;
-      } else {
-        current = 1;
-      }
-    }
-    maxConsecutive = Math.max(maxConsecutive, current);
-  }
-  
-  return maxConsecutive > fatigueLimit;
 }
