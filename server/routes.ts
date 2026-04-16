@@ -789,7 +789,7 @@ export async function registerRoutes(
     if (deleted) {
       res.json({ success: true });
     } else {
-      res.status(404).json({ error: "Subject not found or cannot be deleted" });
+      res.status(404).json({ error: "Subject not found" });
     }
   });
 

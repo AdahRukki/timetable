@@ -86,12 +86,6 @@ export default function HelpPage() {
       icon: BookOpen,
       severity: "error",
     },
-    {
-      title: "Subject Quota",
-      description: "Warning when a subject exceeds its weekly period quota",
-      icon: AlertTriangle,
-      severity: "warning",
-    },
   ];
 
   return (
