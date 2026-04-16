@@ -13,7 +13,6 @@ import {
   DAYS,
   CLASSES,
   PERIODS_PER_DAY,
-  DEFAULT_QUOTAS,
   teachers,
   timetableSlots,
   timetableActions,
@@ -25,16 +24,6 @@ import {
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
-
-const TEACHER_COLORS = [
-  "#8884d8", "#82ca9d", "#ffc658", "#ff7c43", "#a4de6c",
-  "#d0ed57", "#83a6ed", "#8dd1e1", "#a4de6c", "#d88484",
-  "#c084d8", "#84d8c0", "#d8b384", "#84a8d8", "#d884a8",
-];
-
-function getTeacherColor(index: number): string {
-  return TEACHER_COLORS[index % TEACHER_COLORS.length];
-}
 
 function getSlotKey(day: Day, schoolClass: SchoolClass, period: number): string {
   return `${day}-${schoolClass}-${period}`;
@@ -63,7 +52,6 @@ export interface IStorage {
   // Subject Quotas
   getSubjectQuotas(userId: string): Promise<SubjectQuota[]>;
   updateSubjectQuota(userId: string, subject: string, quota: Partial<SubjectQuota>): Promise<SubjectQuota | undefined>;
-  resetSubjectQuotas(userId: string): Promise<SubjectQuota[]>;
 
   // Subjects
   getSubjects(userId: string): Promise<Subject[]>;
@@ -71,7 +59,6 @@ export interface IStorage {
   createSubject(userId: string, subject: InsertSubject): Promise<Subject>;
   updateSubject(userId: string, id: number, subject: Partial<InsertSubject>): Promise<Subject | undefined>;
   deleteSubject(userId: string, id: number): Promise<boolean>;
-  initializeSubjectsFromQuotas(userId: string): Promise<void>;
   
   // User settings
   getUserSettings(userId: string): Promise<UserSettings>;
@@ -88,61 +75,9 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
-  // Initialize default data for a new user
+  // Ensure baseline per-user records exist. New users start with empty subjects,
+  // quotas, and teachers; only default user settings are created.
   async initializeUserData(userId: string): Promise<void> {
-    // Check if user already has quotas
-    const existingQuotas = await db.select().from(subjectQuotas).where(eq(subjectQuotas.userId, userId)).limit(1);
-    if (existingQuotas.length > 0) return;
-
-    // Initialize default quotas and subjects
-    for (const quota of DEFAULT_QUOTAS) {
-      await db.insert(subjectQuotas).values({
-        userId,
-        subject: quota.subject,
-        jssQuota: quota.jssQuota,
-        ss1Quota: quota.ss1Quota,
-        ss2ss3Quota: quota.ss2ss3Quota,
-        isSlashSubject: quota.isSlashSubject ? 1 : 0,
-      });
-
-      // Also add to subjects table as default subjects
-      await db.insert(subjects).values({
-        userId,
-        name: quota.subject,
-        jssQuota: quota.jssQuota,
-        ss1Quota: quota.ss1Quota,
-        ss2ss3Quota: quota.ss2ss3Quota,
-        isSlashSubject: quota.isSlashSubject ? 1 : 0,
-        isDefault: 1,
-      });
-    }
-
-    // Initialize sample teachers
-    const sampleTeachers: InsertTeacher[] = [
-      { name: "Mr. Adewale", subjects: ["Maths"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(0) },
-      { name: "Mrs. Okonkwo", subjects: ["English"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(1) },
-      { name: "Mr. Ibrahim", subjects: ["Basic Science", "Physics"], classes: [...CLASSES] as SchoolClass[], unavailable: { Tuesday: [1, 2] }, color: getTeacherColor(2) },
-      { name: "Mrs. Bello", subjects: ["Chemistry"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(3) },
-      { name: "Mr. Eze", subjects: ["Biology", "Basic Science"], classes: [...CLASSES] as SchoolClass[], unavailable: { Friday: [1] }, color: getTeacherColor(4) },
-      { name: "Mrs. Abubakar", subjects: ["Social Studies", "Civic"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(5) },
-      { name: "Mr. Chukwu", subjects: ["Basic Technology"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(6) },
-      { name: "Mrs. Danjuma", subjects: ["Home Economics"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(7) },
-      { name: "Mr. Oluwole", subjects: ["Computer"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(8) },
-      { name: "Mrs. Yakubu", subjects: ["PHE"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(9) },
-      { name: "Mr. Ogunyemi", subjects: ["CRS"], classes: [...CLASSES] as SchoolClass[], unavailable: {}, color: getTeacherColor(10) },
-      { name: "Mrs. Ahmed", subjects: ["Agric"], classes: [...CLASSES] as SchoolClass[], unavailable: { Wednesday: [8, 9] }, color: getTeacherColor(11) },
-      { name: "Mr. Adeniyi", subjects: ["Security"], classes: ["JSS1", "JSS2", "JSS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(12) },
-      { name: "Mrs. Idris", subjects: ["Economics", "Marketing"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(13) },
-      { name: "Mr. Onyeka", subjects: ["Government"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(14) },
-      { name: "Mrs. Lawal", subjects: ["Literature"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(0) },
-      { name: "Mr. Nwosu", subjects: ["Civic"], classes: ["SS1", "SS2", "SS3"] as SchoolClass[], unavailable: {}, color: getTeacherColor(1) },
-    ];
-
-    for (const teacher of sampleTeachers) {
-      await this.createTeacher(userId, teacher);
-    }
-
-    // Initialize default user settings
     await db.insert(userSettings).values({ userId, fatigueLimit: 5 }).onConflictDoNothing();
   }
 
@@ -415,23 +350,6 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async resetSubjectQuotas(userId: string): Promise<SubjectQuota[]> {
-    await db.delete(subjectQuotas).where(eq(subjectQuotas.userId, userId));
-    
-    for (const quota of DEFAULT_QUOTAS) {
-      await db.insert(subjectQuotas).values({
-        userId,
-        subject: quota.subject,
-        jssQuota: quota.jssQuota,
-        ss1Quota: quota.ss1Quota,
-        ss2ss3Quota: quota.ss2ss3Quota,
-        isSlashSubject: quota.isSlashSubject ? 1 : 0,
-      });
-    }
-
-    return DEFAULT_QUOTAS;
-  }
-
   // Subjects
   async getSubjects(userId: string): Promise<Subject[]> {
     const rows = await db.select().from(subjects).where(eq(subjects.userId, userId));
@@ -443,7 +361,6 @@ export class DatabaseStorage implements IStorage {
       ss2ss3Quota: row.ss2ss3Quota,
       isSlashSubject: row.isSlashSubject === 1,
       slashPairName: row.slashPairName,
-      isDefault: row.isDefault === 1,
     }));
   }
 
@@ -460,7 +377,6 @@ export class DatabaseStorage implements IStorage {
       ss2ss3Quota: row.ss2ss3Quota,
       isSlashSubject: row.isSlashSubject === 1,
       slashPairName: row.slashPairName,
-      isDefault: row.isDefault === 1,
     };
   }
 
@@ -473,7 +389,6 @@ export class DatabaseStorage implements IStorage {
       ss2ss3Quota: subject.ss2ss3Quota,
       isSlashSubject: subject.isSlashSubject ? 1 : 0,
       slashPairName: subject.slashPairName,
-      isDefault: subject.isDefault ? 1 : 0,
     }).returning({ id: subjects.id });
 
     // Also add to subject_quotas table for consistency
@@ -494,7 +409,6 @@ export class DatabaseStorage implements IStorage {
       ss2ss3Quota: subject.ss2ss3Quota,
       isSlashSubject: subject.isSlashSubject,
       slashPairName: subject.slashPairName,
-      isDefault: subject.isDefault,
     };
   }
 
@@ -509,7 +423,6 @@ export class DatabaseStorage implements IStorage {
     if (updates.ss2ss3Quota !== undefined) updateValues.ss2ss3Quota = updates.ss2ss3Quota;
     if (updates.isSlashSubject !== undefined) updateValues.isSlashSubject = updates.isSlashSubject ? 1 : 0;
     if (updates.slashPairName !== undefined) updateValues.slashPairName = updates.slashPairName;
-    if (updates.isDefault !== undefined) updateValues.isDefault = updates.isDefault ? 1 : 0;
 
     await db.update(subjects).set(updateValues).where(
       and(eq(subjects.userId, userId), eq(subjects.id, id))
@@ -541,9 +454,6 @@ export class DatabaseStorage implements IStorage {
   async deleteSubject(userId: string, id: number): Promise<boolean> {
     const existing = await this.getSubject(userId, id);
     if (!existing) return false;
-    
-    // Don't allow deleting default subjects
-    if (existing.isDefault) return false;
 
     await db.delete(subjects).where(
       and(eq(subjects.userId, userId), eq(subjects.id, id))
@@ -555,30 +465,6 @@ export class DatabaseStorage implements IStorage {
     );
 
     return true;
-  }
-
-  async initializeSubjectsFromQuotas(userId: string): Promise<void> {
-    // Get all quotas for this user
-    const quotas = await this.getSubjectQuotas(userId);
-    
-    // Get existing subjects for this user
-    const existingSubjects = await this.getSubjects(userId);
-    const existingNames = new Set(existingSubjects.map(s => s.name));
-    
-    // Add each quota as a default subject if not already exists
-    for (const quota of quotas) {
-      if (!existingNames.has(quota.subject)) {
-        await db.insert(subjects).values({
-          userId,
-          name: quota.subject,
-          jssQuota: quota.jssQuota,
-          ss1Quota: quota.ss1Quota,
-          ss2ss3Quota: quota.ss2ss3Quota,
-          isSlashSubject: quota.isSlashSubject ? 1 : 0,
-          isDefault: 1,
-        });
-      }
-    }
   }
 
   async getUserSettings(userId: string): Promise<UserSettings> {

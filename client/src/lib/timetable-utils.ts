@@ -8,7 +8,6 @@ import {
   MAX_FREE_PERIODS_PER_DAY,
   TOTAL_PERIODS_PER_WEEK,
   MIN_TEACHING_PERIODS_PER_WEEK,
-  getSubjectsForClass,
   usesSlashSubjects,
   SLASH_SUBJECTS,
   type Day,
@@ -419,41 +418,6 @@ export function wouldExceedFatigueLimit(
   return false;
 }
 
-// Get subject period counts for a class
-export function getSubjectPeriodCounts(
-  timetable: Map<string, TimetableSlot>,
-  schoolClass: SchoolClass
-): SubjectPeriodCount[] {
-  const requiredSubjects = getSubjectsForClass(schoolClass);
-  const counts: Map<string, number> = new Map();
-  
-  // Count allocated periods
-  for (const day of DAYS) {
-    const periods = getPeriodsForDay(day);
-    for (const period of periods) {
-      const slot = getSlot(timetable, day, schoolClass, period);
-      if (slot && slot.subject) {
-        const current = counts.get(slot.subject) || 0;
-        counts.set(slot.subject, current + 1);
-        
-        // Count slash pair subject too
-        if (slot.slashPairSubject) {
-          const pairCurrent = counts.get(slot.slashPairSubject) || 0;
-          counts.set(slot.slashPairSubject, pairCurrent + 1);
-        }
-      }
-    }
-  }
-  
-  // Build result
-  return Object.entries(requiredSubjects).map(([subject, required]) => ({
-    schoolClass,
-    subject,
-    allocated: counts.get(subject) || 0,
-    required,
-  }));
-}
-
 // Validate a placement request
 export function validatePlacement(
   timetable: Map<string, TimetableSlot>,
@@ -584,20 +548,6 @@ export function validatePlacement(
         code: "ENGLISH_SECURITY",
         message: "Security cannot immediately follow English",
         severity: "error",
-      });
-    }
-  }
-  
-  // Check weekly period count
-  const currentCounts = getSubjectPeriodCounts(timetable, schoolClass);
-  const subjectCount = currentCounts.find((c) => c.subject === subject);
-  if (subjectCount) {
-    const periodsToAdd = slotType === "double" ? 2 : 1;
-    if (subjectCount.allocated + periodsToAdd > subjectCount.required) {
-      errors.push({
-        code: "PERIOD_QUOTA_EXCEEDED",
-        message: `${subject} would exceed its weekly quota of ${subjectCount.required} periods`,
-        severity: "warning",
       });
     }
   }

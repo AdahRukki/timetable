@@ -7,7 +7,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Settings, Bell, Shield, Clock, Download, Upload, BookOpen, RotateCcw, Loader2, Plus, Pencil, Trash2, Save } from "lucide-react";
+import { Settings, Bell, Shield, Clock, Download, Upload, BookOpen, Loader2, Plus, Pencil, Trash2, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -83,19 +83,6 @@ export default function SettingsPage() {
         variant: "destructive",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
-    },
-  });
-
-  const resetQuotasMutation = useMutation({
-    mutationFn: async () => {
-      return apiRequest("POST", "/api/quotas/reset");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
-      toast({
-        title: "Quotas Reset",
-        description: "Subject quotas have been reset to default values",
-      });
     },
   });
 
@@ -264,7 +251,7 @@ export default function SettingsPage() {
               </div>
             ) : subjects.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">
-                No custom subjects created yet. Default subjects are already available.
+                No subjects yet. Click "Add Subject" to create one.
               </p>
             ) : (
               <div className="space-y-2">
@@ -277,9 +264,6 @@ export default function SettingsPage() {
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{subject.name}</span>
-                        {subject.isDefault ? (
-                          <Badge variant="secondary" className="text-xs">Default</Badge>
-                        ) : null}
                       </div>
                       <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
                         <span>JSS: {subject.jssQuota}</span>
@@ -293,7 +277,6 @@ export default function SettingsPage() {
                         size="icon"
                         variant="ghost"
                         onClick={() => openEditSubjectDialog(subject)}
-                        disabled={subject.isDefault}
                         data-testid={`button-edit-subject-${subject.id}`}
                       >
                         <Pencil className="h-4 w-4" />
@@ -302,7 +285,7 @@ export default function SettingsPage() {
                         size="icon"
                         variant="ghost"
                         onClick={() => deleteSubjectMutation.mutate(subject.id)}
-                        disabled={subject.isDefault || deleteSubjectMutation.isPending}
+                        disabled={deleteSubjectMutation.isPending}
                         data-testid={`button-delete-subject-${subject.id}`}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -414,20 +397,6 @@ export default function SettingsPage() {
                   Set maximum periods per week for each subject
                 </CardDescription>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => resetQuotasMutation.mutate()}
-                disabled={resetQuotasMutation.isPending}
-                data-testid="button-reset-quotas"
-              >
-                {resetQuotasMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <RotateCcw className="h-4 w-4 mr-2" />
-                )}
-                Reset to Defaults
-              </Button>
             </div>
           </CardHeader>
           <CardContent className="space-y-6">

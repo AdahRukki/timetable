@@ -7,7 +7,6 @@ import {
   type SlotType,
   type ValidationResult,
   type Subject,
-  getSubjectsForClass,
   usesSlashSubjects,
   SLASH_SUBJECTS,
   PERIODS_PER_DAY,
@@ -90,9 +89,7 @@ export function PlacementDialog({
 
   const availableSubjects = useMemo(() => {
     if (!schoolClass) return [];
-    const defaultSubjects = Object.keys(getSubjectsForClass(schoolClass));
-    
-    const customSubjectNames = customSubjects
+    return customSubjects
       .filter((s) => {
         if (schoolClass.startsWith("JSS")) {
           return s.jssQuota > 0;
@@ -102,10 +99,8 @@ export function PlacementDialog({
           return s.ss2ss3Quota > 0;
         }
       })
-      .map((s) => s.name);
-    
-    const allSubjects = Array.from(new Set([...defaultSubjects, ...customSubjectNames]));
-    return allSubjects.sort();
+      .map((s) => s.name)
+      .sort();
   }, [schoolClass, customSubjects]);
 
   const availableTeachers = useMemo(() => {

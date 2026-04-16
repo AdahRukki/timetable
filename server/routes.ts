@@ -673,13 +673,6 @@ export async function registerRoutes(
     }
   });
 
-  // Reset quotas to defaults
-  app.post("/api/quotas/reset", isAuthenticated, async (req, res) => {
-    const userId = getUserId(req);
-    const quotas = await storage.resetSubjectQuotas(userId);
-    res.json(quotas);
-  });
-
   // ===== User Settings =====
 
   // Get user settings
@@ -718,11 +711,7 @@ export async function registerRoutes(
   app.get("/api/subjects", isAuthenticated, async (req, res) => {
     const userId = getUserId(req);
     await storage.initializeUserData(userId);
-    
-    // Always ensure subjects table is synced with quotas for existing users
-    await storage.initializeSubjectsFromQuotas(userId);
     const subjectsList = await storage.getSubjects(userId);
-    
     res.json(subjectsList);
   });
 

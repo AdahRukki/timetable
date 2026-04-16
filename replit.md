@@ -30,8 +30,7 @@ This application allows school administrators to create weekly timetables for mu
 │   │   ├── hooks/
 │   │   │   └── use-auth.ts                 # Authentication hook
 │   │   ├── lib/
-│   │   │   ├── timetable-utils.ts          # Validation & utility functions
-│   │   │   └── sample-data.ts              # Sample teacher data
+│   │   │   └── timetable-utils.ts          # Validation & utility functions
 │   │   └── pages/
 │   │       ├── home.tsx                    # Main timetable builder
 │   │       ├── landing.tsx                 # Landing page for logged-out users
@@ -61,9 +60,7 @@ The application uses Replit Auth (OpenID Connect) supporting:
 
 User sessions are stored in PostgreSQL. All data is user-scoped - each user has their own isolated timetables, teachers, and settings.
 
-On first login, users are automatically initialized with:
-- Default subject quotas for all classes
-- Sample teachers for demonstration
+New users start with an empty workspace — no preset subjects, quotas, or sample teachers. Everything is created by the user from the Settings and Teachers pages.
 
 ## Database Schema
 
@@ -97,12 +94,12 @@ PostgreSQL with Drizzle ORM. Tables:
 7. **Subject-Class Mapping**: Teachers can be assigned to teach specific subjects to specific classes only
 8. **Daily Occurrence Rule**: Each subject can only appear once per day per class
 
-### Custom Subjects
-Users can create custom subjects in the Settings page with:
+### Subjects
+Users create and manage all subjects in the Settings page with:
 - Subject name (must be unique)
 - Per-class-level period quotas (JSS, SS1, SS2/SS3)
-- Default subjects cannot be deleted
-- Custom subjects sync with subject quotas for timetable validation
+- Every subject is fully editable and deletable
+- Subjects sync with subject quotas for timetable validation
 
 ### Slash Subjects (SS2/SS3 only)
 Paired subjects scheduled simultaneously:
@@ -152,7 +149,6 @@ All API endpoints require authentication (except `/api/login`, `/api/logout`, `/
 **Quotas:**
 - `GET /api/quotas` - Get subject period quotas (user-scoped)
 - `PATCH /api/quotas/:subject` - Update a subject's quota
-- `POST /api/quotas/reset` - Reset quotas to defaults
 
 **History:**
 - `GET /api/actions` - Get action history (user-scoped)
