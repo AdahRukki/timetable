@@ -111,7 +111,11 @@ export default function Home() {
           variant: "destructive",
         });
       }
-      setAutoGenDialogOpen(false);
+      // Keep the dialog open on success so the user sees the result summary
+      // and can use the Save Timetable CTA in the footer.
+      if (!result.success) {
+        setAutoGenDialogOpen(false);
+      }
     },
     onError: (error) => {
       toast({
