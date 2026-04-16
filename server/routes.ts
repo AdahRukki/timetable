@@ -946,7 +946,11 @@ export async function registerRoutes(
   app.delete("/api/saved-timetables/:id", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      await storage.deleteSavedTimetable(userId, req.params.id);
+      const deleted = await storage.deleteSavedTimetable(userId, req.params.id);
+      if (!deleted) {
+        res.status(404).json({ error: "Saved timetable not found" });
+        return;
+      }
       res.json({ success: true });
     } catch (error) {
       console.error("Delete saved error:", error);

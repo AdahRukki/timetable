@@ -633,10 +633,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteSavedTimetable(userId: string, id: string): Promise<boolean> {
-    await db.delete(savedTimetables).where(
+    const result = await db.delete(savedTimetables).where(
       and(eq(savedTimetables.id, id), eq(savedTimetables.userId, userId))
     );
-    return true;
+    return (result.rowCount ?? 0) > 0;
   }
 
   async loadSavedTimetable(userId: string, id: string): Promise<boolean> {

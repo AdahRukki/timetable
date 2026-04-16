@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -29,6 +30,7 @@ import { Save, Upload, Pencil, Trash2, Loader2, Calendar } from "lucide-react";
 
 export default function SavedTimetablesPage() {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [renameTarget, setRenameTarget] = useState<SavedTimetable | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [loadTarget, setLoadTarget] = useState<SavedTimetable | null>(null);
@@ -79,6 +81,8 @@ export default function SavedTimetablesPage() {
         description: "The saved timetable is now your live grid.",
       });
       setLoadTarget(null);
+      // Navigate to the timetable so the loaded grid is immediately visible.
+      setLocation("/");
     },
     onError: () => {
       toast({ title: "Load failed", description: "Could not load.", variant: "destructive" });
