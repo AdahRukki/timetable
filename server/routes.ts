@@ -885,7 +885,7 @@ export async function registerRoutes(
       // The live grid is maintained client-side, so the snapshot's source of
       // truth is the slots posted by the client (validated server-side).
       const bodySchema = z.object({
-        name: z.string().min(1).max(100),
+        name: z.string().trim().min(1, "Name is required").max(100),
         slots: z.array(timetableSlotSchema),
       });
       const { name, slots } = bodySchema.parse(req.body);
@@ -895,7 +895,7 @@ export async function registerRoutes(
       }
       // Persist the entire grid snapshot (every slot, including empty/break)
       // so the saved state is a faithful, fully-restorable copy.
-      const saved = await storage.createSavedTimetable(userId, name.trim(), slots);
+      const saved = await storage.createSavedTimetable(userId, name, slots);
       res.status(201).json(saved);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -925,9 +925,9 @@ export async function registerRoutes(
   app.patch("/api/saved-timetables/:id", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const nameSchema = z.object({ name: z.string().min(1).max(100) });
+      const nameSchema = z.object({ name: z.string().trim().min(1, "Name is required").max(100) });
       const { name } = nameSchema.parse(req.body);
-      const saved = await storage.renameSavedTimetable(userId, req.params.id, name.trim());
+      const saved = await storage.renameSavedTimetable(userId, req.params.id, name);
       if (!saved) {
         res.status(404).json({ error: "Saved timetable not found" });
         return;
