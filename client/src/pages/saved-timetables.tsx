@@ -121,7 +121,9 @@ export default function SavedTimetablesPage() {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((item) => {
-            const slotCount = item.timetableData?.length ?? 0;
+            const slotCount = (item.timetableData ?? []).filter(
+              (s) => s.status === "occupied"
+            ).length;
             return (
               <Card key={item.id} data-testid={`card-saved-${item.id}`}>
                 <CardHeader>

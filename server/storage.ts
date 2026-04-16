@@ -642,6 +642,9 @@ export class DatabaseStorage implements IStorage {
   async loadSavedTimetable(userId: string, id: string): Promise<boolean> {
     const saved = await this.getSavedTimetable(userId, id);
     if (!saved) return false;
+    // The snapshot stores every slot (full grid). The live timetable_slots
+    // table only stores occupied rows (empty cells are inferred), so we
+    // filter at the DB-write boundary while keeping the snapshot intact.
     const occupied = saved.timetableData.filter((s) => s.status === "occupied");
 
     // Atomic replace: clear current slots + audit history, then insert snapshot.

@@ -889,12 +889,13 @@ export async function registerRoutes(
         slots: z.array(timetableSlotSchema),
       });
       const { name, slots } = bodySchema.parse(req.body);
-      const occupied = slots.filter((s) => s.status === "occupied");
-      if (occupied.length === 0) {
+      if (!slots.some((s) => s.status === "occupied")) {
         res.status(400).json({ error: "Cannot save an empty timetable" });
         return;
       }
-      const saved = await storage.createSavedTimetable(userId, name.trim(), occupied);
+      // Persist the entire grid snapshot (every slot, including empty/break)
+      // so the saved state is a faithful, fully-restorable copy.
+      const saved = await storage.createSavedTimetable(userId, name.trim(), slots);
       res.status(201).json(saved);
     } catch (error) {
       if (error instanceof z.ZodError) {

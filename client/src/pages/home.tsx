@@ -453,16 +453,12 @@ export default function Home() {
       setSaveDialogOpen(false);
       setSaveName("");
     },
-    onError: async (error: any) => {
-      let message = "Could not save timetable.";
-      try {
-        const text = await error?.response?.text?.();
-        if (text) {
-          const parsed = JSON.parse(text);
-          if (parsed?.error) message = parsed.error;
-        }
-      } catch {}
-      toast({ title: "Save failed", description: message, variant: "destructive" });
+    onError: (error: Error) => {
+      toast({
+        title: "Save failed",
+        description: error.message || "Could not save timetable.",
+        variant: "destructive",
+      });
     },
   });
 
