@@ -23,7 +23,7 @@ dig +short timetable.seatofwisdomacademy.com
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl git build-essential ca-certificates ufw nginx postgresql
+sudo apt install -y curl git build-essential ca-certificates ufw nginx postgresql-16
 
 # Node.js 20 LTS
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
@@ -73,16 +73,16 @@ Create an unprivileged user and clone the repo:
 
 ```bash
 sudo adduser --system --group --home /opt/timetable timetable
-sudo -u timetable git clone <YOUR_REPO_URL> /opt/timetable/app
-cd /opt/timetable/app
+sudo -u timetable git clone <YOUR_REPO_URL> /opt/timetable
+cd /opt/timetable
 sudo -u timetable npm ci
 ```
 
 Create the environment file:
 
 ```bash
-sudo -u timetable cp .env.example /opt/timetable/app/.env
-sudo -u timetable nano /opt/timetable/app/.env
+sudo -u timetable cp .env.example /opt/timetable/.env
+sudo -u timetable nano /opt/timetable/.env
 ```
 
 Fill in:
@@ -114,8 +114,8 @@ Requires=postgresql.service
 Type=simple
 User=timetable
 Group=timetable
-WorkingDirectory=/opt/timetable/app
-EnvironmentFile=/opt/timetable/app/.env
+WorkingDirectory=/opt/timetable
+EnvironmentFile=/opt/timetable/.env
 ExecStart=/usr/bin/npm run start
 Restart=on-failure
 RestartSec=5
@@ -155,6 +155,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 60s;
@@ -191,7 +192,7 @@ If Google is configured, test that flow too.
 ## 10. Updating the app
 
 ```bash
-cd /opt/timetable/app
+cd /opt/timetable
 sudo -u timetable git pull
 sudo -u timetable npm ci
 sudo -u timetable bash -c 'set -a; source .env; set +a; npm run db:push'
