@@ -29,7 +29,7 @@ import { z } from "zod";
 
 // Get user ID from authenticated request
 function getUserId(req: Request): string {
-  return (req.user as any)?.claims?.sub;
+  return (req.user as { id: string } | undefined)?.id ?? "";
 }
 
 function isTeacherAvailable(

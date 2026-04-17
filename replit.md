@@ -52,13 +52,25 @@ This application allows school administrators to create weekly timetables for mu
 
 ## Authentication
 
-The application uses Replit Auth (OpenID Connect) supporting:
-- Google login
-- GitHub login  
-- Apple login
-- Email/password
+Self-hosted authentication (no Replit dependency). Two methods:
+- **Google OAuth 2.0** via `passport-google-oauth20` (requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL`).
+- **Email + password** via `passport-local`, with bcrypt-hashed passwords (`bcryptjs`, 12 rounds).
 
-User sessions are stored in PostgreSQL. All data is user-scoped - each user has their own isolated timetables, teachers, and settings.
+Sessions are stored in PostgreSQL via `connect-pg-simple` and signed with `SESSION_SECRET`.
+The `users` table has `passwordHash` (nullable) and `googleId` (nullable, unique) columns; users may be linked to either or both providers via email matching.
+
+Auth endpoints:
+- `POST /api/auth/register` — create a new email/password account and log in.
+- `POST /api/auth/login` — sign in with email/password.
+- `GET /api/auth/google` — start Google OAuth flow.
+- `GET /api/auth/google/callback` — Google OAuth callback.
+- `GET /api/login` — legacy redirect to `/api/auth/google`.
+- `GET|POST /api/logout` — clears session.
+- `GET /api/auth/user` — returns current user.
+
+All data is user-scoped — each user has isolated timetables, teachers, and settings.
+
+See `DEPLOYMENT.md` for self-hosting instructions (VPS, Nginx, Postgres, TLS).
 
 New users start with an empty workspace — no preset subjects, quotas, or sample teachers. Everything is created by the user from the Settings and Teachers pages.
 
