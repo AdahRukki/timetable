@@ -1,0 +1,53 @@
+root@srv1076016:/var/www/timetable# cd /var/www/timetable
+set -a; source .env; set +a
+psql "$DATABASE_URL" -c "\dt"
+               List of relations
+ Schema |       Name        | Type  |   Owner
+--------+-------------------+-------+-----------
+ public | saved_timetables  | table | timetable
+ public | sessions          | table | timetable
+ public | shared_timetables | table | timetable
+ public | subject_quotas    | table | timetable
+ public | subjects          | table | timetable
+ public | teachers          | table | timetable
+ public | timetable_actions | table | timetable
+ public | timetable_slots   | table | timetable
+ public | user_settings     | table | timetable
+ public | users             | table | timetable
+(10 rows)
+
+root@srv1076016:/var/www/timetable# ls /etc/nginx/sites-enabled/
+default  seatofwisdomacademy.com  timetable.seatofwisdomacademy.com
+root@srv1076016:/var/www/timetable# cat /etc/nginx/sites-enabled/timetable.seatofwisdomacademy.com
+server {
+    server_name timetable.seatofwisdomacademy.com;
+
+    location / {
+        proxy_pass http://localhost:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    listen 443 ssl; # managed by Certbot
+    ssl_certificate /etc/letsencrypt/live/timetable.seatofwisdomacademy.com/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/timetable.seatofwisdomacademy.com/privkey.pem; # managed by Certbot
+    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
+
+}
+
+server {
+    if ($host = timetable.seatofwisdomacademy.com) {
+        return 301 https://$host$request_uri;
+    } # managed by Certbot
+
+
+    listen 80;
+    server_name timetable.seatofwisdomacademy.com;
+    return 404; # managed by Certbot
+
+
+}root@srv1076016:/var/www/timetable#
