@@ -2065,8 +2065,20 @@ function runAttempt(
     if (e < finalMinEmpty) finalMinEmpty = e;
   }
   if (finalWorstCls && finalWorstEmpty - finalMinEmpty >= 2) {
+    const residual = finalWorstEmpty - finalMinEmpty;
+    // Identify the subjects still short on the worst class — those are the
+    // ones the user most likely needs more eligible teachers for.
+    const shortSubjects: string[] = [];
+    for (const quota of quotas) {
+      const needed = getQuotaForClass(quota, finalWorstCls);
+      const placed = countPlacements(timetable, finalWorstCls, quota.subject);
+      if (placed < needed) shortSubjects.push(quota.subject);
+    }
+    const subjectsHint = shortSubjects.length
+      ? ` for [${shortSubjects.join(", ")}]`
+      : "";
     warnings.push(
-      `${finalWorstCls} has ${finalWorstEmpty} empty period(s) that could not be redistributed — consider adding more eligible teachers for that class.`,
+      `${finalWorstCls} has ${residual} more empty period(s) than the best-balanced class (${finalWorstEmpty} total empty) — consider adding more eligible teachers${subjectsHint}.`,
     );
   }
 
