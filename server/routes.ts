@@ -1733,13 +1733,9 @@ function runAttempt(
     }
   }
 
-  // PHASE 6: Period-1 swap repair — if any P1 is still empty, pull a later
-  // single-period from the same (day, class) into P1 when teacher rules allow.
-  // Run twice in case the first pass cascades opportunities.
-  p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
-  p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
-
-  // PHASE 7: Remove excess (over-quota) — never touches locked slots.
+  // PHASE 6: Remove excess (over-quota) — never touches locked slots.
+  // Done before P1 swap repair so that excess removals (which may empty a P1)
+  // are immediately repaired by the swap pass below.
   for (const cls of CLASSES) {
     for (const quota of quotas) {
       const needed = getQuotaForClass(quota, cls);
@@ -1747,6 +1743,12 @@ function runAttempt(
       if (placed > needed) removeExcess(timetable, cls, quota.subject, placed - needed, lockedSlots);
     }
   }
+
+  // PHASE 7: Period-1 swap repair — if any P1 is still empty, pull a later
+  // single-period from the same (day, class) into P1 when teacher rules allow.
+  // Run twice in case the first pass cascades opportunities.
+  p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
+  p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
 
   return { timetable, emptyCount: countEmpty(timetable), warnings };
 }
