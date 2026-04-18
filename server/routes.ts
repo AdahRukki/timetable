@@ -1609,6 +1609,8 @@ function isMovableSlot(slot: TimetableSlot | undefined): boolean {
   return true;
 }
 
+// Returns the alt slot key on success (caller must remember it for rollback),
+// or null if no relocation possible (in which case the source slot is restored).
 function relocatePlacementToEmpty(
   timetable: Timetable,
   fromCls: SchoolClass,
@@ -1618,10 +1620,10 @@ function relocatePlacementToEmpty(
   fatigueLimit: number,
   lockedSlots: Timetable,
   blockedKey: string,
-): boolean {
+): string | null {
   const sourceKey = slotKey(fromDay, fromCls, fromPeriod);
   const sourceSlot = timetable.get(sourceKey);
-  if (!isMovableSlot(sourceSlot)) return false;
+  if (!isMovableSlot(sourceSlot)) return null;
   const subject = sourceSlot!.subject!;
   const originalTeacherId = sourceSlot!.teacherId!;
 
@@ -1654,7 +1656,7 @@ function relocatePlacementToEmpty(
         altSlot.slotType = "single";
         altSlot.slashPairSubject = null;
         altSlot.slashPairTeacherId = null;
-        return true;
+        return altKey;
       }
     }
   }
@@ -1664,7 +1666,36 @@ function relocatePlacementToEmpty(
   sourceSlot!.subject = subject;
   sourceSlot!.teacherId = originalTeacherId;
   sourceSlot!.slotType = "single";
-  return false;
+  return null;
+}
+
+// Undo a successful relocation: clear the alt slot and re-occupy the source
+// with the original (subject, teacher, single).
+function undoRelocate(
+  timetable: Timetable,
+  sourceKey: string,
+  altKey: string,
+  originalSubject: string,
+  originalTeacherId: string,
+): void {
+  const altSlot = timetable.get(altKey);
+  if (altSlot) {
+    altSlot.status = "empty";
+    altSlot.subject = null;
+    altSlot.teacherId = null;
+    altSlot.slotType = null;
+    altSlot.slashPairSubject = null;
+    altSlot.slashPairTeacherId = null;
+  }
+  const sourceSlot = timetable.get(sourceKey);
+  if (sourceSlot) {
+    sourceSlot.status = "occupied";
+    sourceSlot.subject = originalSubject;
+    sourceSlot.teacherId = originalTeacherId;
+    sourceSlot.slotType = "single";
+    sourceSlot.slashPairSubject = null;
+    sourceSlot.slashPairTeacherId = null;
+  }
 }
 
 function tryRebalanceFromWorst(
@@ -1728,28 +1759,34 @@ function tryRebalanceFromWorst(
           // First try a RELOCATE: move c2's slot to a different (altDay, altP)
           // where another (or the same) eligible teacher for (c2, S2) is free.
           // This is the ideal case — total empties unchanged.
-          const relocated = relocatePlacementToEmpty(
+          const c2OriginalSubject = c2Slot!.subject!;
+          const c2OriginalTeacherId = c2Slot!.teacherId!;
+          const c2SourceKey = c2Key;
+          const relocatedAltKey = relocatePlacementToEmpty(
             timetable, c2, day, period, teachers, fatigueLimit, lockedSlots,
             targetKey, // do NOT relocate into the slot we're trying to fill
           );
 
-          if (relocated) {
+          if (relocatedAltKey) {
             // c2Slot is now empty (by relocate). Place worstCls's subject here.
             const eligibleTeachers = shuffle(
               teachers.filter((t) => teacherCanTeachSubjectToClass(t, subject, worstCls)),
             );
+            let placedOk = false;
             for (const t of eligibleTeachers) {
               const placed = tryPlace(
                 timetable, worstCls, day, period, subject, t,
                 fatigueLimit, false, false,
               );
-              if (placed > 0) return true;
+              if (placed > 0) { placedOk = true; break; }
             }
-            // Couldn't actually place — undo relocate by re-relocating back?
-            // The relocate already committed a slot elsewhere for c2's subject.
-            // This is fine: c2 still has the same number of placements, just at
-            // a different time. We didn't lose anything; we simply didn't gain.
-            // Continue searching for another move.
+            if (placedOk) return true;
+            // Final placement failed — undo the relocate so the timetable is
+            // exactly as it was before this attempted move.
+            undoRelocate(
+              timetable, c2SourceKey, relocatedAltKey,
+              c2OriginalSubject, c2OriginalTeacherId,
+            );
             continue;
           }
 
@@ -2003,6 +2040,16 @@ function runAttempt(
     freePeriodsPerClass, defaultMaxFreePerWeek,
   );
   if (rebalanceMoves > 0) {
+    // Re-run excess removal first: a relocate can move a placement into a slot
+    // for a class that's already at quota for that subject. Then re-run P1
+    // repair in case any P1 ended up empty after a swap.
+    for (const cls of CLASSES) {
+      for (const quota of quotas) {
+        const needed = getQuotaForClass(quota, cls);
+        const placed = countPlacements(timetable, cls, quota.subject);
+        if (placed > needed) removeExcess(timetable, cls, quota.subject, placed - needed, lockedSlots);
+      }
+    }
     p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
     p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
   }
