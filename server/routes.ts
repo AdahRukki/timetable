@@ -697,8 +697,10 @@ export async function registerRoutes(
       res.json(settings);
     } catch (error) {
       if (error instanceof z.ZodError) {
+        console.error("[PATCH /api/settings] validation error:", JSON.stringify(error.errors), "body:", JSON.stringify(req.body));
         res.status(400).json({ error: "Invalid settings data", details: error.errors });
       } else {
+        console.error("[PATCH /api/settings] failed:", error, "body:", JSON.stringify(req.body));
         res.status(500).json({ error: "Failed to update settings" });
       }
     }
