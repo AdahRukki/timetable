@@ -8,9 +8,9 @@ import {
   MAX_FREE_PERIODS_PER_DAY,
   TOTAL_PERIODS_PER_WEEK,
   MIN_TEACHING_PERIODS_PER_WEEK,
-  usesSlashSubjects,
-  SLASH_SUBJECTS,
+  findSlashPair,
   type Day,
+  type Subject,
   type SchoolClass,
   type TimetableSlot,
   type Teacher,
@@ -423,7 +423,8 @@ export function validatePlacement(
   timetable: Map<string, TimetableSlot>,
   teachers: Teacher[],
   request: PlacementRequest,
-  fatigueLimit: number = 5
+  fatigueLimit: number = 5,
+  subjects: Subject[] = []
 ): ValidationResult {
   const errors: ValidationError[] = [];
   const { day, period, schoolClass, subject, teacherId, slotType } = request;
@@ -540,23 +541,26 @@ export function validatePlacement(
     }
   }
   
-  // Slash subject validation for SS2/SS3
-  if (slotType === "slash" && usesSlashSubjects(schoolClass)) {
-    const slashPair = SLASH_SUBJECTS.find(
-      (s) => s.pair.includes(subject)
-    );
-    if (!slashPair) {
+  // Slash subject validation
+  if (slotType === "slash") {
+    const partner = findSlashPair(subjects, subject);
+    if (!partner) {
       errors.push({
         code: "INVALID_SLASH_SUBJECT",
-        message: `${subject} is not a valid slash subject`,
+        message: `${subject} is not configured as a slash subject`,
         severity: "error",
       });
     } else {
-      // Check if paired subject and teacher are provided
       if (!request.slashPairSubject || !request.slashPairTeacherId) {
         errors.push({
           code: "MISSING_SLASH_PAIR",
           message: "Slash subjects require both subjects and teachers",
+          severity: "error",
+        });
+      } else if (request.slashPairSubject !== partner.name) {
+        errors.push({
+          code: "SLASH_PAIR_MISMATCH",
+          message: `${subject} is paired with ${partner.name}, not ${request.slashPairSubject}`,
           severity: "error",
         });
       }

@@ -33,19 +33,19 @@ export const MIN_TEACHING_PERIODS_PER_WEEK = TOTAL_PERIODS_PER_WEEK - MAX_FREE_P
 
 // Friday special structure: P1-P3, Prayer 11:30-12:00, Break 12:00-12:30, P4-P6
 
-// SS2 & SS3 slash subjects (paired subjects that must be scheduled simultaneously)
-export const SLASH_SUBJECTS: Array<{
-  pair: [string, string];
-  periods: number;
-}> = [
-  { pair: ["Physics", "Literature"], periods: 4 },
-  { pair: ["Chemistry", "Government"], periods: 4 },
-  { pair: ["Agric", "CRS"], periods: 3 },
-];
-
-// Check if class uses slash subjects
-export function usesSlashSubjects(schoolClass: SchoolClass): boolean {
-  return schoolClass === "SS2" || schoolClass === "SS3";
+// Find the partner Subject for a slash subject by name. Returns null when
+// the named subject is not paired or its declared partner does not exist
+// (or does not point back). Used by client and server to derive slash
+// behavior from the user's own subjects table — no hardcoded pairs.
+export function findSlashPair<S extends { name: string; isSlashSubject: boolean; slashPairName: string | null }>(
+  subjects: S[],
+  subjectName: string,
+): S | null {
+  const self = subjects.find((s) => s.name === subjectName);
+  if (!self || !self.isSlashSubject || !self.slashPairName) return null;
+  const partner = subjects.find((s) => s.name === self.slashPairName);
+  if (!partner || !partner.isSlashSubject || partner.slashPairName !== self.name) return null;
+  return partner;
 }
 
 // ===== DATABASE TABLES =====

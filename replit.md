@@ -112,11 +112,10 @@ Users create and manage all subjects in the Settings page with:
 - Every subject is fully editable and deletable
 - Subjects sync with subject quotas for timetable validation
 
-### Slash Subjects (SS2/SS3 only)
-Paired subjects scheduled simultaneously:
-- Physics / Literature (4 periods each)
-- Chemistry / Government (4 periods each)
-- Agric / CRS (3 periods each)
+### Slash Subjects
+Paired subjects that share a single timetable slot (scheduled simultaneously). Slash pairings are user-configurable from the Settings page — toggle "Slash subject" on a subject and pick its partner from the dropdown. Pairings are mirrored bidirectionally and exclusively in a single transaction (changing or deleting one side automatically clears the partner's back-pointer). No subject pairs are hardcoded.
+
+For users already running an earlier version, run `scripts/seed-default-slash-pairs.sql` once after deploying to restore the legacy Physics/Literature, Chemistry/Government, and Agric/CRS pairings (idempotent; only touches users who haven't customized their pairings).
 
 ## Tech Stack
 

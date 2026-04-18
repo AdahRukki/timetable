@@ -16,12 +16,12 @@ import {
   PERIODS_PER_DAY,
   BREAK_AFTER_P4,
   BREAK_AFTER_P7,
-  SLASH_SUBJECTS,
-  usesSlashSubjects,
+  findSlashPair,
   getQuotaForClass,
   getTeacherSubjectClasses,
   type TimetableSlot,
   type Teacher,
+  type Subject,
   type ValidationResult,
   type ValidationError,
 } from "@shared/schema";
@@ -191,6 +191,7 @@ async function validatePlacement(
   const teachers = await storage.getTeachers(userId);
   const timetable = await storage.getTimetable(userId);
   const userSettings = await storage.getUserSettings(userId);
+  const allSubjects = await storage.getSubjects(userId);
   const fatigueLimit = userSettings.fatigueLimit;
   
   const teacher = teachers.find((t) => t.id === teacherId);
@@ -308,14 +309,21 @@ async function validatePlacement(
   
   // Slash subject validation
   if (slotType === "slash") {
-    if (!usesSlashSubjects(schoolClass)) {
+    const partner = findSlashPair(allSubjects, subject);
+    if (!partner) {
       errors.push({
         code: "INVALID_SLASH",
-        message: "Slash subjects are only allowed for SS2 and SS3",
+        message: `${subject} is not configured as a slash subject`,
+        severity: "error",
+      });
+    } else if (slashPairSubject && slashPairSubject !== partner.name) {
+      errors.push({
+        code: "SLASH_PAIR_MISMATCH",
+        message: `${subject} is paired with ${partner.name}, not ${slashPairSubject}`,
         severity: "error",
       });
     }
-    
+
     // Validate slash pair teacher is provided
     if (!slashPairTeacherId) {
       errors.push({
@@ -1407,6 +1415,7 @@ function initTimetable(lockedSlots: Timetable): Timetable {
 function runAttempt(
   teachers: Teacher[],
   quotas: SubjectQuota[],
+  subjects: Subject[],
   lockedSlots: Timetable,
   fatigueLimit: number,
   attemptNumber: number
@@ -1414,17 +1423,30 @@ function runAttempt(
   const timetable = initTimetable(lockedSlots);
   const warnings: string[] = [];
 
-  // PHASE 1: Slash subjects for SS2 & SS3
-  for (const slashPair of SLASH_SUBJECTS) {
+  // PHASE 1: User-defined slash subject pairs.
+  // Iterate each unique (validated, mutually-paired) pair exactly once,
+  // then place into every class with a non-zero ss2ss3 quota for that subject.
+  const seenSlashPairs = new Set<string>();
+  for (const subj of subjects) {
+    if (!subj.isSlashSubject) continue;
+    const partner = findSlashPair(subjects, subj.name);
+    if (!partner) continue;
+    const pairKey = [subj.name, partner.name].sort().join("|");
+    if (seenSlashPairs.has(pairKey)) continue;
+    seenSlashPairs.add(pairKey);
+
+    const periods = subj.ss2ss3Quota;
+    if (periods <= 0) continue;
+
     for (const cls of ["SS2", "SS3"] as SchoolClass[]) {
       const placed = scheduleSlashPair(
         timetable, cls,
-        slashPair.pair[0], slashPair.pair[1],
-        slashPair.periods,
+        subj.name, partner.name,
+        periods,
         teachers, fatigueLimit, warnings
       );
-      if (placed < slashPair.periods) {
-        warnings.push(`Attempt ${attemptNumber}: Slash ${slashPair.pair.join("/")} → ${cls}: placed ${placed}/${slashPair.periods}`);
+      if (placed < periods) {
+        warnings.push(`Attempt ${attemptNumber}: Slash ${subj.name}/${partner.name} → ${cls}: placed ${placed}/${periods}`);
       }
     }
   }
@@ -1531,6 +1553,7 @@ const EARLY_EXIT_EMPTY = 3;
 async function autoGenerateTimetable(userId: string, lockExisting: boolean, clearFirst: boolean): Promise<AutoGenerateResult> {
   const teachers = await storage.getTeachers(userId);
   const quotas = await storage.getSubjectQuotas(userId);
+  const subjects = await storage.getSubjects(userId);
   const userSettings = await storage.getUserSettings(userId);
   const fatigueLimit = userSettings.fatigueLimit;
 
@@ -1558,7 +1581,7 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
   let best: { timetable: Timetable; emptyCount: number; warnings: string[] } | null = null;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const result = runAttempt(teachers, quotas, lockedSlots, fatigueLimit, attempt);
+    const result = runAttempt(teachers, quotas, subjects, lockedSlots, fatigueLimit, attempt);
     if (!best || result.emptyCount < best.emptyCount) {
       best = result;
     }

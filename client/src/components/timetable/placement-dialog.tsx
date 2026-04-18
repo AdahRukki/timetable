@@ -7,8 +7,7 @@ import {
   type SlotType,
   type ValidationResult,
   type Subject,
-  usesSlashSubjects,
-  SLASH_SUBJECTS,
+  findSlashPair,
   PERIODS_PER_DAY,
 } from "@shared/schema";
 import {
@@ -84,7 +83,10 @@ export function PlacementDialog({
 
   const isOccupied = slot?.status === "occupied";
   const schoolClass = slot?.schoolClass as SchoolClass;
-  const isSlashClass = schoolClass && usesSlashSubjects(schoolClass);
+  const selectedSubjectIsSlash = useMemo(
+    () => !!subject && !!findSlashPair(customSubjects, subject),
+    [subject, customSubjects],
+  );
   const maxPeriods = slot ? PERIODS_PER_DAY[slot.day] : 9;
 
   const availableSubjects = useMemo(() => {
@@ -113,12 +115,11 @@ export function PlacementDialog({
   }, [subject, teachers, schoolClass]);
 
   const slashPairInfo = useMemo(() => {
-    if (!isSlashClass || slotType !== "slash" || !subject) return null;
-    const pair = SLASH_SUBJECTS.find((s) => s.pair.includes(subject));
-    if (!pair) return null;
-    const pairSubject = pair.pair.find((s) => s !== subject);
-    return { pairSubject, periods: pair.periods };
-  }, [isSlashClass, slotType, subject]);
+    if (slotType !== "slash" || !subject) return null;
+    const partner = findSlashPair(customSubjects, subject);
+    if (!partner) return null;
+    return { pairSubject: partner.name };
+  }, [slotType, subject, customSubjects]);
 
   const slashPairTeachers = useMemo(() => {
     if (!slashPairInfo?.pairSubject) return [];
@@ -175,7 +176,7 @@ export function PlacementDialog({
   };
 
   const canAllowDouble = slot && slot.period < maxPeriods && slot.period < 8;
-  const canAllowSlash = isSlashClass;
+  const canAllowSlash = selectedSubjectIsSlash;
 
   if (!slot) return null;
 
@@ -274,7 +275,7 @@ export function PlacementDialog({
                   <SelectItem value="double">Double Period</SelectItem>
                 )}
                 {canAllowSlash && (
-                  <SelectItem value="slash">Slash Subject (SS2/SS3)</SelectItem>
+                  <SelectItem value="slash">Slash Subject</SelectItem>
                 )}
               </SelectContent>
             </Select>

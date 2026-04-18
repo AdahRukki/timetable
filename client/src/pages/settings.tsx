@@ -12,7 +12,14 @@ import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { SubjectQuota, Subject, UserSettings } from "@shared/schema";
-import { SLASH_SUBJECTS } from "@shared/schema";
+import { findSlashPair } from "@shared/schema";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useState, useEffect, useMemo } from "react";
 
 export default function SettingsPage() {
@@ -23,6 +30,8 @@ export default function SettingsPage() {
   const [newSubjectJssQuota, setNewSubjectJssQuota] = useState(4);
   const [newSubjectSs1Quota, setNewSubjectSs1Quota] = useState(4);
   const [newSubjectSs2ss3Quota, setNewSubjectSs2ss3Quota] = useState(4);
+  const [newSubjectIsSlash, setNewSubjectIsSlash] = useState(false);
+  const [newSubjectSlashPair, setNewSubjectSlashPair] = useState<string>("");
   const [fatigueLimit, setFatigueLimit] = useState(5);
   const [maxFreePeriodsPerWeek, setMaxFreePeriodsPerWeek] = useState(3);
   const [maxFreePeriodsPerDay, setMaxFreePeriodsPerDay] = useState(2);
@@ -87,7 +96,14 @@ export default function SettingsPage() {
   });
 
   const createSubjectMutation = useMutation({
-    mutationFn: async (data: { name: string; jssQuota: number; ss1Quota: number; ss2ss3Quota: number }) => {
+    mutationFn: async (data: {
+      name: string;
+      jssQuota: number;
+      ss1Quota: number;
+      ss2ss3Quota: number;
+      isSlashSubject: boolean;
+      slashPairName: string | null;
+    }) => {
       return apiRequest("POST", "/api/subjects", data);
     },
     onSuccess: () => {
@@ -154,6 +170,8 @@ export default function SettingsPage() {
     setNewSubjectJssQuota(4);
     setNewSubjectSs1Quota(4);
     setNewSubjectSs2ss3Quota(4);
+    setNewSubjectIsSlash(false);
+    setNewSubjectSlashPair("");
     setEditingSubject(null);
   };
 
@@ -168,10 +186,24 @@ export default function SettingsPage() {
     setNewSubjectJssQuota(subject.jssQuota);
     setNewSubjectSs1Quota(subject.ss1Quota);
     setNewSubjectSs2ss3Quota(subject.ss2ss3Quota);
+    setNewSubjectIsSlash(subject.isSlashSubject);
+    setNewSubjectSlashPair(subject.slashPairName || "");
     setSubjectDialogOpen(true);
   };
 
+  const slashPairCandidates = useMemo(
+    () =>
+      subjects.filter(
+        (s) =>
+          s.name !== newSubjectName &&
+          (!editingSubject || s.id !== editingSubject.id),
+      ),
+    [subjects, newSubjectName, editingSubject],
+  );
+
   const handleSubjectSubmit = () => {
+    const isSlash = newSubjectIsSlash;
+    const pairName = isSlash && newSubjectSlashPair ? newSubjectSlashPair : null;
     if (editingSubject) {
       updateSubjectMutation.mutate({
         id: editingSubject.id,
@@ -180,6 +212,8 @@ export default function SettingsPage() {
           jssQuota: newSubjectJssQuota,
           ss1Quota: newSubjectSs1Quota,
           ss2ss3Quota: newSubjectSs2ss3Quota,
+          isSlashSubject: isSlash,
+          slashPairName: pairName,
         },
       });
     } else {
@@ -188,6 +222,8 @@ export default function SettingsPage() {
         jssQuota: newSubjectJssQuota,
         ss1Quota: newSubjectSs1Quota,
         ss2ss3Quota: newSubjectSs2ss3Quota,
+        isSlashSubject: isSlash,
+        slashPairName: pairName,
       });
     }
   };
@@ -366,6 +402,60 @@ export default function SettingsPage() {
                   JSS ({newSubjectJssQuota} × 3) + SS1 ({newSubjectSs1Quota} × 1) + SS2/SS3 ({newSubjectSs2ss3Quota} × 2)
                 </p>
               </div>
+
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="subject-is-slash">Slash subject</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Schedule this subject in the same period as a paired subject (e.g. Physics / Literature).
+                    </p>
+                  </div>
+                  <Switch
+                    id="subject-is-slash"
+                    checked={newSubjectIsSlash}
+                    onCheckedChange={(v) => {
+                      setNewSubjectIsSlash(v);
+                      if (!v) setNewSubjectSlashPair("");
+                    }}
+                    data-testid="switch-subject-slash"
+                  />
+                </div>
+                {newSubjectIsSlash && (
+                  <div className="space-y-2">
+                    <Label htmlFor="subject-slash-pair">Pairs with</Label>
+                    <Select
+                      value={newSubjectSlashPair}
+                      onValueChange={setNewSubjectSlashPair}
+                    >
+                      <SelectTrigger id="subject-slash-pair" data-testid="select-subject-slash-pair">
+                        <SelectValue placeholder="Choose the partner subject" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {slashPairCandidates.length === 0 ? (
+                          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                            No other subjects available — create one first.
+                          </div>
+                        ) : (
+                          slashPairCandidates.map((s) => (
+                            <SelectItem key={s.id} value={s.name}>
+                              {s.name}
+                              {s.isSlashSubject && s.slashPairName && s.slashPairName !== newSubjectName && (
+                                <span className="text-xs text-muted-foreground ml-2">
+                                  (currently paired with {s.slashPairName})
+                                </span>
+                              )}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Saving will mirror this pairing on the partner. Any prior pairing the partner had will be cleared.
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setSubjectDialogOpen(false)}>
@@ -416,15 +506,30 @@ export default function SettingsPage() {
                     </div>
                     <div className="text-right">
                       {(() => {
-                        const slashSubjectNames = new Set(SLASH_SUBJECTS.flatMap(s => s.pair));
+                        // For SS2/SS3 totals, slash pairs share a single timetable
+                        // slot, so each pair counts once (not twice). We pick one
+                        // canonical side per pair (alphabetically first) to count.
+                        const seenPairs = new Set<string>();
+                        const countedSlashNames = new Set<string>();
+                        for (const s of subjects) {
+                          if (!s.isSlashSubject) continue;
+                          const partner = findSlashPair(subjects, s.name);
+                          if (!partner) continue;
+                          const key = [s.name, partner.name].sort().join("|");
+                          if (seenPairs.has(key)) continue;
+                          seenPairs.add(key);
+                          countedSlashNames.add(s.name <= partner.name ? s.name : partner.name);
+                        }
+                        const slashNames = new Set(
+                          subjects.filter((s) => s.isSlashSubject && findSlashPair(subjects, s.name)).map((s) => s.name),
+                        );
                         const jssTotal = quotas.reduce((sum, q) => sum + q.jssQuota, 0);
                         const ss1Total = quotas.reduce((sum, q) => sum + q.ss1Quota, 0);
-                        const ss2ss3SlashTotal = SLASH_SUBJECTS.reduce((sum, sp) => {
-                          const q = quotas.find(q => q.subject === sp.pair[0]);
-                          return sum + (q?.ss2ss3Quota || 0);
-                        }, 0);
+                        const ss2ss3SlashTotal = quotas
+                          .filter((q) => countedSlashNames.has(q.subject))
+                          .reduce((sum, q) => sum + q.ss2ss3Quota, 0);
                         const ss2ss3RegularTotal = quotas
-                          .filter(q => q.ss2ss3Quota > 0 && !slashSubjectNames.has(q.subject))
+                          .filter((q) => q.ss2ss3Quota > 0 && !slashNames.has(q.subject))
                           .reduce((sum, q) => sum + q.ss2ss3Quota, 0);
                         const ss2ss3Total = ss2ss3SlashTotal + ss2ss3RegularTotal;
                         
@@ -504,77 +609,95 @@ export default function SettingsPage() {
                 <Separator />
 
                 <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-medium">SS2/SS3 Subjects (includes slash pairing)</h3>
-                    <Badge variant="secondary">
-                      {(() => {
-                        const slashSubjectNames = new Set(SLASH_SUBJECTS.flatMap(s => s.pair));
-                        const slashTotal = SLASH_SUBJECTS.reduce((sum, sp) => {
-                          const q = quotas.find(q => q.subject === sp.pair[0]);
-                          return sum + (q?.ss2ss3Quota || 0);
-                        }, 0);
-                        const regularTotal = quotas
-                          .filter(q => q.ss2ss3Quota > 0 && !slashSubjectNames.has(q.subject))
-                          .reduce((sum, q) => sum + q.ss2ss3Quota, 0);
-                        const perClass = slashTotal + regularTotal;
-                        return `${perClass} periods/class (${perClass * 2} total for 2 classes)`;
-                      })()}
-                    </Badge>
-                  </div>
-                  
-                  <div className="mb-4">
-                    <p className="text-sm text-muted-foreground mb-3">Slash Subject Pairs (scheduled simultaneously)</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {SLASH_SUBJECTS.map((slashPair) => {
-                        const [subj1, subj2] = slashPair.pair;
-                        const q1 = quotas.find(q => q.subject === subj1);
-                        const q2 = quotas.find(q => q.subject === subj2);
-                        const quota = q1?.ss2ss3Quota || q2?.ss2ss3Quota || 0;
-                        return (
-                          <div key={`${subj1}-${subj2}`} className="flex items-center gap-2">
-                            <div className="flex-1">
-                              <Label className="text-sm flex items-center gap-1">
-                                {subj1} / {subj2}
-                                <Badge variant="outline" className="text-xs ml-1">Slash</Badge>
-                                <span className="text-xs text-muted-foreground ml-1">({quota * 2} total)</span>
-                              </Label>
+                  {(() => {
+                    // Derive slash pairs from the user's own subjects.
+                    const seenPairs = new Set<string>();
+                    const pairs: Array<{ a: string; b: string }> = [];
+                    const slashNamesForBadge = new Set<string>();
+                    for (const s of subjects) {
+                      if (!s.isSlashSubject) continue;
+                      const partner = findSlashPair(subjects, s.name);
+                      if (!partner) continue;
+                      slashNamesForBadge.add(s.name);
+                      const key = [s.name, partner.name].sort().join("|");
+                      if (seenPairs.has(key)) continue;
+                      seenPairs.add(key);
+                      const [a, b] = [s.name, partner.name].sort();
+                      pairs.push({ a, b });
+                    }
+                    const slashTotal = pairs.reduce((sum, p) => {
+                      const q = quotas.find((q) => q.subject === p.a);
+                      return sum + (q?.ss2ss3Quota || 0);
+                    }, 0);
+                    const regularTotal = quotas
+                      .filter((q) => q.ss2ss3Quota > 0 && !slashNamesForBadge.has(q.subject))
+                      .reduce((sum, q) => sum + q.ss2ss3Quota, 0);
+                    const perClass = slashTotal + regularTotal;
+
+                    return (
+                      <>
+                        <div className="flex items-center justify-between mb-3">
+                          <h3 className="font-medium">SS2/SS3 Subjects (includes slash pairing)</h3>
+                          <Badge variant="secondary">
+                            {`${perClass} periods/class (${perClass * 2} total for 2 classes)`}
+                          </Badge>
+                        </div>
+
+                        {pairs.length > 0 && (
+                          <div className="mb-4">
+                            <p className="text-sm text-muted-foreground mb-3">Slash Subject Pairs (scheduled simultaneously)</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {pairs.map(({ a, b }) => {
+                                const q = quotas.find((q) => q.subject === a);
+                                const quota = q?.ss2ss3Quota || 0;
+                                return (
+                                  <div key={`${a}-${b}`} className="flex items-center gap-2">
+                                    <div className="flex-1">
+                                      <Label className="text-sm flex items-center gap-1">
+                                        {a} / {b}
+                                        <Badge variant="outline" className="text-xs ml-1">Slash</Badge>
+                                        <span className="text-xs text-muted-foreground ml-1">({quota * 2} total)</span>
+                                      </Label>
+                                    </div>
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      max={10}
+                                      value={quota}
+                                      onChange={(e) => {
+                                        const v = Math.max(0, Math.min(10, parseInt(e.target.value) || 0));
+                                        handleQuotaChange(a, "ss2ss3Quota", v);
+                                        handleQuotaChange(b, "ss2ss3Quota", v);
+                                      }}
+                                      className="w-16 text-center"
+                                      data-testid={`input-quota-slash-${a.toLowerCase()}-${b.toLowerCase()}`}
+                                    />
+                                    <span className="text-sm text-muted-foreground">per week</span>
+                                  </div>
+                                );
+                              })}
                             </div>
-                            <Input
-                              type="number"
-                              min={0}
-                              max={10}
-                              value={quota}
-                              onChange={(e) => {
-                                const v = Math.max(0, Math.min(10, parseInt(e.target.value) || 0));
-                                handleQuotaChange(subj1, "ss2ss3Quota", v);
-                                handleQuotaChange(subj2, "ss2ss3Quota", v);
-                              }}
-                              className="w-16 text-center"
-                              data-testid={`input-quota-slash-${subj1.toLowerCase()}-${subj2.toLowerCase()}`}
-                            />
-                            <span className="text-sm text-muted-foreground">per week</span>
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  
-                  <p className="text-sm text-muted-foreground mb-3">Regular Subjects</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {(() => {
-                      const slashSubjectNames = new Set(SLASH_SUBJECTS.flatMap(s => s.pair));
-                      return quotas.filter(q => q.ss2ss3Quota > 0 && !slashSubjectNames.has(q.subject)).map((q) => (
-                        <QuotaInput
-                          key={q.subject}
-                          subject={q.subject}
-                          value={q.ss2ss3Quota}
-                          onChange={(v) => handleQuotaChange(q.subject, "ss2ss3Quota", v)}
-                          isSlash={false}
-                          sectionTotal={q.ss2ss3Quota * 2}
-                        />
-                      ));
-                    })()}
-                  </div>
+                        )}
+
+                        <p className="text-sm text-muted-foreground mb-3">Regular Subjects</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {quotas
+                            .filter((q) => q.ss2ss3Quota > 0 && !slashNamesForBadge.has(q.subject))
+                            .map((q) => (
+                              <QuotaInput
+                                key={q.subject}
+                                subject={q.subject}
+                                value={q.ss2ss3Quota}
+                                onChange={(v) => handleQuotaChange(q.subject, "ss2ss3Quota", v)}
+                                isSlash={false}
+                                sectionTotal={q.ss2ss3Quota * 2}
+                              />
+                            ))}
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </>
             )}

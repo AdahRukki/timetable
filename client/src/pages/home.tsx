@@ -151,11 +151,11 @@ export default function Home() {
         slotType,
         slashPairSubject,
         slashPairTeacherId,
-      }, fatigueLimit);
+      }, fatigueLimit, customSubjects);
 
       setValidation(result);
     },
-    [selectedSlot, timetable, teachers, fatigueLimit]
+    [selectedSlot, timetable, teachers, fatigueLimit, customSubjects]
   );
 
   const handlePlace = useCallback(
@@ -177,7 +177,7 @@ export default function Home() {
         slotType,
         slashPairSubject,
         slashPairTeacherId,
-      }, fatigueLimit);
+      }, fatigueLimit, customSubjects);
 
       if (!validationResult.isValid) {
         toast({

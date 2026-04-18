@@ -31,6 +31,55 @@ function getSlotKey(day: Day, schoolClass: SchoolClass, period: number): string 
   return `${day}-${schoolClass}-${period}`;
 }
 
+// Slash-pair helpers — keep slash pairings bidirectional and exclusive.
+// Both helpers operate inside an active transaction so reconciliation is atomic
+// with the primary subject mutation.
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function clearSlashPartnerIfPointingAt(
+  tx: Tx,
+  userId: string,
+  partnerName: string,
+  expectedBackpointer: string,
+): Promise<void> {
+  const [partner] = await tx.select().from(subjects).where(
+    and(eq(subjects.userId, userId), eq(subjects.name, partnerName))
+  );
+  if (!partner) return;
+  if (partner.slashPairName !== expectedBackpointer) return;
+  await tx.update(subjects)
+    .set({ isSlashSubject: 0, slashPairName: null })
+    .where(and(eq(subjects.userId, userId), eq(subjects.id, partner.id)));
+  await tx.update(subjectQuotas)
+    .set({ isSlashSubject: 0 })
+    .where(and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, partner.name)));
+}
+
+async function mirrorSlashPair(
+  tx: Tx,
+  userId: string,
+  ownerName: string,
+  partnerName: string,
+): Promise<void> {
+  const [partner] = await tx.select().from(subjects).where(
+    and(eq(subjects.userId, userId), eq(subjects.name, partnerName))
+  );
+  if (!partner) return; // partner doesn't exist; pairing is one-sided until they create it
+
+  // If the partner was previously paired with someone else, break that pairing.
+  if (partner.isSlashSubject === 1 && partner.slashPairName && partner.slashPairName !== ownerName) {
+    await clearSlashPartnerIfPointingAt(tx, userId, partner.slashPairName, partner.name);
+  }
+
+  await tx.update(subjects)
+    .set({ isSlashSubject: 1, slashPairName: ownerName })
+    .where(and(eq(subjects.userId, userId), eq(subjects.id, partner.id)));
+  await tx.update(subjectQuotas)
+    .set({ isSlashSubject: 1 })
+    .where(and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, partner.name)));
+}
+
 export interface IStorage {
   // Teachers
   getTeachers(userId: string): Promise<Teacher[]>;
@@ -391,88 +440,141 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createSubject(userId: string, subject: InsertSubject): Promise<Subject> {
-    const [inserted] = await db.insert(subjects).values({
-      userId,
-      name: subject.name,
-      jssQuota: subject.jssQuota,
-      ss1Quota: subject.ss1Quota,
-      ss2ss3Quota: subject.ss2ss3Quota,
-      isSlashSubject: subject.isSlashSubject ? 1 : 0,
-      slashPairName: subject.slashPairName,
-    }).returning({ id: subjects.id });
+    return await db.transaction(async (tx) => {
+      const [inserted] = await tx.insert(subjects).values({
+        userId,
+        name: subject.name,
+        jssQuota: subject.jssQuota,
+        ss1Quota: subject.ss1Quota,
+        ss2ss3Quota: subject.ss2ss3Quota,
+        isSlashSubject: subject.isSlashSubject ? 1 : 0,
+        slashPairName: subject.isSlashSubject ? subject.slashPairName : null,
+      }).returning({ id: subjects.id });
 
-    // Also add to subject_quotas table for consistency
-    await db.insert(subjectQuotas).values({
-      userId,
-      subject: subject.name,
-      jssQuota: subject.jssQuota,
-      ss1Quota: subject.ss1Quota,
-      ss2ss3Quota: subject.ss2ss3Quota,
-      isSlashSubject: subject.isSlashSubject ? 1 : 0,
-    }).onConflictDoNothing();
+      await tx.insert(subjectQuotas).values({
+        userId,
+        subject: subject.name,
+        jssQuota: subject.jssQuota,
+        ss1Quota: subject.ss1Quota,
+        ss2ss3Quota: subject.ss2ss3Quota,
+        isSlashSubject: subject.isSlashSubject ? 1 : 0,
+      }).onConflictDoNothing();
 
-    return {
-      id: inserted.id,
-      name: subject.name,
-      jssQuota: subject.jssQuota,
-      ss1Quota: subject.ss1Quota,
-      ss2ss3Quota: subject.ss2ss3Quota,
-      isSlashSubject: subject.isSlashSubject,
-      slashPairName: subject.slashPairName,
-    };
+      if (subject.isSlashSubject && subject.slashPairName) {
+        await mirrorSlashPair(tx, userId, subject.name, subject.slashPairName);
+      }
+
+      return {
+        id: inserted.id,
+        name: subject.name,
+        jssQuota: subject.jssQuota,
+        ss1Quota: subject.ss1Quota,
+        ss2ss3Quota: subject.ss2ss3Quota,
+        isSlashSubject: subject.isSlashSubject,
+        slashPairName: subject.isSlashSubject ? subject.slashPairName : null,
+      };
+    });
   }
 
   async updateSubject(userId: string, id: number, updates: Partial<InsertSubject>): Promise<Subject | undefined> {
     const existing = await this.getSubject(userId, id);
     if (!existing) return undefined;
 
-    const updateValues: any = {};
-    if (updates.name !== undefined) updateValues.name = updates.name;
-    if (updates.jssQuota !== undefined) updateValues.jssQuota = updates.jssQuota;
-    if (updates.ss1Quota !== undefined) updateValues.ss1Quota = updates.ss1Quota;
-    if (updates.ss2ss3Quota !== undefined) updateValues.ss2ss3Quota = updates.ss2ss3Quota;
-    if (updates.isSlashSubject !== undefined) updateValues.isSlashSubject = updates.isSlashSubject ? 1 : 0;
-    if (updates.slashPairName !== undefined) updateValues.slashPairName = updates.slashPairName;
+    return await db.transaction(async (tx) => {
+      // Compute the desired post-update state.
+      const newName = updates.name ?? existing.name;
+      const newSlash = updates.isSlashSubject ?? existing.isSlashSubject;
+      const newPair = newSlash
+        ? (updates.slashPairName !== undefined ? updates.slashPairName : existing.slashPairName)
+        : null;
 
-    await db.update(subjects).set(updateValues).where(
-      and(eq(subjects.userId, userId), eq(subjects.id, id))
-    );
+      const updateValues: Record<string, unknown> = {};
+      if (updates.name !== undefined) updateValues.name = newName;
+      if (updates.jssQuota !== undefined) updateValues.jssQuota = updates.jssQuota;
+      if (updates.ss1Quota !== undefined) updateValues.ss1Quota = updates.ss1Quota;
+      if (updates.ss2ss3Quota !== undefined) updateValues.ss2ss3Quota = updates.ss2ss3Quota;
+      if (updates.isSlashSubject !== undefined || updates.slashPairName !== undefined) {
+        updateValues.isSlashSubject = newSlash ? 1 : 0;
+        updateValues.slashPairName = newPair;
+      }
 
-    // Also update subject_quotas table
-    const quotaUpdates: any = {};
-    if (updates.jssQuota !== undefined) quotaUpdates.jssQuota = updates.jssQuota;
-    if (updates.ss1Quota !== undefined) quotaUpdates.ss1Quota = updates.ss1Quota;
-    if (updates.ss2ss3Quota !== undefined) quotaUpdates.ss2ss3Quota = updates.ss2ss3Quota;
-    if (updates.isSlashSubject !== undefined) quotaUpdates.isSlashSubject = updates.isSlashSubject ? 1 : 0;
+      if (Object.keys(updateValues).length > 0) {
+        await tx.update(subjects).set(updateValues).where(
+          and(eq(subjects.userId, userId), eq(subjects.id, id))
+        );
+      }
 
-    if (Object.keys(quotaUpdates).length > 0) {
-      await db.update(subjectQuotas).set(quotaUpdates).where(
-        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
-      );
-    }
+      // Mirror name/quotas/isSlashSubject into subject_quotas.
+      const quotaUpdates: Record<string, unknown> = {};
+      if (updates.jssQuota !== undefined) quotaUpdates.jssQuota = updates.jssQuota;
+      if (updates.ss1Quota !== undefined) quotaUpdates.ss1Quota = updates.ss1Quota;
+      if (updates.ss2ss3Quota !== undefined) quotaUpdates.ss2ss3Quota = updates.ss2ss3Quota;
+      if (updates.isSlashSubject !== undefined) quotaUpdates.isSlashSubject = newSlash ? 1 : 0;
 
-    // If name changed, update subject_quotas subject name
-    if (updates.name && updates.name !== existing.name) {
-      await db.update(subjectQuotas).set({ subject: updates.name }).where(
-        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
-      );
-    }
+      if (Object.keys(quotaUpdates).length > 0) {
+        await tx.update(subjectQuotas).set(quotaUpdates).where(
+          and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
+        );
+      }
 
-    return { ...existing, ...updates };
+      if (updates.name && updates.name !== existing.name) {
+        await tx.update(subjectQuotas).set({ subject: newName }).where(
+          and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
+        );
+      }
+
+      // Slash pairing reconciliation.
+      const oldPair = existing.isSlashSubject ? existing.slashPairName : null;
+      const pairingChanged =
+        oldPair !== newPair ||
+        (existing.name !== newName && oldPair); // renaming a paired subject also requires re-mirroring
+
+      if (pairingChanged) {
+        // Break the old partner's back-pointer if it still points at us.
+        if (oldPair) {
+          await clearSlashPartnerIfPointingAt(tx, userId, oldPair, existing.name);
+        }
+        // Establish the new pairing on the partner side.
+        if (newPair) {
+          await mirrorSlashPair(tx, userId, newName, newPair);
+        }
+      } else if (existing.name !== newName && newPair) {
+        // Same partner, but our name changed — update the partner's back-pointer.
+        await tx.update(subjects)
+          .set({ slashPairName: newName })
+          .where(and(eq(subjects.userId, userId), eq(subjects.name, newPair)));
+      }
+
+      return {
+        id: existing.id,
+        name: newName,
+        jssQuota: updates.jssQuota ?? existing.jssQuota,
+        ss1Quota: updates.ss1Quota ?? existing.ss1Quota,
+        ss2ss3Quota: updates.ss2ss3Quota ?? existing.ss2ss3Quota,
+        isSlashSubject: newSlash,
+        slashPairName: newPair,
+      };
+    });
   }
 
   async deleteSubject(userId: string, id: number): Promise<boolean> {
     const existing = await this.getSubject(userId, id);
     if (!existing) return false;
 
-    await db.delete(subjects).where(
-      and(eq(subjects.userId, userId), eq(subjects.id, id))
-    );
+    await db.transaction(async (tx) => {
+      await tx.delete(subjects).where(
+        and(eq(subjects.userId, userId), eq(subjects.id, id))
+      );
 
-    // Also delete from subject_quotas
-    await db.delete(subjectQuotas).where(
-      and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
-    );
+      await tx.delete(subjectQuotas).where(
+        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
+      );
+
+      // Clear the partner's back-pointer if it still points at the deleted subject.
+      if (existing.isSlashSubject && existing.slashPairName) {
+        await clearSlashPartnerIfPointingAt(tx, userId, existing.slashPairName, existing.name);
+      }
+    });
 
     return true;
   }
