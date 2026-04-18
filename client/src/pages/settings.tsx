@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { SubjectQuota, Subject, UserSettings } from "@shared/schema";
-import { findSlashPair } from "@shared/schema";
+import { findSlashPair, CLASSES } from "@shared/schema";
 import {
   Select,
   SelectContent,
@@ -35,6 +35,7 @@ export default function SettingsPage() {
   const [fatigueLimit, setFatigueLimit] = useState(5);
   const [maxFreePeriodsPerWeek, setMaxFreePeriodsPerWeek] = useState(3);
   const [maxFreePeriodsPerDay, setMaxFreePeriodsPerDay] = useState(2);
+  const [freePeriodsPerClass, setFreePeriodsPerClass] = useState<Record<string, number>>({});
   const [allowDoublePeriods, setAllowDoublePeriods] = useState(true);
   const [allowDoubleInP8P9, setAllowDoubleInP8P9] = useState(true);
 
@@ -56,6 +57,7 @@ export default function SettingsPage() {
       if (userSettings.fatigueLimit) setFatigueLimit(userSettings.fatigueLimit);
       if (userSettings.maxFreePeriodsPerWeek !== undefined) setMaxFreePeriodsPerWeek(userSettings.maxFreePeriodsPerWeek);
       if (userSettings.maxFreePeriodsPerDay !== undefined) setMaxFreePeriodsPerDay(userSettings.maxFreePeriodsPerDay);
+      if (userSettings.freePeriodsPerClass) setFreePeriodsPerClass(userSettings.freePeriodsPerClass);
       if (userSettings.allowDoublePeriods !== undefined) setAllowDoublePeriods(userSettings.allowDoublePeriods);
       if (userSettings.allowDoubleInP8P9 !== undefined) setAllowDoubleInP8P9(userSettings.allowDoubleInP8P9);
     }
@@ -760,38 +762,88 @@ export default function SettingsPage() {
               </div>
             </div>
             <Separator />
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="space-y-0.5 flex-1">
-                <Label>Max Free Periods Per Week</Label>
-                <p className="text-sm text-muted-foreground">
-                  Maximum free periods allowed per class per week (0-10)
-                </p>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                <div className="space-y-0.5 flex-1">
+                  <Label>Max Free Periods Per Week (per class)</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Set a fixed number of free periods allowed each week for each class (0-10).
+                    Leave at the default to fall back to the global value below.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs text-muted-foreground whitespace-nowrap">Default</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={10}
+                      value={maxFreePeriodsPerWeek}
+                      onChange={(e) => setMaxFreePeriodsPerWeek(Math.min(10, Math.max(0, parseInt(e.target.value) || 0)))}
+                      className="w-20"
+                      data-testid="input-max-free-week"
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => updateSettingsMutation.mutate({ maxFreePeriodsPerWeek, freePeriodsPerClass })}
+                    disabled={updateSettingsMutation.isPending || settingsLoading}
+                    data-testid="button-save-max-free-week"
+                  >
+                    {updateSettingsMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <>
+                        <Save className="h-4 w-4 mr-1" />
+                        Save
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  min={0}
-                  max={10}
-                  value={maxFreePeriodsPerWeek}
-                  onChange={(e) => setMaxFreePeriodsPerWeek(Math.min(10, Math.max(0, parseInt(e.target.value) || 0)))}
-                  className="w-20"
-                  data-testid="input-max-free-week"
-                />
-                <Button
-                  size="sm"
-                  onClick={() => updateSettingsMutation.mutate({ maxFreePeriodsPerWeek })}
-                  disabled={updateSettingsMutation.isPending || settingsLoading}
-                  data-testid="button-save-max-free-week"
-                >
-                  {updateSettingsMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <>
-                      <Save className="h-4 w-4 mr-1" />
-                      Save
-                    </>
-                  )}
-                </Button>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 bg-muted/40 rounded-md p-3">
+                {CLASSES.map((cls) => {
+                  const override = freePeriodsPerClass[cls];
+                  const value = override ?? maxFreePeriodsPerWeek;
+                  const isOverride = override !== undefined;
+                  return (
+                    <div key={cls} className="flex flex-col gap-1">
+                      <Label className="text-xs flex items-center justify-between gap-1">
+                        <span>{cls}</span>
+                        {isOverride && (
+                          <button
+                            type="button"
+                            className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                            onClick={() =>
+                              setFreePeriodsPerClass((prev) => {
+                                const next = { ...prev };
+                                delete next[cls];
+                                return next;
+                              })
+                            }
+                            data-testid={`button-reset-free-${cls.toLowerCase()}`}
+                          >
+                            reset
+                          </button>
+                        )}
+                      </Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={10}
+                        value={value}
+                        onChange={(e) =>
+                          setFreePeriodsPerClass((prev) => ({
+                            ...prev,
+                            [cls]: Math.min(10, Math.max(0, parseInt(e.target.value) || 0)),
+                          }))
+                        }
+                        className={`text-center ${isOverride ? "border-primary" : ""}`}
+                        data-testid={`input-free-${cls.toLowerCase()}`}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
             <Separator />

@@ -49,9 +49,12 @@ interface StatsHeaderProps {
   gridRef?: React.RefObject<HTMLDivElement | null>;
   maxFreePeriodsPerWeek?: number;
   maxFreePeriodsPerDay?: number;
+  freePeriodsPerClass?: Record<string, number>;
 }
 
-export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating, selectedDay, gridRef, maxFreePeriodsPerWeek = MAX_FREE_PERIODS_PER_WEEK, maxFreePeriodsPerDay = MAX_FREE_PERIODS_PER_DAY }: StatsHeaderProps) {
+export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating, selectedDay, gridRef, maxFreePeriodsPerWeek = MAX_FREE_PERIODS_PER_WEEK, maxFreePeriodsPerDay = MAX_FREE_PERIODS_PER_DAY, freePeriodsPerClass = {} }: StatsHeaderProps) {
+  const getMaxWeeklyFor = (cls: SchoolClass): number =>
+    freePeriodsPerClass[cls] ?? maxFreePeriodsPerWeek;
   const { toast } = useToast();
   const [isDownloading, setIsDownloading] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
@@ -189,14 +192,15 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
       
       const freePeriodRows: string[][] = [];
       for (const schoolClass of CLASSES) {
-        const classStats = getFreePeriodStats(timetable, schoolClass as SchoolClass);
+        const maxWeekly = getMaxWeeklyFor(schoolClass as SchoolClass);
+        const classStats = getFreePeriodStats(timetable, schoolClass as SchoolClass, maxWeekly, maxFreePeriodsPerDay);
         const filledCount = TOTAL_PERIODS_PER_WEEK - classStats.weeklyTotal;
         const status = classStats.weeklyExceeded || classStats.dailyExceededDays.length > 0 
           ? "Exceeds Limit" 
           : classStats.weeklyTotal === 0 
           ? "Complete" 
           : "OK";
-        freePeriodRows.push([schoolClass, String(filledCount), String(classStats.weeklyTotal), String(MAX_FREE_PERIODS_PER_WEEK), status]);
+        freePeriodRows.push([schoolClass, String(filledCount), String(classStats.weeklyTotal), String(maxWeekly), status]);
       }
       
       autoTable(doc, {
@@ -324,14 +328,15 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
       ];
       
       for (const schoolClass of CLASSES) {
-        const classStats = getFreePeriodStats(timetable, schoolClass as SchoolClass);
+        const maxWeekly = getMaxWeeklyFor(schoolClass as SchoolClass);
+        const classStats = getFreePeriodStats(timetable, schoolClass as SchoolClass, maxWeekly, maxFreePeriodsPerDay);
         const filledCount = TOTAL_PERIODS_PER_WEEK - classStats.weeklyTotal;
         const status = classStats.weeklyExceeded || classStats.dailyExceededDays.length > 0 
           ? "Exceeds Limit" 
           : classStats.weeklyTotal === 0 
           ? "Complete" 
           : "OK";
-        statsData.push([schoolClass, filledCount, classStats.weeklyTotal, MAX_FREE_PERIODS_PER_WEEK, status]);
+        statsData.push([schoolClass, filledCount, classStats.weeklyTotal, maxWeekly, status]);
       }
       
       statsData.push([]);
@@ -534,7 +539,8 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
         </div>
         <div className="flex flex-wrap gap-2">
           {CLASSES.map((schoolClass) => {
-            const stats = getFreePeriodStats(timetable, schoolClass as SchoolClass, maxFreePeriodsPerWeek, maxFreePeriodsPerDay);
+            const maxWeeklyForClass = getMaxWeeklyFor(schoolClass as SchoolClass);
+            const stats = getFreePeriodStats(timetable, schoolClass as SchoolClass, maxWeeklyForClass, maxFreePeriodsPerDay);
             const filledCount = TOTAL_PERIODS_PER_WEEK - stats.weeklyTotal;
             const hasIssues = stats.weeklyExceeded || stats.dailyExceededDays.length > 0;
             
@@ -555,7 +561,7 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
                   <div className="text-sm">
                     <p className="font-medium">{schoolClass} Periods</p>
                     <p>Filled: {filledCount} / {TOTAL_PERIODS_PER_WEEK}</p>
-                    <p>Free: {stats.weeklyTotal} / {MAX_FREE_PERIODS_PER_WEEK} max</p>
+                    <p>Free: {stats.weeklyTotal} / {maxWeeklyForClass} max</p>
                     {stats.weeklyExceeded && (
                       <p className="text-destructive">Exceeds weekly limit!</p>
                     )}

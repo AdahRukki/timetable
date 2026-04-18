@@ -686,6 +686,9 @@ export async function registerRoutes(
         fatigueLimit: z.number().min(1).max(10).optional(),
         maxFreePeriodsPerWeek: z.number().min(0).max(10).optional(),
         maxFreePeriodsPerDay: z.number().min(0).max(5).optional(),
+        freePeriodsPerClass: z
+          .record(z.enum(CLASSES), z.number().min(0).max(40))
+          .optional(),
         allowDoublePeriods: z.boolean().optional(),
         allowDoubleInP8P9: z.boolean().optional(),
       });

@@ -495,6 +495,7 @@ export default function Home() {
           gridRef={gridRef}
           maxFreePeriodsPerWeek={userSettings?.maxFreePeriodsPerWeek}
           maxFreePeriodsPerDay={userSettings?.maxFreePeriodsPerDay}
+          freePeriodsPerClass={userSettings?.freePeriodsPerClass}
         />
         <div className="flex justify-end">
           <Button

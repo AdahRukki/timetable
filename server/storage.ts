@@ -587,6 +587,7 @@ export class DatabaseStorage implements IStorage {
         fatigueLimit: row.fatigueLimit,
         maxFreePeriodsPerWeek: row.maxFreePeriodsPerWeek,
         maxFreePeriodsPerDay: row.maxFreePeriodsPerDay,
+        freePeriodsPerClass: (row.freePeriodsPerClass ?? {}) as Record<string, number>,
         allowDoublePeriods: row.allowDoublePeriods === 1,
         allowDoubleInP8P9: row.allowDoubleInP8P9 === 1,
       };
@@ -597,6 +598,7 @@ export class DatabaseStorage implements IStorage {
       fatigueLimit: 5,
       maxFreePeriodsPerWeek: 3,
       maxFreePeriodsPerDay: 2,
+      freePeriodsPerClass: {},
       allowDoublePeriods: 1,
       allowDoubleInP8P9: 1,
     });
@@ -604,6 +606,7 @@ export class DatabaseStorage implements IStorage {
       fatigueLimit: 5,
       maxFreePeriodsPerWeek: 3,
       maxFreePeriodsPerDay: 2,
+      freePeriodsPerClass: {},
       allowDoublePeriods: true,
       allowDoubleInP8P9: true,
     };
@@ -612,12 +615,13 @@ export class DatabaseStorage implements IStorage {
   async updateUserSettings(userId: string, settings: Partial<UserSettings>): Promise<UserSettings> {
     // Ensure settings exist first
     const existing = await this.getUserSettings(userId);
-    
+
     const newSettings = { ...existing, ...settings };
     await db.update(userSettings).set({
       fatigueLimit: newSettings.fatigueLimit,
       maxFreePeriodsPerWeek: newSettings.maxFreePeriodsPerWeek,
       maxFreePeriodsPerDay: newSettings.maxFreePeriodsPerDay,
+      freePeriodsPerClass: newSettings.freePeriodsPerClass ?? {},
       allowDoublePeriods: newSettings.allowDoublePeriods ? 1 : 0,
       allowDoubleInP8P9: newSettings.allowDoubleInP8P9 ? 1 : 0,
     }).where(eq(userSettings.userId, userId));
