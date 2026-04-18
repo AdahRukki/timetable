@@ -1591,6 +1591,250 @@ function getMaxFreeForClass(
   return typeof v === "number" ? v : defaultMax;
 }
 
+// Cross-class rebalancer ----------------------------------------------------
+//
+// Once the main scheduler has done all it can, the worst case is that one
+// class (e.g. SS2) ends up with several empty slots while the other classes
+// are completely filled. That happens when the only eligible teacher for a
+// missing subject is permanently busy in another class. This pass actively
+// redistributes those empties: for every empty slot in the worst class, it
+// looks for a placement in another class that, if removed (and ideally
+// re-routed elsewhere), would free up an eligible teacher to fill the
+// worst-class slot. It only applies a move that strictly improves the
+// max-class-empty count, so the global "fairness" score monotonically
+// improves and the loop is guaranteed to terminate.
+function isMovableSlot(slot: TimetableSlot | undefined): boolean {
+  if (!slot || slot.status !== "occupied") return false;
+  if (slot.slotType !== "single") return false;
+  return true;
+}
+
+function relocatePlacementToEmpty(
+  timetable: Timetable,
+  fromCls: SchoolClass,
+  fromDay: Day,
+  fromPeriod: number,
+  teachers: Teacher[],
+  fatigueLimit: number,
+  lockedSlots: Timetable,
+  blockedKey: string,
+): boolean {
+  const sourceKey = slotKey(fromDay, fromCls, fromPeriod);
+  const sourceSlot = timetable.get(sourceKey);
+  if (!isMovableSlot(sourceSlot)) return false;
+  const subject = sourceSlot!.subject!;
+  const originalTeacherId = sourceSlot!.teacherId!;
+
+  // Temporarily empty the source so checks reflect the post-move world.
+  sourceSlot!.status = "empty";
+  sourceSlot!.subject = null;
+  sourceSlot!.teacherId = null;
+  sourceSlot!.slotType = null;
+
+  const eligible = shuffle(
+    teachers.filter((t) => teacherCanTeachSubjectToClass(t, subject, fromCls)),
+  );
+
+  for (const altDay of shuffle([...DAYS] as Day[])) {
+    if (subjectAlreadyTodayForClass(timetable, fromCls, altDay, subject)) continue;
+    for (const altP of shuffle(Array.from({ length: PERIODS_PER_DAY[altDay] }, (_, i) => i + 1))) {
+      const altKey = slotKey(altDay, fromCls, altP);
+      if (altKey === blockedKey) continue;
+      if (altKey === sourceKey) continue;
+      if (lockedSlots.has(altKey)) continue;
+      const altSlot = timetable.get(altKey);
+      if (!altSlot || altSlot.status !== "empty") continue;
+      for (const t of eligible) {
+        if (isTeacherUnavailable(t, altDay, altP)) continue;
+        if (!isTeacherFreeAt(timetable, t.id, altDay, altP)) continue;
+        if (wouldExceedFatigue(timetable, t.id, altDay, [altP], fatigueLimit)) continue;
+        altSlot.status = "occupied";
+        altSlot.subject = subject;
+        altSlot.teacherId = t.id;
+        altSlot.slotType = "single";
+        altSlot.slashPairSubject = null;
+        altSlot.slashPairTeacherId = null;
+        return true;
+      }
+    }
+  }
+
+  // Restore — couldn't relocate.
+  sourceSlot!.status = "occupied";
+  sourceSlot!.subject = subject;
+  sourceSlot!.teacherId = originalTeacherId;
+  sourceSlot!.slotType = "single";
+  return false;
+}
+
+function tryRebalanceFromWorst(
+  worstCls: SchoolClass,
+  emptyByClass: Map<SchoolClass, number>,
+  timetable: Timetable,
+  teachers: Teacher[],
+  quotas: SubjectQuota[],
+  fatigueLimit: number,
+  lockedSlots: Timetable,
+  freePeriodsPerClass: Record<string, number>,
+  defaultMaxFreePerWeek: number,
+): boolean {
+  const worstEmpty = emptyByClass.get(worstCls)!;
+
+  // Subjects worstCls would still benefit from (placed < quota and has eligible teacher).
+  const wantedSubjects: Array<{ subject: string; eligibleIds: Set<string> }> = [];
+  for (const q of quotas) {
+    const needed = getQuotaForClass(q, worstCls);
+    if (needed === 0) continue;
+    if (q.isSlashSubject && (worstCls === "SS2" || worstCls === "SS3")) continue;
+    const placed = countPlacements(timetable, worstCls, q.subject);
+    if (placed >= needed) continue;
+    const eligible = teachers.filter((t) => teacherCanTeachSubjectToClass(t, q.subject, worstCls));
+    if (eligible.length === 0) continue;
+    wantedSubjects.push({ subject: q.subject, eligibleIds: new Set(eligible.map((t) => t.id)) });
+  }
+  if (wantedSubjects.length === 0) return false;
+
+  // Iterate every empty (day, period) of worstCls and try to free up a teacher.
+  for (const day of shuffle([...DAYS] as Day[])) {
+    for (const period of shuffle(Array.from({ length: PERIODS_PER_DAY[day] }, (_, i) => i + 1))) {
+      const targetKey = slotKey(day, worstCls, period);
+      if (lockedSlots.has(targetKey)) continue;
+      const targetSlot = timetable.get(targetKey);
+      if (!targetSlot || targetSlot.status !== "empty") continue;
+
+      for (const { subject, eligibleIds } of shuffle(wantedSubjects)) {
+        if (subjectAlreadyTodayForClass(timetable, worstCls, day, subject)) continue;
+
+        // Find a class C2 (!= worstCls) where, at (day, period), one of the
+        // eligible teachers for (worstCls, subject) is currently occupied.
+        for (const c2 of shuffle(CLASSES.filter((c) => c !== worstCls))) {
+          const c2Key = slotKey(day, c2, period);
+          if (lockedSlots.has(c2Key)) continue;
+          const c2Slot = timetable.get(c2Key);
+          if (!isMovableSlot(c2Slot)) continue;
+          const c2TeacherId = c2Slot!.teacherId!;
+          if (!eligibleIds.has(c2TeacherId)) continue;
+          // The teacher must also be unavailability-free at this slot, which
+          // they obviously are (they're already teaching it). Good.
+
+          // Compute prospective max-class-empty if we either RELOCATE c2's
+          // slot (preserves c2's empty count) or DROP c2's slot (c2 +1 empty).
+          //
+          // We only proceed if a strict improvement to the worst-class empty
+          // count is achievable.
+          const c2Empty = emptyByClass.get(c2)!;
+          const c2Cap = getMaxFreeForClass(c2, freePeriodsPerClass, defaultMaxFreePerWeek);
+
+          // First try a RELOCATE: move c2's slot to a different (altDay, altP)
+          // where another (or the same) eligible teacher for (c2, S2) is free.
+          // This is the ideal case — total empties unchanged.
+          const relocated = relocatePlacementToEmpty(
+            timetable, c2, day, period, teachers, fatigueLimit, lockedSlots,
+            targetKey, // do NOT relocate into the slot we're trying to fill
+          );
+
+          if (relocated) {
+            // c2Slot is now empty (by relocate). Place worstCls's subject here.
+            const eligibleTeachers = shuffle(
+              teachers.filter((t) => teacherCanTeachSubjectToClass(t, subject, worstCls)),
+            );
+            for (const t of eligibleTeachers) {
+              const placed = tryPlace(
+                timetable, worstCls, day, period, subject, t,
+                fatigueLimit, false, false,
+              );
+              if (placed > 0) return true;
+            }
+            // Couldn't actually place — undo relocate by re-relocating back?
+            // The relocate already committed a slot elsewhere for c2's subject.
+            // This is fine: c2 still has the same number of placements, just at
+            // a different time. We didn't lose anything; we simply didn't gain.
+            // Continue searching for another move.
+            continue;
+          }
+
+          // RELOCATE failed. Fall back to DROP: empty c2's slot.
+          // Only do this if it strictly improves the max-class-empty score.
+          const newWorstEmpty = worstEmpty - 1;
+          const newC2Empty = c2Empty + 1;
+          if (newC2Empty > c2Cap) continue; // would push c2 over its free-period cap
+          // After the move, the worst-class-empty across all classes becomes:
+          // max(newWorstEmpty, newC2Empty, max(others)).
+          let othersMax = 0;
+          for (const c of CLASSES) {
+            if (c === worstCls || c === c2) continue;
+            const e = emptyByClass.get(c)!;
+            if (e > othersMax) othersMax = e;
+          }
+          const newMax = Math.max(newWorstEmpty, newC2Empty, othersMax);
+          if (newMax >= worstEmpty) continue; // no fairness improvement
+
+          // Apply the drop. Save originals so we can restore on failure.
+          const savedC2Subject = c2Slot!.subject!;
+          c2Slot!.status = "empty";
+          c2Slot!.subject = null;
+          c2Slot!.teacherId = null;
+          c2Slot!.slotType = null;
+          c2Slot!.slashPairSubject = null;
+          c2Slot!.slashPairTeacherId = null;
+
+          // Place worstCls subject in the freed slot using the same teacher.
+          const teacherObj = teachers.find((t) => t.id === c2TeacherId)!;
+          const placed = tryPlace(
+            timetable, worstCls, day, period, subject, teacherObj,
+            fatigueLimit, false, false,
+          );
+          if (placed > 0) return true;
+
+          // Couldn't place — restore c2's slot.
+          c2Slot!.status = "occupied";
+          c2Slot!.subject = savedC2Subject;
+          c2Slot!.teacherId = c2TeacherId;
+          c2Slot!.slotType = "single";
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function crossClassRebalance(
+  timetable: Timetable,
+  teachers: Teacher[],
+  quotas: SubjectQuota[],
+  fatigueLimit: number,
+  lockedSlots: Timetable,
+  freePeriodsPerClass: Record<string, number>,
+  defaultMaxFreePerWeek: number,
+): number {
+  const MAX_REBALANCE_ITERS = 80;
+  let movesApplied = 0;
+  for (let iter = 0; iter < MAX_REBALANCE_ITERS; iter++) {
+    const emptyByClass = new Map<SchoolClass, number>();
+    for (const cls of CLASSES) emptyByClass.set(cls, countEmptyForClass(timetable, cls));
+
+    let worstCls: SchoolClass | null = null;
+    let worstEmpty = -1;
+    let minEmpty = Infinity;
+    for (const cls of CLASSES) {
+      const e = emptyByClass.get(cls)!;
+      if (e > worstEmpty) { worstEmpty = e; worstCls = cls; }
+      if (e < minEmpty) minEmpty = e;
+    }
+    if (!worstCls || worstEmpty === 0) break;
+    if (worstEmpty - minEmpty <= 1) break; // already balanced
+
+    const moved = tryRebalanceFromWorst(
+      worstCls, emptyByClass,
+      timetable, teachers, quotas, fatigueLimit, lockedSlots,
+      freePeriodsPerClass, defaultMaxFreePerWeek,
+    );
+    if (!moved) break;
+    movesApplied++;
+  }
+  return movesApplied;
+}
+
 function runAttempt(
   teachers: Teacher[],
   quotas: SubjectQuota[],
@@ -1749,6 +1993,35 @@ function runAttempt(
   // Run twice in case the first pass cascades opportunities.
   p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
   p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
+
+  // PHASE 8: Cross-class rebalance — actively redistributes empty periods so
+  // they don't all pile up on one class. Only applies moves that strictly
+  // improve the max-class-empty count, then re-runs P1 repair in case a swap
+  // emptied a P1 slot.
+  const rebalanceMoves = crossClassRebalance(
+    timetable, teachers, quotas, fatigueLimit, lockedSlots,
+    freePeriodsPerClass, defaultMaxFreePerWeek,
+  );
+  if (rebalanceMoves > 0) {
+    p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
+    p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
+  }
+
+  // After rebalancing, if any one class is still significantly worse off than
+  // the others, surface a single warning so the user understands.
+  let finalWorstCls: SchoolClass | null = null;
+  let finalWorstEmpty = 0;
+  let finalMinEmpty = Infinity;
+  for (const cls of CLASSES) {
+    const e = countEmptyForClass(timetable, cls);
+    if (e > finalWorstEmpty) { finalWorstEmpty = e; finalWorstCls = cls; }
+    if (e < finalMinEmpty) finalMinEmpty = e;
+  }
+  if (finalWorstCls && finalWorstEmpty - finalMinEmpty >= 2) {
+    warnings.push(
+      `${finalWorstCls} has ${finalWorstEmpty} empty period(s) that could not be redistributed — consider adding more eligible teachers for that class.`,
+    );
+  }
 
   return { timetable, emptyCount: countEmpty(timetable), warnings };
 }
