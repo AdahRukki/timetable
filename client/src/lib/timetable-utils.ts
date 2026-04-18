@@ -208,6 +208,23 @@ export function canAddFreePeriod(
 // Re-export constants for UI components
 export { MAX_FREE_PERIODS_PER_WEEK, MAX_FREE_PERIODS_PER_DAY, TOTAL_PERIODS_PER_WEEK, MIN_TEACHING_PERIODS_PER_WEEK };
 
+// List every (day, schoolClass) where Period 1 is empty.
+// Period 1 should always be a teaching period for every class.
+export function getEmptyPeriod1Slots(
+  timetable: Map<string, TimetableSlot>,
+): Array<{ day: Day; schoolClass: SchoolClass }> {
+  const out: Array<{ day: Day; schoolClass: SchoolClass }> = [];
+  for (const day of DAYS) {
+    for (const schoolClass of CLASSES) {
+      const slot = getSlot(timetable, day, schoolClass, 1);
+      if (!slot || slot.status === "empty") {
+        out.push({ day, schoolClass });
+      }
+    }
+  }
+  return out;
+}
+
 // Check if teacher is available (not teaching another class at same time)
 export function isTeacherAvailable(
   timetable: Map<string, TimetableSlot>,

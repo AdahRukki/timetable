@@ -1,5 +1,5 @@
 import { type TimetableSlot, type Teacher, type SchoolClass, type Day, DAYS, CLASSES } from "@shared/schema";
-import { getPeriodsForDay, getSlotKey, getFreePeriodStats, MAX_FREE_PERIODS_PER_WEEK, MAX_FREE_PERIODS_PER_DAY, TOTAL_PERIODS_PER_WEEK } from "@/lib/timetable-utils";
+import { getPeriodsForDay, getSlotKey, getFreePeriodStats, getEmptyPeriod1Slots, MAX_FREE_PERIODS_PER_WEEK, MAX_FREE_PERIODS_PER_DAY, TOTAL_PERIODS_PER_WEEK } from "@/lib/timetable-utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -576,6 +576,37 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
             );
           })}
         </div>
+        {(() => {
+          const emptyP1 = getEmptyPeriod1Slots(timetable);
+          if (emptyP1.length === 0) return null;
+          return (
+            <div className="mt-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge
+                    variant="destructive"
+                    className="cursor-default"
+                    data-testid="badge-empty-period1"
+                  >
+                    <AlertTriangle className="h-3 w-3 mr-1" />
+                    Period 1 free in {emptyP1.length} slot{emptyP1.length === 1 ? "" : "s"}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <div className="text-sm space-y-1">
+                    <p className="font-medium">Period 1 should not be free</p>
+                    {emptyP1.slice(0, 12).map((s, i) => (
+                      <p key={i}>{s.day} — {s.schoolClass}</p>
+                    ))}
+                    {emptyP1.length > 12 && (
+                      <p className="text-muted-foreground">…and {emptyP1.length - 12} more</p>
+                    )}
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          );
+        })()}
       </div>
     </div>
 
