@@ -393,16 +393,27 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
 
   const buildClassWeekRows = (cls: SchoolClass): { header: string[]; rows: string[][] } => {
     const maxPeriods = Math.max(...DAYS.map((d) => getPeriodsForDay(d).length));
-    const periodNumbers = Array.from({ length: maxPeriods }, (_, i) => i + 1);
-    const header = [
-      "Day",
-      ...periodNumbers.map((p) => `P${p}\n${regularPeriodTimes[p] || ""}`),
-    ];
+    const columns: { label: string; type: "period" | "break"; period?: number }[] = [];
+    for (let p = 1; p <= maxPeriods; p++) {
+      columns.push({
+        label: `P${p}\n${(regularPeriodTimes[p] || "").toUpperCase()}`,
+        type: "period",
+        period: p,
+      });
+      if (p === 4) columns.push({ label: "BREAK\n11:30 - 12:00", type: "break" });
+      if (p === 7) columns.push({ label: "BREAK\n2:15 - 2:30", type: "break" });
+    }
+    const header = ["DAY", ...columns.map((c) => c.label)];
     const rows: string[][] = [];
     for (const day of DAYS) {
       const periods = getPeriodsForDay(day);
-      const row: string[] = [day];
-      for (const period of periodNumbers) {
+      const row: string[] = [day.toUpperCase()];
+      for (const col of columns) {
+        if (col.type === "break") {
+          row.push("");
+          continue;
+        }
+        const period = col.period!;
         if (!periods.includes(period)) {
           row.push("—");
           continue;
@@ -417,7 +428,7 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
             cellText = `${slot.subject || ""}${doubleMarker}`;
           }
         }
-        row.push(cellText);
+        row.push(cellText.toUpperCase());
       }
       rows.push(row);
     }
@@ -426,11 +437,14 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
 
   const renderClassPage = (doc: jsPDF, cls: SchoolClass) => {
     const pageWidth = doc.internal.pageSize.getWidth();
-    const marginX = 10;
+    const marginX = 8;
     const usableWidth = pageWidth - marginX * 2;
     const maxPeriods = Math.max(...DAYS.map((d) => getPeriodsForDay(d).length));
-    const dayColW = 22;
-    const periodColW = (usableWidth - dayColW) / maxPeriods;
+    const breakCount = 2;
+    const dayColW = 18;
+    const breakColW = 13;
+    const periodColW = (usableWidth - dayColW - breakColW * breakCount) / maxPeriods;
+    const breakColIndices = new Set<number>([5, 9]);
 
     const pageHeight = doc.internal.pageSize.getHeight();
     const headerBottomY = 30;
@@ -458,8 +472,8 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
       theme: "grid",
       styles: {
         font: "helvetica",
-        fontSize: 13,
-        cellPadding: 3,
+        fontSize: 11,
+        cellPadding: 2,
         minCellHeight: minCellHeight,
         valign: "middle",
         halign: "center",
@@ -467,21 +481,22 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
         fillColor: [255, 255, 255],
         lineColor: [0, 0, 0],
         lineWidth: 0.2,
+        overflow: "linebreak",
       },
       headStyles: {
         fillColor: [255, 255, 255],
         textColor: [0, 0, 0],
         fontStyle: "bold",
-        fontSize: 13,
+        fontSize: 10,
         halign: "center",
         lineColor: [0, 0, 0],
         lineWidth: 0.2,
       },
       columnStyles: Object.fromEntries([
         [0, { fontStyle: "bold" as const, cellWidth: dayColW }],
-        ...Array.from({ length: maxPeriods }, (_, i) => [
+        ...Array.from({ length: maxPeriods + breakCount }, (_, i) => [
           i + 1,
-          { cellWidth: periodColW },
+          { cellWidth: breakColIndices.has(i + 1) ? breakColW : periodColW },
         ]),
       ]),
     });
