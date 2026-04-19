@@ -391,60 +391,63 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
     }
   };
 
+  const buildClassWeekRows = (cls: SchoolClass): { header: string[]; rows: string[][] } => {
+    const maxPeriods = Math.max(...DAYS.map((d) => getPeriodsForDay(d).length));
+    const header = ["Period", "Time", ...DAYS];
+    const rows: string[][] = [];
+    for (let period = 1; period <= maxPeriods; period++) {
+      const row: string[] = [`P${period}`, regularPeriodTimes[period] || ""];
+      for (const day of DAYS) {
+        const periods = getPeriodsForDay(day);
+        if (!periods.includes(period)) {
+          row.push("—");
+          continue;
+        }
+        const slot = timetable.get(getSlotKey(day, cls, period));
+        let cellText = "";
+        if (slot && slot.status === "occupied") {
+          if (slot.slotType === "slash") {
+            cellText = `${slot.subject || ""} / ${slot.slashPairSubject || ""}`;
+          } else {
+            const doubleMarker = slot.slotType === "double" ? " [D]" : "";
+            cellText = `${slot.subject || ""}${doubleMarker}`;
+          }
+        }
+        row.push(cellText);
+      }
+      rows.push(row);
+    }
+    return { header, rows };
+  };
+
   const handleDownloadClassPDF = async (cls: SchoolClass) => {
     setIsDownloading(true);
     try {
       const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
 
-      let isFirstPage = true;
-      for (const day of DAYS) {
-        if (!isFirstPage) doc.addPage();
-        isFirstPage = false;
+      doc.setFontSize(16);
+      doc.text(`${cls} — Weekly Timetable`, 14, 15);
+      doc.setFontSize(9);
+      doc.text(
+        "Times shown are for Mon/Wed/Thu (P1–P9). Tue ends at P7; Fri ends at P6 with afternoon break 12:00–12:30.",
+        14,
+        21,
+      );
 
-        const periods = getPeriodsForDay(day);
-        const periodTimes = day === "Friday" ? fridayPeriodTimes : regularPeriodTimes;
+      const { header, rows } = buildClassWeekRows(cls);
 
-        doc.setFontSize(16);
-        doc.text(`${cls} — ${day} Timetable`, 14, 15);
-
-        doc.setFontSize(10);
-        const breakText = day === "Friday"
-          ? "Prayer: 11:30-12:00, Break: 12:00-12:30"
-          : day === "Tuesday"
-          ? "Break: 11:30-12:00"
-          : "Break 1: 11:30-12:00, Break 2: 2:15-2:30";
-        doc.text(breakText, 14, 22);
-
-        const headerRow = ["Period", "Time", "Subject"];
-        const dataRows: string[][] = [];
-        for (const period of periods) {
-          const slot = timetable.get(getSlotKey(day, cls, period));
-          let cellText = "";
-          if (slot && slot.status === "occupied") {
-            if (slot.slotType === "slash") {
-              cellText = `${slot.subject || ""} / ${slot.slashPairSubject || ""}`;
-            } else {
-              const doubleMarker = slot.slotType === "double" ? " [D]" : "";
-              cellText = `${slot.subject || ""}${doubleMarker}`;
-            }
-          }
-          dataRows.push([`P${period}`, periodTimes[period] || "", cellText]);
-        }
-
-        autoTable(doc, {
-          head: [headerRow],
-          body: dataRows,
-          startY: 26,
-          theme: "grid",
-          styles: { fontSize: 10, cellPadding: 3, valign: "middle" },
-          headStyles: { fillColor: [66, 139, 202], textColor: 255, fontStyle: "bold", halign: "center" },
-          columnStyles: {
-            0: { fontStyle: "bold", halign: "center", cellWidth: 25 },
-            1: { halign: "center", cellWidth: 45 },
-            2: { halign: "left" },
-          },
-        });
-      }
+      autoTable(doc, {
+        head: [header],
+        body: rows,
+        startY: 26,
+        theme: "grid",
+        styles: { fontSize: 9, cellPadding: 2, valign: "middle", halign: "center" },
+        headStyles: { fillColor: [66, 139, 202], textColor: 255, fontStyle: "bold" },
+        columnStyles: {
+          0: { fontStyle: "bold", cellWidth: 18 },
+          1: { cellWidth: 28 },
+        },
+      });
 
       doc.save(`timetable-${cls}.pdf`);
       toast({
@@ -467,32 +470,20 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
     setIsDownloading(true);
     try {
       const workbook = XLSX.utils.book_new();
-
-      for (const day of DAYS) {
-        const periods = getPeriodsForDay(day);
-        const periodTimes = day === "Friday" ? fridayPeriodTimes : regularPeriodTimes;
-
-        const headerRow = ["Period", "Time", "Subject"];
-        const dataRows: string[][] = [];
-        for (const period of periods) {
-          const slot = timetable.get(getSlotKey(day, cls, period));
-          let cellText = "";
-          if (slot && slot.status === "occupied") {
-            if (slot.slotType === "slash") {
-              cellText = `${slot.subject || ""} / ${slot.slashPairSubject || ""}`;
-            } else {
-              const doubleMarker = slot.slotType === "double" ? " [D]" : "";
-              cellText = `${slot.subject || ""}${doubleMarker}`;
-            }
-          }
-          dataRows.push([`P${period}`, periodTimes[period] || "", cellText]);
-        }
-
-        const sheetData = [[`${cls} — ${day}`], [], headerRow, ...dataRows];
-        const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
-        worksheet["!cols"] = [{ wch: 10 }, { wch: 18 }, { wch: 35 }];
-        XLSX.utils.book_append_sheet(workbook, worksheet, day);
-      }
+      const { header, rows } = buildClassWeekRows(cls);
+      const sheetData: string[][] = [
+        [`${cls} — Weekly Timetable`],
+        [],
+        header,
+        ...rows,
+      ];
+      const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+      worksheet["!cols"] = [
+        { wch: 10 },
+        { wch: 16 },
+        ...DAYS.map(() => ({ wch: 22 })),
+      ];
+      XLSX.utils.book_append_sheet(workbook, worksheet, cls);
 
       XLSX.writeFile(workbook, `timetable-${cls}.xlsx`);
       toast({
