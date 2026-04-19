@@ -432,28 +432,35 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
     const dayColW = 22;
     const periodColW = (usableWidth - dayColW) / maxPeriods;
 
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const headerBottomY = 30;
+    const bottomMargin = 10;
+    const tableTotalRows = DAYS.length + 1;
+    const minCellHeight = (pageHeight - headerBottomY - bottomMargin) / tableTotalRows;
+
     doc.setTextColor(0, 0, 0);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
+    doc.setFontSize(20);
     doc.text("Weekly Timetable", pageWidth / 2, 15, { align: "center" });
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(12);
-    doc.text(`Class: ${cls}`, pageWidth / 2, 22, { align: "center" });
+    doc.setFontSize(14);
+    doc.text(`Class: ${cls}`, pageWidth / 2, 24, { align: "center" });
 
     const { header, rows } = buildClassWeekRows(cls);
 
     autoTable(doc, {
       head: [header],
       body: rows,
-      startY: 28,
-      margin: { left: marginX, right: marginX },
+      startY: headerBottomY,
+      margin: { left: marginX, right: marginX, bottom: bottomMargin },
       tableWidth: usableWidth,
       theme: "grid",
       styles: {
         font: "helvetica",
-        fontSize: 10,
-        cellPadding: 2.5,
+        fontSize: 13,
+        cellPadding: 3,
+        minCellHeight: minCellHeight,
         valign: "middle",
         halign: "center",
         textColor: [0, 0, 0],
@@ -465,7 +472,7 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
         fillColor: [255, 255, 255],
         textColor: [0, 0, 0],
         fontStyle: "bold",
-        fontSize: 10,
+        fontSize: 13,
         halign: "center",
         lineColor: [0, 0, 0],
         lineWidth: 0.2,
