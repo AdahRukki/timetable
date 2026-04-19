@@ -428,19 +428,25 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
     const timeColW = 30;
     const dayColW = (usableWidth - periodColW - timeColW) / DAYS.length;
 
+    doc.setTextColor(0, 0, 0);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(18);
-    doc.text("Weekly Timetable", pageWidth / 2, 14, { align: "center" });
+    doc.setFontSize(20);
+    doc.text("WEEKLY TIMETABLE", pageWidth / 2, 16, { align: "center" });
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(13);
-    doc.text(`Class: ${cls}`, pageWidth / 2, 21, { align: "center" });
+    doc.text(`Class: ${cls}`, pageWidth / 2, 24, { align: "center" });
 
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.4);
+    doc.line(marginX, 28, pageWidth - marginX, 28);
+
+    doc.setFont("helvetica", "italic");
     doc.setFontSize(9);
     doc.text(
       "Times shown are for Mon/Wed/Thu (P1–P9). Tue ends at P7; Fri ends at P6 with afternoon break 12:00–12:30.",
       pageWidth / 2,
-      27,
+      33,
       { align: "center" },
     );
 
@@ -449,7 +455,7 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
     autoTable(doc, {
       head: [header],
       body: rows,
-      startY: 32,
+      startY: 38,
       margin: { left: marginX, right: marginX },
       tableWidth: usableWidth,
       theme: "grid",
@@ -459,19 +465,26 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
         cellPadding: 3,
         valign: "middle",
         halign: "center",
-        lineColor: [120, 120, 120],
-        lineWidth: 0.2,
+        textColor: [0, 0, 0],
+        fillColor: [255, 255, 255],
+        lineColor: [0, 0, 0],
+        lineWidth: 0.3,
       },
       headStyles: {
-        fillColor: [66, 139, 202],
-        textColor: 255,
+        fillColor: [0, 0, 0],
+        textColor: [255, 255, 255],
         fontStyle: "bold",
         fontSize: 11,
         halign: "center",
+        lineColor: [0, 0, 0],
+        lineWidth: 0.3,
+      },
+      alternateRowStyles: {
+        fillColor: [245, 245, 245],
       },
       columnStyles: {
-        0: { fontStyle: "bold", cellWidth: periodColW },
-        1: { cellWidth: timeColW },
+        0: { fontStyle: "bold", cellWidth: periodColW, fillColor: [230, 230, 230] },
+        1: { cellWidth: timeColW, fontStyle: "italic" },
         2: { cellWidth: dayColW },
         3: { cellWidth: dayColW },
         4: { cellWidth: dayColW },
