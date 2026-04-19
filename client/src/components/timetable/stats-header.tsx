@@ -69,7 +69,7 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
   const [copied, setCopied] = useState(false);
   const [shareTitle, setShareTitle] = useState("");
   const [classDialogOpen, setClassDialogOpen] = useState(false);
-  const [singleClass, setSingleClass] = useState<SchoolClass>("JSS1");
+  const [singleClass, setSingleClass] = useState<SchoolClass | "ALL">("ALL");
 
   const shareMutation = useMutation({
     mutationFn: async (title: string) => {
@@ -420,39 +420,87 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
     return { header, rows };
   };
 
-  const handleDownloadClassPDF = async (cls: SchoolClass) => {
+  const renderClassPage = (doc: jsPDF, cls: SchoolClass) => {
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const marginX = 10;
+    const usableWidth = pageWidth - marginX * 2;
+    const periodColW = 18;
+    const timeColW = 30;
+    const dayColW = (usableWidth - periodColW - timeColW) / DAYS.length;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("Weekly Timetable", pageWidth / 2, 14, { align: "center" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(13);
+    doc.text(`Class: ${cls}`, pageWidth / 2, 21, { align: "center" });
+
+    doc.setFontSize(9);
+    doc.text(
+      "Times shown are for Mon/Wed/Thu (P1–P9). Tue ends at P7; Fri ends at P6 with afternoon break 12:00–12:30.",
+      pageWidth / 2,
+      27,
+      { align: "center" },
+    );
+
+    const { header, rows } = buildClassWeekRows(cls);
+
+    autoTable(doc, {
+      head: [header],
+      body: rows,
+      startY: 32,
+      margin: { left: marginX, right: marginX },
+      tableWidth: usableWidth,
+      theme: "grid",
+      styles: {
+        font: "helvetica",
+        fontSize: 11,
+        cellPadding: 3,
+        valign: "middle",
+        halign: "center",
+        lineColor: [120, 120, 120],
+        lineWidth: 0.2,
+      },
+      headStyles: {
+        fillColor: [66, 139, 202],
+        textColor: 255,
+        fontStyle: "bold",
+        fontSize: 11,
+        halign: "center",
+      },
+      columnStyles: {
+        0: { fontStyle: "bold", cellWidth: periodColW },
+        1: { cellWidth: timeColW },
+        2: { cellWidth: dayColW },
+        3: { cellWidth: dayColW },
+        4: { cellWidth: dayColW },
+        5: { cellWidth: dayColW },
+        6: { cellWidth: dayColW },
+      },
+    });
+  };
+
+  const handleDownloadClassPDF = async (target: SchoolClass | "ALL") => {
     setIsDownloading(true);
     try {
       const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const classes: SchoolClass[] = target === "ALL"
+        ? (CLASSES as readonly SchoolClass[]).slice()
+        : [target];
 
-      doc.setFontSize(16);
-      doc.text(`${cls} — Weekly Timetable`, 14, 15);
-      doc.setFontSize(9);
-      doc.text(
-        "Times shown are for Mon/Wed/Thu (P1–P9). Tue ends at P7; Fri ends at P6 with afternoon break 12:00–12:30.",
-        14,
-        21,
-      );
-
-      const { header, rows } = buildClassWeekRows(cls);
-
-      autoTable(doc, {
-        head: [header],
-        body: rows,
-        startY: 26,
-        theme: "grid",
-        styles: { fontSize: 9, cellPadding: 2, valign: "middle", halign: "center" },
-        headStyles: { fillColor: [66, 139, 202], textColor: 255, fontStyle: "bold" },
-        columnStyles: {
-          0: { fontStyle: "bold", cellWidth: 18 },
-          1: { cellWidth: 28 },
-        },
+      classes.forEach((cls, idx) => {
+        if (idx > 0) doc.addPage();
+        renderClassPage(doc, cls);
       });
 
-      doc.save(`timetable-${cls}.pdf`);
+      const filename = target === "ALL" ? "timetable-all-classes.pdf" : `timetable-${target}.pdf`;
+      doc.save(filename);
       toast({
         title: "Download Complete",
-        description: `${cls} timetable exported to PDF`,
+        description: target === "ALL"
+          ? "All class timetables exported to PDF"
+          : `${target} timetable exported to PDF`,
       });
     } catch (error) {
       console.error("Download error:", error);
@@ -466,29 +514,39 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
     }
   };
 
-  const handleDownloadClassExcel = async (cls: SchoolClass) => {
+  const handleDownloadClassExcel = async (target: SchoolClass | "ALL") => {
     setIsDownloading(true);
     try {
       const workbook = XLSX.utils.book_new();
-      const { header, rows } = buildClassWeekRows(cls);
-      const sheetData: string[][] = [
-        [`${cls} — Weekly Timetable`],
-        [],
-        header,
-        ...rows,
-      ];
-      const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
-      worksheet["!cols"] = [
-        { wch: 10 },
-        { wch: 16 },
-        ...DAYS.map(() => ({ wch: 22 })),
-      ];
-      XLSX.utils.book_append_sheet(workbook, worksheet, cls);
+      const classes: SchoolClass[] = target === "ALL"
+        ? (CLASSES as readonly SchoolClass[]).slice()
+        : [target];
 
-      XLSX.writeFile(workbook, `timetable-${cls}.xlsx`);
+      for (const cls of classes) {
+        const { header, rows } = buildClassWeekRows(cls);
+        const sheetData: string[][] = [
+          ["Weekly Timetable"],
+          [`Class: ${cls}`],
+          [],
+          header,
+          ...rows,
+        ];
+        const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+        worksheet["!cols"] = [
+          { wch: 10 },
+          { wch: 16 },
+          ...DAYS.map(() => ({ wch: 22 })),
+        ];
+        XLSX.utils.book_append_sheet(workbook, worksheet, cls);
+      }
+
+      const filename = target === "ALL" ? "timetable-all-classes.xlsx" : `timetable-${target}.xlsx`;
+      XLSX.writeFile(workbook, filename);
       toast({
         title: "Download Complete",
-        description: `${cls} timetable exported to Excel`,
+        description: target === "ALL"
+          ? "All class timetables exported to Excel"
+          : `${target} timetable exported to Excel`,
       });
     } catch (error) {
       console.error("Download error:", error);
@@ -823,12 +881,15 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
             <Label htmlFor="single-class-select">Class</Label>
             <Select
               value={singleClass}
-              onValueChange={(v) => setSingleClass(v as SchoolClass)}
+              onValueChange={(v) => setSingleClass(v as SchoolClass | "ALL")}
             >
               <SelectTrigger id="single-class-select" data-testid="select-single-class">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="ALL" data-testid="option-single-class-all">
+                  All classes
+                </SelectItem>
                 {CLASSES.map((c) => (
                   <SelectItem key={c} value={c} data-testid={`option-single-class-${c.toLowerCase()}`}>
                     {c}
