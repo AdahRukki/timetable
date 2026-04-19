@@ -434,60 +434,44 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
 
     doc.setTextColor(0, 0, 0);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(20);
-    doc.text("WEEKLY TIMETABLE", pageWidth / 2, 16, { align: "center" });
+    doc.setFontSize(16);
+    doc.text("Weekly Timetable", pageWidth / 2, 15, { align: "center" });
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(13);
-    doc.text(`Class: ${cls}`, pageWidth / 2, 24, { align: "center" });
-
-    doc.setDrawColor(0, 0, 0);
-    doc.setLineWidth(0.4);
-    doc.line(marginX, 28, pageWidth - marginX, 28);
-
-    doc.setFont("helvetica", "italic");
-    doc.setFontSize(9);
-    doc.text(
-      "Times shown are for Mon/Wed/Thu (P1–P9). Tue ends at P7; Fri ends at P6 with afternoon break 12:00–12:30.",
-      pageWidth / 2,
-      33,
-      { align: "center" },
-    );
+    doc.setFontSize(12);
+    doc.text(`Class: ${cls}`, pageWidth / 2, 22, { align: "center" });
 
     const { header, rows } = buildClassWeekRows(cls);
 
     autoTable(doc, {
       head: [header],
       body: rows,
-      startY: 38,
+      startY: 28,
       margin: { left: marginX, right: marginX },
       tableWidth: usableWidth,
       theme: "grid",
       styles: {
         font: "helvetica",
-        fontSize: 11,
-        cellPadding: 3,
+        fontSize: 10,
+        cellPadding: 2.5,
         valign: "middle",
         halign: "center",
         textColor: [0, 0, 0],
         fillColor: [255, 255, 255],
         lineColor: [0, 0, 0],
-        lineWidth: 0.3,
+        lineWidth: 0.2,
       },
       headStyles: {
-        fillColor: [0, 0, 0],
-        textColor: [255, 255, 255],
+        fillColor: [255, 255, 255],
+        textColor: [0, 0, 0],
         fontStyle: "bold",
-        fontSize: 11,
+        fontSize: 10,
         halign: "center",
         lineColor: [0, 0, 0],
-        lineWidth: 0.3,
-      },
-      alternateRowStyles: {
-        fillColor: [245, 245, 245],
+        lineWidth: 0.2,
       },
       columnStyles: Object.fromEntries([
-        [0, { fontStyle: "bold" as const, cellWidth: dayColW, fillColor: [230, 230, 230] as [number, number, number] }],
+        [0, { fontStyle: "bold" as const, cellWidth: dayColW }],
         ...Array.from({ length: maxPeriods }, (_, i) => [
           i + 1,
           { cellWidth: periodColW },
