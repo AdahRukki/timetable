@@ -87,6 +87,13 @@ export const timetableActions = pgTable("timetable_actions", {
   previousSlotData: jsonb("previous_slot_data"),
 });
 
+// Per-class-level scheduling preference shapes (mirrored on subjects + subject_quotas)
+export type PreferredPeriods = { jss: number[]; ss1: number[]; ss2ss3: number[] };
+export type RequiredDoubles = { jss: number; ss1: number; ss2ss3: number };
+
+const DEFAULT_PREFERRED_PERIODS: PreferredPeriods = { jss: [], ss1: [], ss2ss3: [] };
+const DEFAULT_REQUIRED_DOUBLES: RequiredDoubles = { jss: 0, ss1: 0, ss2ss3: 0 };
+
 // Subject quotas table
 export const subjectQuotas = pgTable("subject_quotas", {
   id: serial("id").primaryKey(),
@@ -96,6 +103,14 @@ export const subjectQuotas = pgTable("subject_quotas", {
   ss1Quota: integer("ss1_quota").notNull(),
   ss2ss3Quota: integer("ss2ss3_quota").notNull(),
   isSlashSubject: integer("is_slash_subject").notNull().default(0),
+  preferredPeriods: jsonb("preferred_periods")
+    .$type<PreferredPeriods>()
+    .notNull()
+    .default(DEFAULT_PREFERRED_PERIODS),
+  requiredDoubles: jsonb("required_doubles")
+    .$type<RequiredDoubles>()
+    .notNull()
+    .default(DEFAULT_REQUIRED_DOUBLES),
 });
 
 // Custom subjects table
@@ -108,6 +123,14 @@ export const subjects = pgTable("subjects", {
   ss2ss3Quota: integer("ss2ss3_quota").notNull().default(0),
   isSlashSubject: integer("is_slash_subject").notNull().default(0),
   slashPairName: text("slash_pair_name"),
+  preferredPeriods: jsonb("preferred_periods")
+    .$type<PreferredPeriods>()
+    .notNull()
+    .default(DEFAULT_PREFERRED_PERIODS),
+  requiredDoubles: jsonb("required_doubles")
+    .$type<RequiredDoubles>()
+    .notNull()
+    .default(DEFAULT_REQUIRED_DOUBLES),
 });
 
 // User settings table
@@ -275,6 +298,19 @@ export const subjectPeriodCountSchema = z.object({
 
 export type SubjectPeriodCount = z.infer<typeof subjectPeriodCountSchema>;
 
+// Per-class-level scheduling preference Zod schemas (shared by subjects + subject quotas)
+export const preferredPeriodsSchema = z.object({
+  jss: z.array(z.number().int().min(1).max(9)).default([]),
+  ss1: z.array(z.number().int().min(1).max(9)).default([]),
+  ss2ss3: z.array(z.number().int().min(1).max(9)).default([]),
+});
+
+export const requiredDoublesSchema = z.object({
+  jss: z.number().int().min(0).max(4).default(0),
+  ss1: z.number().int().min(0).max(4).default(0),
+  ss2ss3: z.number().int().min(0).max(4).default(0),
+});
+
 // Subject quota configuration
 export const subjectQuotaSchema = z.object({
   subject: z.string(),
@@ -282,6 +318,8 @@ export const subjectQuotaSchema = z.object({
   ss1Quota: z.number().min(0).max(10),
   ss2ss3Quota: z.number().min(0).max(10),
   isSlashSubject: z.boolean().default(false),
+  preferredPeriods: preferredPeriodsSchema.default({ jss: [], ss1: [], ss2ss3: [] }),
+  requiredDoubles: requiredDoublesSchema.default({ jss: 0, ss1: 0, ss2ss3: 0 }),
 });
 
 export type SubjectQuota = z.infer<typeof subjectQuotaSchema>;
@@ -298,6 +336,8 @@ export const subjectSchema = z.object({
   ss2ss3Quota: z.number().min(0).max(10).default(0),
   isSlashSubject: z.boolean().default(false),
   slashPairName: z.string().nullable().default(null),
+  preferredPeriods: preferredPeriodsSchema.default({ jss: [], ss1: [], ss2ss3: [] }),
+  requiredDoubles: requiredDoublesSchema.default({ jss: 0, ss1: 0, ss2ss3: 0 }),
 });
 
 export type Subject = z.infer<typeof subjectSchema>;

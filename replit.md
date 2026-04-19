@@ -109,6 +109,8 @@ PostgreSQL with Drizzle ORM. Tables:
 Users create and manage all subjects in the Settings page with:
 - Subject name (must be unique)
 - Per-class-level period quotas (JSS, SS1, SS2/SS3)
+- **Preferred periods** per class level — chip selector (P1–P9). The auto-generator tries these periods first when scheduling the subject, falling back to any legal slot if preferred periods don't fit. Empty list = any period.
+- **Required doubles per week** per class level — number of double-period blocks the generator must place. Doubles are scheduled in a dedicated pre-pass before single-period scheduling and also honour the preferred-period list.
 - Every subject is fully editable and deletable
 - Subjects sync with subject quotas for timetable validation
 

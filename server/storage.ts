@@ -381,6 +381,8 @@ export class DatabaseStorage implements IStorage {
       ss1Quota: row.ss1Quota,
       ss2ss3Quota: row.ss2ss3Quota,
       isSlashSubject: row.isSlashSubject === 1,
+      preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
+      requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
     }));
   }
 
@@ -390,11 +392,13 @@ export class DatabaseStorage implements IStorage {
     );
     if (!existing) return undefined;
 
-    const updateValues: any = {};
+    const updateValues: Record<string, unknown> = {};
     if (updates.jssQuota !== undefined) updateValues.jssQuota = updates.jssQuota;
     if (updates.ss1Quota !== undefined) updateValues.ss1Quota = updates.ss1Quota;
     if (updates.ss2ss3Quota !== undefined) updateValues.ss2ss3Quota = updates.ss2ss3Quota;
     if (updates.isSlashSubject !== undefined) updateValues.isSlashSubject = updates.isSlashSubject ? 1 : 0;
+    if (updates.preferredPeriods !== undefined) updateValues.preferredPeriods = updates.preferredPeriods;
+    if (updates.requiredDoubles !== undefined) updateValues.requiredDoubles = updates.requiredDoubles;
 
     await db.update(subjectQuotas).set(updateValues).where(
       and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subject))
@@ -406,6 +410,8 @@ export class DatabaseStorage implements IStorage {
       ss1Quota: updates.ss1Quota ?? existing.ss1Quota,
       ss2ss3Quota: updates.ss2ss3Quota ?? existing.ss2ss3Quota,
       isSlashSubject: updates.isSlashSubject ?? (existing.isSlashSubject === 1),
+      preferredPeriods: updates.preferredPeriods ?? existing.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
+      requiredDoubles: updates.requiredDoubles ?? existing.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
     };
   }
 
@@ -420,6 +426,8 @@ export class DatabaseStorage implements IStorage {
       ss2ss3Quota: row.ss2ss3Quota,
       isSlashSubject: row.isSlashSubject === 1,
       slashPairName: row.slashPairName,
+      preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
+      requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
     }));
   }
 
@@ -436,10 +444,14 @@ export class DatabaseStorage implements IStorage {
       ss2ss3Quota: row.ss2ss3Quota,
       isSlashSubject: row.isSlashSubject === 1,
       slashPairName: row.slashPairName,
+      preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
+      requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
     };
   }
 
   async createSubject(userId: string, subject: InsertSubject): Promise<Subject> {
+    const preferredPeriods = subject.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] };
+    const requiredDoubles = subject.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 };
     return await db.transaction(async (tx) => {
       const [inserted] = await tx.insert(subjects).values({
         userId,
@@ -449,6 +461,8 @@ export class DatabaseStorage implements IStorage {
         ss2ss3Quota: subject.ss2ss3Quota,
         isSlashSubject: subject.isSlashSubject ? 1 : 0,
         slashPairName: subject.isSlashSubject ? subject.slashPairName : null,
+        preferredPeriods,
+        requiredDoubles,
       }).returning({ id: subjects.id });
 
       await tx.insert(subjectQuotas).values({
@@ -458,6 +472,8 @@ export class DatabaseStorage implements IStorage {
         ss1Quota: subject.ss1Quota,
         ss2ss3Quota: subject.ss2ss3Quota,
         isSlashSubject: subject.isSlashSubject ? 1 : 0,
+        preferredPeriods,
+        requiredDoubles,
       }).onConflictDoNothing();
 
       if (subject.isSlashSubject && subject.slashPairName) {
@@ -472,6 +488,8 @@ export class DatabaseStorage implements IStorage {
         ss2ss3Quota: subject.ss2ss3Quota,
         isSlashSubject: subject.isSlashSubject,
         slashPairName: subject.isSlashSubject ? subject.slashPairName : null,
+        preferredPeriods,
+        requiredDoubles,
       };
     });
   }
@@ -497,6 +515,8 @@ export class DatabaseStorage implements IStorage {
         updateValues.isSlashSubject = newSlash ? 1 : 0;
         updateValues.slashPairName = newPair;
       }
+      if (updates.preferredPeriods !== undefined) updateValues.preferredPeriods = updates.preferredPeriods;
+      if (updates.requiredDoubles !== undefined) updateValues.requiredDoubles = updates.requiredDoubles;
 
       if (Object.keys(updateValues).length > 0) {
         await tx.update(subjects).set(updateValues).where(
@@ -504,12 +524,14 @@ export class DatabaseStorage implements IStorage {
         );
       }
 
-      // Mirror name/quotas/isSlashSubject into subject_quotas.
+      // Mirror name/quotas/isSlashSubject/preferences into subject_quotas.
       const quotaUpdates: Record<string, unknown> = {};
       if (updates.jssQuota !== undefined) quotaUpdates.jssQuota = updates.jssQuota;
       if (updates.ss1Quota !== undefined) quotaUpdates.ss1Quota = updates.ss1Quota;
       if (updates.ss2ss3Quota !== undefined) quotaUpdates.ss2ss3Quota = updates.ss2ss3Quota;
       if (updates.isSlashSubject !== undefined) quotaUpdates.isSlashSubject = newSlash ? 1 : 0;
+      if (updates.preferredPeriods !== undefined) quotaUpdates.preferredPeriods = updates.preferredPeriods;
+      if (updates.requiredDoubles !== undefined) quotaUpdates.requiredDoubles = updates.requiredDoubles;
 
       if (Object.keys(quotaUpdates).length > 0) {
         await tx.update(subjectQuotas).set(quotaUpdates).where(
@@ -553,6 +575,8 @@ export class DatabaseStorage implements IStorage {
         ss2ss3Quota: updates.ss2ss3Quota ?? existing.ss2ss3Quota,
         isSlashSubject: newSlash,
         slashPairName: newPair,
+        preferredPeriods: updates.preferredPeriods ?? existing.preferredPeriods,
+        requiredDoubles: updates.requiredDoubles ?? existing.requiredDoubles,
       };
     });
   }

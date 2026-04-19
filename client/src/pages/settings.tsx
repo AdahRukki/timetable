@@ -32,6 +32,12 @@ export default function SettingsPage() {
   const [newSubjectSs2ss3Quota, setNewSubjectSs2ss3Quota] = useState(4);
   const [newSubjectIsSlash, setNewSubjectIsSlash] = useState(false);
   const [newSubjectSlashPair, setNewSubjectSlashPair] = useState<string>("");
+  const [newSubjectPreferredJss, setNewSubjectPreferredJss] = useState<number[]>([]);
+  const [newSubjectPreferredSs1, setNewSubjectPreferredSs1] = useState<number[]>([]);
+  const [newSubjectPreferredSs2ss3, setNewSubjectPreferredSs2ss3] = useState<number[]>([]);
+  const [newSubjectDoublesJss, setNewSubjectDoublesJss] = useState(0);
+  const [newSubjectDoublesSs1, setNewSubjectDoublesSs1] = useState(0);
+  const [newSubjectDoublesSs2ss3, setNewSubjectDoublesSs2ss3] = useState(0);
   const [fatigueLimit, setFatigueLimit] = useState(5);
   const [maxFreePeriodsPerWeek, setMaxFreePeriodsPerWeek] = useState(3);
   const [maxFreePeriodsPerDay, setMaxFreePeriodsPerDay] = useState(2);
@@ -105,6 +111,8 @@ export default function SettingsPage() {
       ss2ss3Quota: number;
       isSlashSubject: boolean;
       slashPairName: string | null;
+      preferredPeriods?: { jss: number[]; ss1: number[]; ss2ss3: number[] };
+      requiredDoubles?: { jss: number; ss1: number; ss2ss3: number };
     }) => {
       return apiRequest("POST", "/api/subjects", data);
     },
@@ -174,6 +182,12 @@ export default function SettingsPage() {
     setNewSubjectSs2ss3Quota(4);
     setNewSubjectIsSlash(false);
     setNewSubjectSlashPair("");
+    setNewSubjectPreferredJss([]);
+    setNewSubjectPreferredSs1([]);
+    setNewSubjectPreferredSs2ss3([]);
+    setNewSubjectDoublesJss(0);
+    setNewSubjectDoublesSs1(0);
+    setNewSubjectDoublesSs2ss3(0);
     setEditingSubject(null);
   };
 
@@ -190,6 +204,12 @@ export default function SettingsPage() {
     setNewSubjectSs2ss3Quota(subject.ss2ss3Quota);
     setNewSubjectIsSlash(subject.isSlashSubject);
     setNewSubjectSlashPair(subject.slashPairName || "");
+    setNewSubjectPreferredJss(subject.preferredPeriods?.jss ?? []);
+    setNewSubjectPreferredSs1(subject.preferredPeriods?.ss1 ?? []);
+    setNewSubjectPreferredSs2ss3(subject.preferredPeriods?.ss2ss3 ?? []);
+    setNewSubjectDoublesJss(subject.requiredDoubles?.jss ?? 0);
+    setNewSubjectDoublesSs1(subject.requiredDoubles?.ss1 ?? 0);
+    setNewSubjectDoublesSs2ss3(subject.requiredDoubles?.ss2ss3 ?? 0);
     setSubjectDialogOpen(true);
   };
 
@@ -206,6 +226,16 @@ export default function SettingsPage() {
   const handleSubjectSubmit = () => {
     const isSlash = newSubjectIsSlash;
     const pairName = isSlash && newSubjectSlashPair ? newSubjectSlashPair : null;
+    const preferredPeriods = {
+      jss: [...newSubjectPreferredJss].sort((a, b) => a - b),
+      ss1: [...newSubjectPreferredSs1].sort((a, b) => a - b),
+      ss2ss3: [...newSubjectPreferredSs2ss3].sort((a, b) => a - b),
+    };
+    const requiredDoubles = {
+      jss: newSubjectDoublesJss,
+      ss1: newSubjectDoublesSs1,
+      ss2ss3: newSubjectDoublesSs2ss3,
+    };
     if (editingSubject) {
       updateSubjectMutation.mutate({
         id: editingSubject.id,
@@ -216,6 +246,8 @@ export default function SettingsPage() {
           ss2ss3Quota: newSubjectSs2ss3Quota,
           isSlashSubject: isSlash,
           slashPairName: pairName,
+          preferredPeriods,
+          requiredDoubles,
         },
       });
     } else {
@@ -226,6 +258,8 @@ export default function SettingsPage() {
         ss2ss3Quota: newSubjectSs2ss3Quota,
         isSlashSubject: isSlash,
         slashPairName: pairName,
+        preferredPeriods,
+        requiredDoubles,
       });
     }
   };
@@ -403,6 +437,98 @@ export default function SettingsPage() {
                 <p className="text-xs text-muted-foreground">
                   JSS ({newSubjectJssQuota} × 3) + SS1 ({newSubjectSs1Quota} × 1) + SS2/SS3 ({newSubjectSs2ss3Quota} × 2)
                 </p>
+              </div>
+
+              <div className="space-y-4 border-t pt-4">
+                <div>
+                  <Label className="text-sm font-medium">Preferred periods</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Pick the periods this subject should land in first. Leave empty to allow any period.
+                  </p>
+                </div>
+                {(["jss", "ss1", "ss2ss3"] as const).map((lvl) => {
+                  const label = lvl === "jss" ? "JSS" : lvl === "ss1" ? "SS1" : "SS2/SS3";
+                  const value =
+                    lvl === "jss" ? newSubjectPreferredJss
+                    : lvl === "ss1" ? newSubjectPreferredSs1
+                    : newSubjectPreferredSs2ss3;
+                  const setter =
+                    lvl === "jss" ? setNewSubjectPreferredJss
+                    : lvl === "ss1" ? setNewSubjectPreferredSs1
+                    : setNewSubjectPreferredSs2ss3;
+                  return (
+                    <div key={lvl} className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">{label}</Label>
+                      <div className="flex flex-wrap gap-1">
+                        {Array.from({ length: 9 }, (_, i) => i + 1).map((p) => {
+                          const on = value.includes(p);
+                          return (
+                            <Button
+                              key={p}
+                              type="button"
+                              size="sm"
+                              variant={on ? "default" : "outline"}
+                              className="h-7 w-9 p-0 text-xs"
+                              onClick={() =>
+                                setter(on ? value.filter((x) => x !== p) : [...value, p])
+                              }
+                              data-testid={`chip-pref-${lvl}-${p}`}
+                            >
+                              P{p}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="space-y-3 border-t pt-4">
+                <div>
+                  <Label className="text-sm font-medium">Required doubles per week</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Number of double-period blocks the generator must place per class.
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="doubles-jss" className="text-xs text-muted-foreground">JSS</Label>
+                    <Input
+                      id="doubles-jss"
+                      type="number"
+                      min={0}
+                      max={5}
+                      value={newSubjectDoublesJss}
+                      onChange={(e) => setNewSubjectDoublesJss(Math.max(0, parseInt(e.target.value) || 0))}
+                      data-testid="input-doubles-jss"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="doubles-ss1" className="text-xs text-muted-foreground">SS1</Label>
+                    <Input
+                      id="doubles-ss1"
+                      type="number"
+                      min={0}
+                      max={5}
+                      value={newSubjectDoublesSs1}
+                      onChange={(e) => setNewSubjectDoublesSs1(Math.max(0, parseInt(e.target.value) || 0))}
+                      data-testid="input-doubles-ss1"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="doubles-ss2ss3" className="text-xs text-muted-foreground">SS2/SS3</Label>
+                    <Input
+                      id="doubles-ss2ss3"
+                      type="number"
+                      min={0}
+                      max={5}
+                      value={newSubjectDoublesSs2ss3}
+                      onChange={(e) => setNewSubjectDoublesSs2ss3(Math.max(0, parseInt(e.target.value) || 0))}
+                      data-testid="input-doubles-ss2ss3"
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-3 border-t pt-4">

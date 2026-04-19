@@ -5,6 +5,8 @@ import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integra
 import {
   insertTeacherSchema,
   insertSubjectSchema,
+  preferredPeriodsSchema,
+  requiredDoublesSchema,
   placementRequestSchema,
   timetableSlotSchema,
   type Day,
@@ -758,6 +760,8 @@ export async function registerRoutes(
         ss2ss3Quota: z.number().min(0).max(10).optional(),
         isSlashSubject: z.boolean().optional(),
         slashPairName: z.string().nullable().optional(),
+        preferredPeriods: preferredPeriodsSchema.optional(),
+        requiredDoubles: requiredDoublesSchema.optional(),
       });
       
       const updates = partialSubjectSchema.parse(req.body);
@@ -1459,13 +1463,38 @@ function maxClassEmpty(timetable: Timetable): number {
 
 // Try to place ONE period of `subject` in `cls` somewhere it fits.
 // Returns periods placed (0, 1, or 2 if a double was placed).
+// ===== Per-class-level scheduling preferences =====
+type ClassLevel = "jss" | "ss1" | "ss2ss3";
+function classLevel(cls: SchoolClass): ClassLevel {
+  if (cls.startsWith("JSS")) return "jss";
+  if (cls === "SS1") return "ss1";
+  return "ss2ss3";
+}
+function getPreferredPeriods(quota: SubjectQuota, cls: SchoolClass): number[] {
+  return quota.preferredPeriods?.[classLevel(cls)] ?? [];
+}
+function getRequiredDoubles(quota: SubjectQuota, cls: SchoolClass): number {
+  return quota.requiredDoubles?.[classLevel(cls)] ?? 0;
+}
+// Returns periods sorted so preferred ones come first (each group internally
+// shuffled for variety across attempts).
+function periodsByPreference(allPeriods: number[], preferred: number[]): number[] {
+  if (preferred.length === 0) return shuffle(allPeriods);
+  const prefSet = new Set(preferred);
+  const pref: number[] = [];
+  const rest: number[] = [];
+  for (const p of allPeriods) (prefSet.has(p) ? pref : rest).push(p);
+  return [...shuffle(pref), ...shuffle(rest)];
+}
+
 function placeOneSubjectPeriod(
   timetable: Timetable,
   cls: SchoolClass,
   subject: string,
   teachers: Teacher[],
   fatigueLimit: number,
-  remainingNeeded: number
+  remainingNeeded: number,
+  preferredPeriods: number[] = [],
 ): number {
   const eligible = teachers.filter((t) => teacherCanTeachSubjectToClass(t, subject, cls));
   if (eligible.length === 0) return 0;
@@ -1474,7 +1503,8 @@ function placeOneSubjectPeriod(
   );
   for (const day of shuffle([...DAYS] as Day[])) {
     if (subjectAlreadyTodayForClass(timetable, cls, day, subject)) continue;
-    const periods = shuffle(Array.from({ length: PERIODS_PER_DAY[day] }, (_, i) => i + 1));
+    const allPeriods = Array.from({ length: PERIODS_PER_DAY[day] }, (_, i) => i + 1);
+    const periods = periodsByPreference(allPeriods, preferredPeriods);
     for (const period of periods) {
       for (const teacher of sortedEligible) {
         const r = tryPlace(
@@ -1489,6 +1519,8 @@ function placeOneSubjectPeriod(
 }
 
 // Try to fill a specific (day, cls, period) with any subject that still needs periods.
+// If `preferenceMap` is provided, subjects whose preferred-period list contains
+// `period` are tried first (within their group, order is still shuffled).
 function fillSpecificSlot(
   timetable: Timetable,
   cls: SchoolClass,
@@ -1497,10 +1529,24 @@ function fillSpecificSlot(
   remainingMap: Map<string, number>,
   teachers: Teacher[],
   fatigueLimit: number,
+  preferenceMap?: Map<string, number[]>,
 ): boolean {
   const slot = timetable.get(slotKey(day, cls, period));
   if (!slot || slot.status !== "empty") return false;
-  const subjects = shuffle(Array.from(remainingMap.keys()));
+  const allSubjects = Array.from(remainingMap.keys());
+  let subjects: string[];
+  if (preferenceMap) {
+    const pref: string[] = [];
+    const rest: string[] = [];
+    for (const s of allSubjects) {
+      const p = preferenceMap.get(s);
+      if (p && p.includes(period)) pref.push(s);
+      else rest.push(s);
+    }
+    subjects = [...shuffle(pref), ...shuffle(rest)];
+  } else {
+    subjects = shuffle(allSubjects);
+  }
   for (const subject of subjects) {
     if (subjectAlreadyTodayForClass(timetable, cls, day, subject)) continue;
     const eligible = teachers.filter((t) => teacherCanTeachSubjectToClass(t, subject, cls));
@@ -1928,6 +1974,80 @@ function runAttempt(
     remainingByClass.set(cls, sub);
   }
 
+  // Build per-class subject -> preferred-periods map (used for P1 priority and elsewhere).
+  const preferenceByClass = new Map<SchoolClass, Map<string, number[]>>();
+  for (const cls of CLASSES) {
+    const m = new Map<string, number[]>();
+    for (const quota of quotas) {
+      const pref = getPreferredPeriods(quota, cls);
+      if (pref.length > 0) m.set(quota.subject, pref);
+    }
+    preferenceByClass.set(cls, m);
+  }
+
+  // PHASE 2.5: Required doubles pre-pass — for each (cls, subject), place the
+  // user-requested number of double-period blocks before single-period scheduling.
+  // Doubles try preferred periods first; if none fit, any legal slot is used.
+  for (const cls of shuffle([...CLASSES] as SchoolClass[])) {
+    const remaining = remainingByClass.get(cls)!;
+    const subjectsForClass = shuffle(quotas.map((q) => q.subject));
+    for (const subject of subjectsForClass) {
+      const quota = quotas.find((q) => q.subject === subject);
+      if (!quota) continue;
+      if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) continue;
+      const wantDoubles = getRequiredDoubles(quota, cls);
+      if (wantDoubles <= 0) continue;
+      const eligible = teachers.filter((t) => teacherCanTeachSubjectToClass(t, subject, cls));
+      if (eligible.length === 0) continue;
+      const pref = getPreferredPeriods(quota, cls);
+      let placedDoubles = 0;
+      for (const day of shuffle([...DAYS] as Day[])) {
+        if (placedDoubles >= wantDoubles) break;
+        if (subjectAlreadyTodayForClass(timetable, cls, day, subject)) continue;
+        const remNeeded = remaining.get(subject) ?? 0;
+        if (remNeeded < 2) break;
+        const allPeriods = Array.from({ length: PERIODS_PER_DAY[day] }, (_, i) => i + 1);
+        const periods = periodsByPreference(allPeriods, pref);
+        const sortedEligible = shuffle([...eligible]).sort(
+          (a, b) => countTeacherLoad(timetable, a.id) - countTeacherLoad(timetable, b.id),
+        );
+        let placedThisDay = false;
+        for (const period of periods) {
+          if (placedThisDay) break;
+          for (const teacher of sortedEligible) {
+            const r = tryPlace(
+              timetable, cls, day, period, subject, teacher,
+              fatigueLimit, true, false,
+            );
+            if (r === 2) {
+              const newRem = remNeeded - 2;
+              if (newRem <= 0) remaining.delete(subject);
+              else remaining.set(subject, newRem);
+              placedDoubles++;
+              placedThisDay = true;
+              break;
+            }
+            // If a single landed accidentally, undo by ignoring — tryPlace only
+            // returns 1 when allowDouble could not fit; treat as a regular
+            // single placement and keep trying for more doubles on other days.
+            if (r === 1) {
+              const newRem = remNeeded - 1;
+              if (newRem <= 0) remaining.delete(subject);
+              else remaining.set(subject, newRem);
+              placedThisDay = true;
+              break;
+            }
+          }
+        }
+      }
+      if (placedDoubles < wantDoubles) {
+        warnings.push(
+          `Attempt ${attemptNumber}: ${subject} → ${cls}: placed ${placedDoubles}/${wantDoubles} required doubles`,
+        );
+      }
+    }
+  }
+
   // PHASE 3: Period-1 priority pass — fill P1 of every (day, cls) first.
   for (const day of shuffle([...DAYS] as Day[])) {
     for (const cls of shuffle([...CLASSES] as SchoolClass[])) {
@@ -1937,7 +2057,10 @@ function runAttempt(
       if (!p1Slot || p1Slot.status !== "empty") continue;
       const remaining = remainingByClass.get(cls)!;
       if (remaining.size === 0) continue;
-      fillSpecificSlot(timetable, cls, day, 1, remaining, teachers, fatigueLimit);
+      fillSpecificSlot(
+        timetable, cls, day, 1, remaining, teachers, fatigueLimit,
+        preferenceByClass.get(cls),
+      );
     }
   }
 
@@ -1982,8 +2105,10 @@ function runAttempt(
       const subjectList = shuffle(Array.from(subMap.keys()));
       for (const subject of subjectList) {
         const remNeeded = subMap.get(subject)!;
+        const q = quotas.find((x) => x.subject === subject);
+        const pref = q ? getPreferredPeriods(q, cls) : [];
         const placed = placeOneSubjectPeriod(
-          timetable, cls, subject, teachers, fatigueLimit, remNeeded,
+          timetable, cls, subject, teachers, fatigueLimit, remNeeded, pref,
         );
         if (placed > 0) {
           const newRem = remNeeded - placed;
