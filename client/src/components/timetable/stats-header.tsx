@@ -393,12 +393,16 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
 
   const buildClassWeekRows = (cls: SchoolClass): { header: string[]; rows: string[][] } => {
     const maxPeriods = Math.max(...DAYS.map((d) => getPeriodsForDay(d).length));
-    const header = ["Period", "Time", ...DAYS];
+    const periodNumbers = Array.from({ length: maxPeriods }, (_, i) => i + 1);
+    const header = [
+      "Day",
+      ...periodNumbers.map((p) => `P${p}\n${regularPeriodTimes[p] || ""}`),
+    ];
     const rows: string[][] = [];
-    for (let period = 1; period <= maxPeriods; period++) {
-      const row: string[] = [`P${period}`, regularPeriodTimes[period] || ""];
-      for (const day of DAYS) {
-        const periods = getPeriodsForDay(day);
+    for (const day of DAYS) {
+      const periods = getPeriodsForDay(day);
+      const row: string[] = [day];
+      for (const period of periodNumbers) {
         if (!periods.includes(period)) {
           row.push("—");
           continue;
@@ -424,9 +428,9 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
     const pageWidth = doc.internal.pageSize.getWidth();
     const marginX = 10;
     const usableWidth = pageWidth - marginX * 2;
-    const periodColW = 18;
-    const timeColW = 30;
-    const dayColW = (usableWidth - periodColW - timeColW) / DAYS.length;
+    const maxPeriods = Math.max(...DAYS.map((d) => getPeriodsForDay(d).length));
+    const dayColW = 22;
+    const periodColW = (usableWidth - dayColW) / maxPeriods;
 
     doc.setTextColor(0, 0, 0);
     doc.setFont("helvetica", "bold");
@@ -482,15 +486,13 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
       alternateRowStyles: {
         fillColor: [245, 245, 245],
       },
-      columnStyles: {
-        0: { fontStyle: "bold", cellWidth: periodColW, fillColor: [230, 230, 230] },
-        1: { cellWidth: timeColW, fontStyle: "italic" },
-        2: { cellWidth: dayColW },
-        3: { cellWidth: dayColW },
-        4: { cellWidth: dayColW },
-        5: { cellWidth: dayColW },
-        6: { cellWidth: dayColW },
-      },
+      columnStyles: Object.fromEntries([
+        [0, { fontStyle: "bold" as const, cellWidth: dayColW, fillColor: [230, 230, 230] as [number, number, number] }],
+        ...Array.from({ length: maxPeriods }, (_, i) => [
+          i + 1,
+          { cellWidth: periodColW },
+        ]),
+      ]),
     });
   };
 
