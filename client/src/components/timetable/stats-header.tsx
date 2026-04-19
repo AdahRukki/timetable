@@ -39,6 +39,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface StatsHeaderProps {
   timetable: Map<string, TimetableSlot>;
@@ -61,6 +68,8 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [shareTitle, setShareTitle] = useState("");
+  const [classDialogOpen, setClassDialogOpen] = useState(false);
+  const [singleClass, setSingleClass] = useState<SchoolClass>("JSS1");
 
   const shareMutation = useMutation({
     mutationFn: async (title: string) => {
@@ -382,6 +391,126 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
     }
   };
 
+  const handleDownloadClassPDF = async (cls: SchoolClass) => {
+    setIsDownloading(true);
+    try {
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+
+      let isFirstPage = true;
+      for (const day of DAYS) {
+        if (!isFirstPage) doc.addPage();
+        isFirstPage = false;
+
+        const periods = getPeriodsForDay(day);
+        const periodTimes = day === "Friday" ? fridayPeriodTimes : regularPeriodTimes;
+
+        doc.setFontSize(16);
+        doc.text(`${cls} — ${day} Timetable`, 14, 15);
+
+        doc.setFontSize(10);
+        const breakText = day === "Friday"
+          ? "Prayer: 11:30-12:00, Break: 12:00-12:30"
+          : day === "Tuesday"
+          ? "Break: 11:30-12:00"
+          : "Break 1: 11:30-12:00, Break 2: 2:15-2:30";
+        doc.text(breakText, 14, 22);
+
+        const headerRow = ["Period", "Time", "Subject"];
+        const dataRows: string[][] = [];
+        for (const period of periods) {
+          const slot = timetable.get(getSlotKey(day, cls, period));
+          let cellText = "";
+          if (slot && slot.status === "occupied") {
+            if (slot.slotType === "slash") {
+              cellText = `${slot.subject || ""} / ${slot.slashPairSubject || ""}`;
+            } else {
+              const doubleMarker = slot.slotType === "double" ? " [D]" : "";
+              cellText = `${slot.subject || ""}${doubleMarker}`;
+            }
+          }
+          dataRows.push([`P${period}`, periodTimes[period] || "", cellText]);
+        }
+
+        autoTable(doc, {
+          head: [headerRow],
+          body: dataRows,
+          startY: 26,
+          theme: "grid",
+          styles: { fontSize: 10, cellPadding: 3, valign: "middle" },
+          headStyles: { fillColor: [66, 139, 202], textColor: 255, fontStyle: "bold", halign: "center" },
+          columnStyles: {
+            0: { fontStyle: "bold", halign: "center", cellWidth: 25 },
+            1: { halign: "center", cellWidth: 45 },
+            2: { halign: "left" },
+          },
+        });
+      }
+
+      doc.save(`timetable-${cls}.pdf`);
+      toast({
+        title: "Download Complete",
+        description: `${cls} timetable exported to PDF`,
+      });
+    } catch (error) {
+      console.error("Download error:", error);
+      toast({
+        title: "Download Failed",
+        description: "Could not generate PDF file. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleDownloadClassExcel = async (cls: SchoolClass) => {
+    setIsDownloading(true);
+    try {
+      const workbook = XLSX.utils.book_new();
+
+      for (const day of DAYS) {
+        const periods = getPeriodsForDay(day);
+        const periodTimes = day === "Friday" ? fridayPeriodTimes : regularPeriodTimes;
+
+        const headerRow = ["Period", "Time", "Subject"];
+        const dataRows: string[][] = [];
+        for (const period of periods) {
+          const slot = timetable.get(getSlotKey(day, cls, period));
+          let cellText = "";
+          if (slot && slot.status === "occupied") {
+            if (slot.slotType === "slash") {
+              cellText = `${slot.subject || ""} / ${slot.slashPairSubject || ""}`;
+            } else {
+              const doubleMarker = slot.slotType === "double" ? " [D]" : "";
+              cellText = `${slot.subject || ""}${doubleMarker}`;
+            }
+          }
+          dataRows.push([`P${period}`, periodTimes[period] || "", cellText]);
+        }
+
+        const sheetData = [[`${cls} — ${day}`], [], headerRow, ...dataRows];
+        const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+        worksheet["!cols"] = [{ wch: 10 }, { wch: 18 }, { wch: 35 }];
+        XLSX.utils.book_append_sheet(workbook, worksheet, day);
+      }
+
+      XLSX.writeFile(workbook, `timetable-${cls}.xlsx`);
+      toast({
+        title: "Download Complete",
+        description: `${cls} timetable exported to Excel`,
+      });
+    } catch (error) {
+      console.error("Download error:", error);
+      toast({
+        title: "Download Failed",
+        description: "Could not generate Excel file. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   const handleShare = () => {
     setShareUrl(null);
     setShareTitle("");
@@ -486,6 +615,13 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
               <DropdownMenuItem onClick={handleDownloadExcel} data-testid="menu-download-excel">
                 <FileSpreadsheet className="h-4 w-4 mr-2" />
                 Download as Excel
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setClassDialogOpen(true)}
+                data-testid="menu-download-single-class"
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                Single class (no teachers)…
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -680,6 +816,69 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
             </DialogFooter>
           </div>
         )}
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={classDialogOpen} onOpenChange={setClassDialogOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Download single class timetable</DialogTitle>
+          <DialogDescription>
+            Pick a class and a format. Teacher names will be omitted.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="single-class-select">Class</Label>
+            <Select
+              value={singleClass}
+              onValueChange={(v) => setSingleClass(v as SchoolClass)}
+            >
+              <SelectTrigger id="single-class-select" data-testid="select-single-class">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CLASSES.map((c) => (
+                  <SelectItem key={c} value={c} data-testid={`option-single-class-${c.toLowerCase()}`}>
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setClassDialogOpen(false)}
+            data-testid="button-single-class-cancel"
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="outline"
+            disabled={isDownloading}
+            onClick={async () => {
+              await handleDownloadClassExcel(singleClass);
+              setClassDialogOpen(false);
+            }}
+            data-testid="button-single-class-excel"
+          >
+            <FileSpreadsheet className="h-4 w-4 mr-2" />
+            Excel
+          </Button>
+          <Button
+            disabled={isDownloading}
+            onClick={async () => {
+              await handleDownloadClassPDF(singleClass);
+              setClassDialogOpen(false);
+            }}
+            data-testid="button-single-class-pdf"
+          >
+            <FileText className="h-4 w-4 mr-2" />
+            PDF
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
     </>
