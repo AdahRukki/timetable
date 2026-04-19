@@ -132,6 +132,18 @@ function getTotalSubjectCountForDay(
   return count;
 }
 
+// Resolve the consecutive-period limit that should apply to a teacher.
+// Falls back to the user's global fatigueLimit when the teacher has no override.
+function effectiveFatigueLimit(
+  teacher: Teacher | undefined,
+  globalLimit: number,
+): number {
+  if (teacher && typeof teacher.maxConsecutivePeriods === "number") {
+    return teacher.maxConsecutivePeriods;
+  }
+  return globalLimit;
+}
+
 function getConsecutiveTeachingCount(
   timetable: Map<string, TimetableSlot>,
   teacherId: string,
@@ -390,13 +402,14 @@ async function validatePlacement(
           });
         }
         
-        // Check fatigue for slash pair teacher
+        // Check fatigue for slash pair teacher (per-teacher override wins)
         const slashPeriodsToAdd = [period];
         const slashConsecutive = getConsecutiveTeachingCount(timetable, slashPairTeacherId, day, slashPeriodsToAdd);
-        if (slashConsecutive > fatigueLimit) {
+        const slashLimit = effectiveFatigueLimit(slashPairTeacher, fatigueLimit);
+        if (slashConsecutive > slashLimit) {
           errors.push({
             code: "SLASH_TEACHER_FATIGUE",
-            message: `${slashPairTeacher.name} would exceed ${fatigueLimit} consecutive teaching periods`,
+            message: `${slashPairTeacher.name} would exceed ${slashLimit} consecutive teaching periods`,
             severity: "error",
           });
         }
@@ -404,13 +417,14 @@ async function validatePlacement(
     }
   }
   
-  // Fatigue limit check
+  // Fatigue limit check (per-teacher override wins over global)
   const periodsToAdd = slotType === "double" ? [period, period + 1] : [period];
   const consecutive = getConsecutiveTeachingCount(timetable, teacherId, day, periodsToAdd);
-  if (consecutive > fatigueLimit) {
+  const teacherLimit = effectiveFatigueLimit(teacher, fatigueLimit);
+  if (consecutive > teacherLimit) {
     errors.push({
       code: "FATIGUE_LIMIT",
-      message: `${teacher.name} would exceed ${fatigueLimit} consecutive teaching periods`,
+      message: `${teacher.name} would exceed ${teacherLimit} consecutive teaching periods`,
       severity: "error",
     });
   }
@@ -1039,8 +1053,13 @@ function wouldExceedFatigue(
   teacherId: string,
   day: Day,
   proposedPeriods: number[],
-  fatigueLimit: number
+  fatigueLimit: number,
+  // Optional per-teacher override. When provided (number), it wins over
+  // the global fatigueLimit. `null`/`undefined` keeps the global limit.
+  teacherMaxOverride?: number | null
 ): boolean {
+  const limit =
+    typeof teacherMaxOverride === "number" ? teacherMaxOverride : fatigueLimit;
   const periodsToday = PERIODS_PER_DAY[day];
   const breaks = BREAK_AFTER[day];
   const teaching = new Set<number>(proposedPeriods);
@@ -1065,7 +1084,27 @@ function wouldExceedFatigue(
     }
     if (breaks.includes(p)) current = 0;
   }
-  return maxConsecutive > fatigueLimit;
+  return maxConsecutive > limit;
+}
+
+// Convenience wrapper: look up the teacher's override by id from a list.
+function wouldExceedFatigueForTeacher(
+  timetable: Timetable,
+  teachers: Teacher[],
+  teacherId: string,
+  day: Day,
+  proposedPeriods: number[],
+  fatigueLimit: number,
+): boolean {
+  const t = teachers.find((x) => x.id === teacherId);
+  return wouldExceedFatigue(
+    timetable,
+    teacherId,
+    day,
+    proposedPeriods,
+    fatigueLimit,
+    t?.maxConsecutivePeriods ?? null,
+  );
 }
 
 function subjectAlreadyTodayForClass(timetable: Timetable, cls: SchoolClass, day: Day, subject: string): boolean {
@@ -1139,7 +1178,7 @@ function tryPlace(
       slot2?.status === "empty" &&
       !isTeacherUnavailable(teacher, day, next) &&
       isTeacherFreeAt(timetable, teacher.id, day, next) &&
-      !wouldExceedFatigue(timetable, teacher.id, day, [period, next], fatigueLimit)
+      !wouldExceedFatigue(timetable, teacher.id, day, [period, next], fatigueLimit, teacher.maxConsecutivePeriods ?? null)
     ) {
       placeSlot(timetable, cls, day, period, subject, teacher.id, "double", next);
       return 2;
@@ -1147,7 +1186,7 @@ function tryPlace(
   }
 
   // Single
-  if (!wouldExceedFatigue(timetable, teacher.id, day, [period], fatigueLimit)) {
+  if (!wouldExceedFatigue(timetable, teacher.id, day, [period], fatigueLimit, teacher.maxConsecutivePeriods ?? null)) {
     placeSlot(timetable, cls, day, period, subject, teacher.id, "single");
     return 1;
   }
@@ -1223,12 +1262,12 @@ function scheduleSlashPair(
       for (const t1 of shuffle(t1List)) {
         if (isTeacherUnavailable(t1, day, period)) continue;
         if (!isTeacherFreeAt(timetable, t1.id, day, period)) continue;
-        if (wouldExceedFatigue(timetable, t1.id, day, [period], fatigueLimit)) continue;
+        if (wouldExceedFatigue(timetable, t1.id, day, [period], fatigueLimit, t1.maxConsecutivePeriods ?? null)) continue;
         for (const t2 of shuffle(t2List)) {
           if (t2.id === t1.id) continue;
           if (isTeacherUnavailable(t2, day, period)) continue;
           if (!isTeacherFreeAt(timetable, t2.id, day, period)) continue;
-          if (wouldExceedFatigue(timetable, t2.id, day, [period], fatigueLimit)) continue;
+          if (wouldExceedFatigue(timetable, t2.id, day, [period], fatigueLimit, t2.maxConsecutivePeriods ?? null)) continue;
           slot.status = "occupied";
           slot.subject = subject1;
           slot.teacherId = t1.id;
@@ -1339,12 +1378,12 @@ function swapRepairPass(
           targetSlot.subject = null;
           targetSlot.teacherId = null;
           targetSlot.slotType = null;
-          const existingFatigueOk = !wouldExceedFatigue(timetable, existingTeacherId, altDay, [altP], fatigueLimit);
+          const existingFatigueOk = !wouldExceedFatigue(timetable, existingTeacherId, altDay, [altP], fatigueLimit, existingTeacher.maxConsecutivePeriods ?? null);
           const canPlace =
             existingFatigueOk &&
             !isTeacherUnavailable(teacher, day, p) &&
             isTeacherFreeAt(timetable, teacher.id, day, p) &&
-            !wouldExceedFatigue(timetable, teacher.id, day, [p], fatigueLimit);
+            !wouldExceedFatigue(timetable, teacher.id, day, [p], fatigueLimit, teacher.maxConsecutivePeriods ?? null);
           if (canPlace) {
             altSlot.status = "occupied";
             altSlot.subject = existingSubject;
@@ -1605,7 +1644,7 @@ function p1SwapRepair(
         sourceSlot.slotType = null;
 
         const teacherFreeAtP1 = isTeacherFreeAt(timetable, teacherId, day, 1);
-        const fatigueOk = !wouldExceedFatigue(timetable, teacherId, day, [1], fatigueLimit);
+        const fatigueOk = !wouldExceedFatigue(timetable, teacherId, day, [1], fatigueLimit, teacher.maxConsecutivePeriods ?? null);
 
         if (teacherFreeAtP1 && fatigueOk) {
           p1Slot.status = "occupied";
@@ -1695,7 +1734,7 @@ function relocatePlacementToEmpty(
       for (const t of eligible) {
         if (isTeacherUnavailable(t, altDay, altP)) continue;
         if (!isTeacherFreeAt(timetable, t.id, altDay, altP)) continue;
-        if (wouldExceedFatigue(timetable, t.id, altDay, [altP], fatigueLimit)) continue;
+        if (wouldExceedFatigue(timetable, t.id, altDay, [altP], fatigueLimit, t.maxConsecutivePeriods ?? null)) continue;
         altSlot.status = "occupied";
         altSlot.subject = subject;
         altSlot.teacherId = t.id;

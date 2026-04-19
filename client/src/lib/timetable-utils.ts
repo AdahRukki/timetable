@@ -376,6 +376,18 @@ export function getTotalSubjectCountForDay(
   return count;
 }
 
+// Resolve the consecutive-period limit for a teacher: per-teacher
+// override wins over the user's global fatigueLimit.
+export function getEffectiveFatigueLimit(
+  teacher: Teacher | undefined,
+  globalLimit: number,
+): number {
+  if (teacher && typeof teacher.maxConsecutivePeriods === "number") {
+    return teacher.maxConsecutivePeriods;
+  }
+  return globalLimit;
+}
+
 // Check if adding a period would exceed fatigue limit
 export function wouldExceedFatigueLimit(
   timetable: Map<string, TimetableSlot>,
@@ -527,11 +539,12 @@ export function validatePlacement(
     }
   }
   
-  // Check fatigue limit
-  if (wouldExceedFatigueLimit(timetable, teacherId, day, period, slotType === "double", fatigueLimit)) {
+  // Check fatigue limit (per-teacher override wins over global)
+  const teacherLimit = getEffectiveFatigueLimit(teacher, fatigueLimit);
+  if (wouldExceedFatigueLimit(timetable, teacherId, day, period, slotType === "double", teacherLimit)) {
     errors.push({
       code: "FATIGUE_LIMIT",
-      message: `${teacher.name} would exceed ${fatigueLimit} consecutive teaching periods`,
+      message: `${teacher.name} would exceed ${teacherLimit} consecutive teaching periods`,
       severity: "error",
     });
   }

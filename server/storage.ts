@@ -151,6 +151,7 @@ export class DatabaseStorage implements IStorage {
       subjectClasses: row.subjectClasses as Record<string, SchoolClass[]> | undefined,
       unavailable: row.unavailable as Record<Day, number[]>,
       color: row.color,
+      maxConsecutivePeriods: row.maxConsecutivePeriods ?? null,
     }));
   }
 
@@ -165,6 +166,7 @@ export class DatabaseStorage implements IStorage {
       subjectClasses: row.subjectClasses as Record<string, SchoolClass[]> | undefined,
       unavailable: row.unavailable as Record<Day, number[]>,
       color: row.color,
+      maxConsecutivePeriods: row.maxConsecutivePeriods ?? null,
     };
   }
 
@@ -179,21 +181,23 @@ export class DatabaseStorage implements IStorage {
       subjectClasses: insertTeacher.subjectClasses,
       unavailable: insertTeacher.unavailable,
       color: insertTeacher.color,
+      maxConsecutivePeriods: insertTeacher.maxConsecutivePeriods ?? null,
     });
-    return { ...insertTeacher, id };
+    return { ...insertTeacher, id, maxConsecutivePeriods: insertTeacher.maxConsecutivePeriods ?? null };
   }
 
   async updateTeacher(userId: string, id: string, updates: Partial<InsertTeacher>): Promise<Teacher | undefined> {
     const existing = await this.getTeacher(userId, id);
     if (!existing) return undefined;
 
-    const updateValues: any = {};
+    const updateValues: Record<string, unknown> = {};
     if (updates.name !== undefined) updateValues.name = updates.name;
     if (updates.subjects !== undefined) updateValues.subjects = updates.subjects;
     if (updates.classes !== undefined) updateValues.classes = updates.classes;
     if (updates.subjectClasses !== undefined) updateValues.subjectClasses = updates.subjectClasses;
     if (updates.unavailable !== undefined) updateValues.unavailable = updates.unavailable;
     if (updates.color !== undefined) updateValues.color = updates.color;
+    if (updates.maxConsecutivePeriods !== undefined) updateValues.maxConsecutivePeriods = updates.maxConsecutivePeriods;
 
     await db.update(teachers).set(updateValues).where(and(eq(teachers.userId, userId), eq(teachers.id, id)));
     return { ...existing, ...updates };

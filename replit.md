@@ -98,7 +98,10 @@ PostgreSQL with Drizzle ORM. Tables:
 
 ### Validation Rules
 1. **Teacher Clash Prevention**: A teacher cannot teach two classes simultaneously
-2. **Fatigue Limit**: Configurable max consecutive teaching periods per teacher per day (default: 5, range: 1-10)
+2. **Fatigue Limit**: Configurable max consecutive teaching periods per day (default: 5, range: 1-10).
+   - The Settings page sets a global fatigue limit applied to every teacher.
+   - Each teacher can additionally set their own override (`maxConsecutivePeriods`) on the Teachers page; when set it replaces the global limit for that teacher only.
+   - The override is honoured by manual placement validation, slash-pair scheduling, the auto-generator, the swap/P1/cross-class rebalancer repair passes, and validation error messages (which quote the limit actually applied).
 3. **Break Enforcement**: Double periods cannot cross breaks
 4. **No Doubles in P8/P9**: Double periods restricted to earlier slots
 5. **Period Quotas**: Tracks weekly allocation per subject

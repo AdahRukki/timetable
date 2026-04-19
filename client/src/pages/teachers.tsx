@@ -34,6 +34,13 @@ export default function TeachersPage() {
   const [formClasses, setFormClasses] = useState<SchoolClass[]>([]);
   const [formSubjectClasses, setFormSubjectClasses] = useState<Record<string, SchoolClass[]>>({});
   const [formUnavailable, setFormUnavailable] = useState<Record<string, number[]>>({});
+  // null = "use the global default from Settings"
+  const [formMaxConsecutive, setFormMaxConsecutive] = useState<number | null>(null);
+
+  const { data: globalSettings } = useQuery<{ fatigueLimit: number }>({
+    queryKey: ["/api/settings"],
+  });
+  const globalFatigueLimit = globalSettings?.fatigueLimit ?? 5;
 
   const { data: teachers = [], isLoading } = useQuery<Teacher[]>({
     queryKey: ["/api/teachers"],
@@ -48,7 +55,7 @@ export default function TeachersPage() {
   }, [subjects]);
 
   const createMutation = useMutation({
-    mutationFn: async (data: { name: string; subjects: string[]; classes: SchoolClass[]; subjectClasses?: Record<string, SchoolClass[]>; unavailable: Record<string, number[]>; color: string }) => {
+    mutationFn: async (data: { name: string; subjects: string[]; classes: SchoolClass[]; subjectClasses?: Record<string, SchoolClass[]>; unavailable: Record<string, number[]>; color: string; maxConsecutivePeriods: number | null }) => {
       return apiRequest("POST", "/api/teachers", data);
     },
     onSuccess: () => {
@@ -98,6 +105,7 @@ export default function TeachersPage() {
     setFormClasses([]);
     setFormSubjectClasses({});
     setFormUnavailable({});
+    setFormMaxConsecutive(null);
   };
 
   const openEditDialog = (teacher: Teacher) => {
@@ -107,6 +115,9 @@ export default function TeachersPage() {
     setFormClasses([...teacher.classes]);
     setFormSubjectClasses(teacher.subjectClasses ? { ...teacher.subjectClasses } : {});
     setFormUnavailable({ ...teacher.unavailable });
+    setFormMaxConsecutive(
+      typeof teacher.maxConsecutivePeriods === "number" ? teacher.maxConsecutivePeriods : null,
+    );
     setDialogOpen(true);
   };
 
@@ -150,6 +161,7 @@ export default function TeachersPage() {
           classes: formClasses,
           subjectClasses: cleanedSubjectClasses,
           unavailable: cleanedUnavailable,
+          maxConsecutivePeriods: formMaxConsecutive,
         },
       });
     } else {
@@ -161,6 +173,7 @@ export default function TeachersPage() {
         subjectClasses: cleanedSubjectClasses,
         unavailable: cleanedUnavailable,
         color: colors[teachers.length % colors.length],
+        maxConsecutivePeriods: formMaxConsecutive,
       });
     }
   };
@@ -285,6 +298,19 @@ export default function TeachersPage() {
                   </div>
                 </div>
 
+                <div className="text-xs text-muted-foreground" data-testid={`text-fatigue-${teacher.id}`}>
+                  Max consecutive periods:{" "}
+                  {typeof teacher.maxConsecutivePeriods === "number" ? (
+                    <span className="font-medium text-foreground">
+                      {teacher.maxConsecutivePeriods} (override)
+                    </span>
+                  ) : (
+                    <span className="font-medium text-foreground">
+                      {globalFatigueLimit} (default)
+                    </span>
+                  )}
+                </div>
+
                 {Object.entries(teacher.unavailable).length > 0 && (
                   <div>
                     <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1.5">
@@ -347,6 +373,48 @@ export default function TeachersPage() {
                   onChange={(e) => setFormName(e.target.value)}
                   data-testid="input-teacher-name"
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="max-consecutive">Max consecutive teaching periods</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="max-consecutive"
+                    type="number"
+                    min={1}
+                    max={10}
+                    placeholder={`Default (${globalFatigueLimit})`}
+                    value={formMaxConsecutive ?? ""}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (raw === "") {
+                        setFormMaxConsecutive(null);
+                        return;
+                      }
+                      const n = Number(raw);
+                      if (!Number.isFinite(n)) return;
+                      const clamped = Math.max(1, Math.min(10, Math.round(n)));
+                      setFormMaxConsecutive(clamped);
+                    }}
+                    className="w-32"
+                    data-testid="input-max-consecutive"
+                  />
+                  {formMaxConsecutive !== null && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setFormMaxConsecutive(null)}
+                      data-testid="button-reset-max-consecutive"
+                    >
+                      Use default ({globalFatigueLimit})
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Overrides the global fatigue limit for this teacher only. Leave blank to use the
+                  default from Settings ({globalFatigueLimit} period{globalFatigueLimit === 1 ? "" : "s"}).
+                </p>
               </div>
 
               <div className="space-y-2">

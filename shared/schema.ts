@@ -60,6 +60,9 @@ export const teachers = pgTable("teachers", {
   subjectClasses: jsonb("subject_classes").$type<Record<string, string[]>>(),
   unavailable: jsonb("unavailable").notNull().$type<Record<string, number[]>>(),
   color: text("color").notNull(),
+  // Per-teacher override for the global "max consecutive teaching periods"
+  // rule. Null means "use the user's global fatigueLimit setting".
+  maxConsecutivePeriods: integer("max_consecutive_periods"),
 });
 
 // Timetable slots table
@@ -196,6 +199,9 @@ export const teacherSchema = z.object({
   subjectClasses: z.record(z.string(), z.array(z.enum(CLASSES))).optional(),
   unavailable: z.record(z.enum(DAYS), z.array(z.number())),
   color: z.string(),
+  // Per-teacher cap on consecutive teaching periods. `null` (or omitted)
+  // means "use the user's global fatigueLimit setting".
+  maxConsecutivePeriods: z.number().int().min(1).max(10).nullable().optional(),
 });
 
 export type Teacher = z.infer<typeof teacherSchema>;
