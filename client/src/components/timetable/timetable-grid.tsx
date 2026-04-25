@@ -119,6 +119,7 @@ export function TimetableGrid({
       slotType: null,
       slashPairSubject: null,
       slashPairTeacherId: null,
+      isLocked: false,
     };
   };
 

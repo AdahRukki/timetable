@@ -128,6 +128,7 @@ export default function SharedTimetablePage() {
       slotType: null,
       slashPairSubject: null,
       slashPairTeacherId: null,
+      isLocked: false,
     };
   };
 

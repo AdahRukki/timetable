@@ -95,6 +95,7 @@ export function initializeTimetable(): Map<string, TimetableSlot> {
           slotType: null,
           slashPairSubject: null,
           slashPairTeacherId: null,
+          isLocked: false,
         });
       }
     }

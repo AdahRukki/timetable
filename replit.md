@@ -117,6 +117,18 @@ Users create and manage all subjects in the Settings page with:
 - Every subject is fully editable and deletable
 - Subjects sync with subject quotas for timetable validation
 
+### Fixed Periods (locked cells & non-teaching activities)
+Two ways to pin something onto the grid so the auto-generator never moves it:
+
+1. **Lock a normal placement** — open any cell, choose subject + teacher, tick "Lock this period". The exact teacher/subject pair is persisted to the database (`timetable_slots.is_locked = 1`) and protected from `Clear & Generate`.
+2. **Schedule a non-teaching activity** — tick "Non-teaching activity" in the placement dialog and type a label (or pick a preset: Assembly, Devotion, Library, Sports, Prep, Lunch). Activities have no teacher (`teacher_id = null`, `slot_type = "activity"`), are always locked, and can be applied to all 6 classes at once via "Apply to all classes".
+
+Both locked rows and activities:
+- Are persisted on placement (POST `/api/timetable/place` with `isActivity` / `isLocked` / `applyToAllClasses`).
+- Survive page refresh and `Clear & Generate` (the auto-generator merges them into its locked-set unconditionally).
+- Require `?force=true` on DELETE (the home page sends this automatically when removing a locked cell).
+- Bulk activity creation validates every target class up front and only writes if all 6 are free.
+
 ### Slash Subjects
 Paired subjects that share a single timetable slot (scheduled simultaneously). Slash pairings are user-configurable from the Settings page — toggle "Slash subject" on a subject and pick its partner from the dropdown. Pairings are mirrored bidirectionally and exclusively in a single transaction (changing or deleting one side automatically clears the partner's back-pointer). No subject pairs are hardcoded.
 

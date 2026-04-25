@@ -1,6 +1,6 @@
 import { type TimetableSlot, type Teacher } from "@shared/schema";
 import { cn } from "@/lib/utils";
-import { Coffee, Plus } from "lucide-react";
+import { Coffee, Plus, Lock, CalendarClock } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface TimetableCellProps {
@@ -44,6 +44,42 @@ export function TimetableCell({
     );
   }
 
+  // Activity slots — non-teaching fixed periods. Render with a distinctive
+  // muted style and a calendar-clock icon so they're obviously different from
+  // a real subject placement.
+  if (slot.slotType === "activity") {
+    return (
+      <Tooltip delayDuration={300}>
+        <TooltipTrigger asChild>
+          <button
+            onClick={onCellClick}
+            className={cn(
+              "timetable-cell w-full flex flex-col items-start justify-center rounded-md px-2 py-1 hover-elevate cursor-pointer text-left border-l-4 border-dashed",
+              "bg-muted/40 border-muted-foreground/40",
+              "h-14",
+            )}
+            data-testid={`cell-activity-${slot.day}-${slot.schoolClass}-${slot.period}`}
+          >
+            <div className="flex items-center gap-1 w-full">
+              <CalendarClock className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+              <span className="text-xs font-medium italic truncate">{slot.subject}</span>
+              <Lock className="h-3 w-3 text-muted-foreground flex-shrink-0 ml-auto" />
+            </div>
+            <div className="text-[10px] text-muted-foreground truncate w-full">
+              Activity
+            </div>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs">
+          <div className="space-y-1">
+            <p className="font-medium">{slot.subject}</p>
+            <p className="text-xs text-muted-foreground">Non-teaching activity (locked)</p>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
   const cellStyle = teacher
     ? { backgroundColor: `${teacher.color}15`, borderColor: teacher.color }
     : {};
@@ -52,12 +88,18 @@ export function TimetableCell({
     <button
       onClick={onCellClick}
       className={cn(
-        "timetable-cell timetable-cell-occupied w-full flex flex-col items-start justify-center rounded-md px-2 py-1 hover-elevate cursor-pointer text-left border-l-4",
+        "timetable-cell timetable-cell-occupied w-full flex flex-col items-start justify-center rounded-md px-2 py-1 hover-elevate cursor-pointer text-left border-l-4 relative",
         isDouble ? "h-[7.25rem]" : "h-14"
       )}
       style={cellStyle}
       data-testid={`cell-${slot.day}-${slot.schoolClass}-${slot.period}`}
     >
+      {slot.isLocked && (
+        <Lock
+          className="h-3 w-3 text-muted-foreground absolute top-1 right-1"
+          data-testid={`icon-locked-${slot.day}-${slot.schoolClass}-${slot.period}`}
+        />
+      )}
       {slot.slotType === "slash" ? (
         <>
           <div className="flex items-center gap-1 w-full">

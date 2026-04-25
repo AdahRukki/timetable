@@ -92,6 +92,14 @@ export interface IStorage {
   getTimetable(userId: string): Promise<Map<string, TimetableSlot>>;
   getSlot(userId: string, day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined>;
   setSlot(userId: string, slot: TimetableSlot): Promise<TimetableSlot>;
+  /**
+   * Atomic batch placement. All slots are written in a single transaction; if
+   * `requireEmpty` is set, every target row is re-checked inside the tx and
+   * the whole batch aborts (throwing) if any row is already occupied. Used by
+   * the "apply to all classes" activity flow so partial bulk writes are
+   * impossible.
+   */
+  setSlotsAtomic(userId: string, slots: TimetableSlot[], requireEmpty: boolean): Promise<TimetableSlot[]>;
   clearSlot(userId: string, day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined>;
   clearAllSlots(userId: string): Promise<void>;
 
@@ -235,6 +243,7 @@ export class DatabaseStorage implements IStorage {
             slotType: null,
             slashPairSubject: null,
             slashPairTeacherId: null,
+            isLocked: false,
           });
         }
       }
@@ -251,9 +260,10 @@ export class DatabaseStorage implements IStorage {
         status: row.status as "empty" | "occupied" | "break",
         subject: row.subject,
         teacherId: row.teacherId,
-        slotType: row.slotType as "single" | "double" | "slash" | null,
+        slotType: row.slotType as "single" | "double" | "slash" | "activity" | null,
         slashPairSubject: row.slashPairSubject,
         slashPairTeacherId: row.slashPairTeacherId,
+        isLocked: row.isLocked === 1,
       });
     }
 
@@ -281,6 +291,7 @@ export class DatabaseStorage implements IStorage {
         slotType: null,
         slashPairSubject: null,
         slashPairTeacherId: null,
+        isLocked: false,
       };
     }
 
@@ -291,9 +302,10 @@ export class DatabaseStorage implements IStorage {
       status: row.status as "empty" | "occupied" | "break",
       subject: row.subject,
       teacherId: row.teacherId,
-      slotType: row.slotType as "single" | "double" | "slash" | null,
+      slotType: row.slotType as "single" | "double" | "slash" | "activity" | null,
       slashPairSubject: row.slashPairSubject,
       slashPairTeacherId: row.slashPairTeacherId,
+      isLocked: row.isLocked === 1,
     };
   }
 
@@ -321,10 +333,70 @@ export class DatabaseStorage implements IStorage {
         slotType: slot.slotType,
         slashPairSubject: slot.slashPairSubject,
         slashPairTeacherId: slot.slashPairTeacherId,
+        isLocked: slot.isLocked ? 1 : 0,
       });
     }
 
     return slot;
+  }
+
+  async setSlotsAtomic(
+    userId: string,
+    slots: TimetableSlot[],
+    requireEmpty: boolean,
+  ): Promise<TimetableSlot[]> {
+    if (slots.length === 0) return [];
+    return await db.transaction(async (tx) => {
+      if (requireEmpty) {
+        // Re-check every target row inside the tx so a concurrent placement
+        // can't slip in between our pre-validation and these writes.
+        for (const slot of slots) {
+          const [existing] = await tx
+            .select({ status: timetableSlots.status })
+            .from(timetableSlots)
+            .where(
+              and(
+                eq(timetableSlots.userId, userId),
+                eq(timetableSlots.day, slot.day),
+                eq(timetableSlots.schoolClass, slot.schoolClass),
+                eq(timetableSlots.period, slot.period),
+              ),
+            );
+          if (existing && existing.status === "occupied") {
+            throw new Error(
+              `SLOT_OCCUPIED:${slot.day}:${slot.schoolClass}:${slot.period}`,
+            );
+          }
+        }
+      }
+
+      for (const slot of slots) {
+        await tx.delete(timetableSlots).where(
+          and(
+            eq(timetableSlots.userId, userId),
+            eq(timetableSlots.day, slot.day),
+            eq(timetableSlots.schoolClass, slot.schoolClass),
+            eq(timetableSlots.period, slot.period),
+          ),
+        );
+        if (slot.status !== "empty") {
+          await tx.insert(timetableSlots).values({
+            userId,
+            day: slot.day,
+            period: slot.period,
+            schoolClass: slot.schoolClass,
+            status: slot.status,
+            subject: slot.subject,
+            teacherId: slot.teacherId,
+            slotType: slot.slotType,
+            slashPairSubject: slot.slashPairSubject,
+            slashPairTeacherId: slot.slashPairTeacherId,
+            isLocked: slot.isLocked ? 1 : 0,
+          });
+        }
+      }
+      return slots;
+    });
   }
 
   async clearSlot(userId: string, day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined> {
@@ -347,11 +419,19 @@ export class DatabaseStorage implements IStorage {
       slotType: null,
       slashPairSubject: null,
       slashPairTeacherId: null,
+      isLocked: false,
     };
   }
 
+  // Bulk-clear used by Clear & Generate. Locked rows (isLocked = 1) are
+  // preserved so fixed periods and non-teaching activities survive a regen.
   async clearAllSlots(userId: string): Promise<void> {
-    await db.delete(timetableSlots).where(eq(timetableSlots.userId, userId));
+    await db.delete(timetableSlots).where(
+      and(
+        eq(timetableSlots.userId, userId),
+        eq(timetableSlots.isLocked, 0),
+      )
+    );
   }
 
   // Actions

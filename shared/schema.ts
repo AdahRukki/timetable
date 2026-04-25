@@ -75,9 +75,15 @@ export const timetableSlots = pgTable("timetable_slots", {
   status: text("status").notNull(),
   subject: text("subject"),
   teacherId: varchar("teacher_id"),
+  // slot_type: "single" | "double" | "slash" | "activity" (non-teaching).
+  // An "activity" slot has subject = label (e.g. "Assembly"), teacherId = null.
   slotType: text("slot_type"),
   slashPairSubject: text("slash_pair_subject"),
   slashPairTeacherId: varchar("slash_pair_teacher_id"),
+  // Fixed-period flag. When 1, the slot survives Clear & Generate and the
+  // auto-generator's lockedSlots map always includes it regardless of the
+  // user's "lock existing" toggle. Defaults to 0 for backwards compatibility.
+  isLocked: integer("is_locked").notNull().default(0),
 });
 
 // Timetable actions table (for history)
@@ -174,9 +180,10 @@ type SavedSlotShape = {
   status: "empty" | "occupied" | "break";
   subject: string | null;
   teacherId: string | null;
-  slotType: "single" | "double" | "slash" | null;
+  slotType: "single" | "double" | "slash" | "activity" | null;
   slashPairSubject: string | null;
   slashPairTeacherId: string | null;
+  isLocked?: boolean;
 };
 
 // Saved timetables table (named snapshots that can be reloaded into the live grid)
@@ -218,7 +225,10 @@ export const insertTeacherSchema = teacherSchema.omit({ id: true });
 export type InsertTeacher = z.infer<typeof insertTeacherSchema>;
 
 // Slot types
-export const slotTypeSchema = z.enum(["single", "double", "slash"]);
+// "activity" = non-teaching fixed period (Assembly, Library, Sports, ...).
+// Activity slots have a label in `subject`, no teacherId, no slash pair, and
+// are always treated as locked by the auto-generator.
+export const slotTypeSchema = z.enum(["single", "double", "slash", "activity"]);
 export type SlotType = z.infer<typeof slotTypeSchema>;
 
 export const slotStatusSchema = z.enum(["empty", "occupied", "break"]);
@@ -234,6 +244,10 @@ export const timetableSlotSchema = z.object({
   slotType: slotTypeSchema.nullable(),
   slashPairSubject: z.string().nullable(),
   slashPairTeacherId: z.string().nullable(),
+  // Fixed-period flag. When true the slot is preserved across Clear & Generate
+  // and the auto-generator never overwrites it. Defaults to false for older
+  // payloads (saved timetables, shared timetables) that predate this column.
+  isLocked: z.boolean().default(false),
 });
 
 export type TimetableSlot = z.infer<typeof timetableSlotSchema>;
@@ -266,16 +280,53 @@ export const validationResultSchema = z.object({
 export type ValidationResult = z.infer<typeof validationResultSchema>;
 
 // Placement request
-export const placementRequestSchema = z.object({
-  day: z.enum(DAYS),
-  period: z.number(),
-  schoolClass: z.enum(CLASSES),
-  subject: z.string(),
-  teacherId: z.string(),
-  slotType: slotTypeSchema,
-  slashPairSubject: z.string().optional(),
-  slashPairTeacherId: z.string().optional(),
-});
+// `isActivity` flips the placement into a non-teaching fixed period: subject
+// becomes a free-text label and teacherId is not required. `isLocked` (default
+// true for activities, false otherwise on the server) marks the slot as a
+// fixed period that survives Clear & Generate. `applyToAllClasses` mirrors the
+// placement to every class in CLASSES inside a single transaction; partial
+// failures roll the whole batch back.
+export const placementRequestSchema = z
+  .object({
+    day: z.enum(DAYS),
+    period: z.number(),
+    schoolClass: z.enum(CLASSES),
+    subject: z.string().min(1, "Subject or activity label is required"),
+    teacherId: z.string().optional(),
+    slotType: slotTypeSchema,
+    slashPairSubject: z.string().optional(),
+    slashPairTeacherId: z.string().optional(),
+    isActivity: z.boolean().optional(),
+    isLocked: z.boolean().optional(),
+    applyToAllClasses: z.boolean().optional(),
+  })
+  .superRefine((data, ctx) => {
+    const isActivity = data.isActivity || data.slotType === "activity";
+    if (isActivity) {
+      if (data.slotType !== "activity") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["slotType"],
+          message: "Activity placements must use slotType=\"activity\"",
+        });
+      }
+      if (data.slashPairSubject || data.slashPairTeacherId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["slashPairSubject"],
+          message: "Activities cannot be slash-paired",
+        });
+      }
+    } else {
+      if (!data.teacherId || data.teacherId.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["teacherId"],
+          message: "Teacher is required",
+        });
+      }
+    }
+  });
 
 export type PlacementRequest = z.infer<typeof placementRequestSchema>;
 

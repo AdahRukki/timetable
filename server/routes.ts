@@ -199,15 +199,46 @@ async function validatePlacement(
   teacherId: string,
   slotType: string,
   slashPairSubject?: string,
-  slashPairTeacherId?: string
+  slashPairTeacherId?: string,
+  // Non-teaching activity (Assembly, Library, ...). When true we skip every
+  // teacher- and subject-quota-based check; only the basic cell sanity checks
+  // (cell empty + period exists in the day) still run.
+  isActivity: boolean = false,
 ): Promise<ValidationResult> {
   const errors: ValidationError[] = [];
-  const teachers = await storage.getTeachers(userId);
   const timetable = await storage.getTimetable(userId);
+
+  // Check that the period actually exists in the day.
+  const maxPeriods = PERIODS_PER_DAY[day];
+  if (period < 1 || period > maxPeriods) {
+    errors.push({
+      code: "INVALID_PERIOD",
+      message: `Period ${period} does not exist on ${day}`,
+      severity: "error",
+    });
+    return { isValid: false, errors };
+  }
+
+  // Activity placements: skip every teacher / subject-quota rule. Just make
+  // sure the cell is currently empty (or the same activity being re-placed).
+  if (isActivity) {
+    const key = `${day}-${schoolClass}-${period}`;
+    const existingSlot = timetable.get(key);
+    if (existingSlot && existingSlot.status === "occupied") {
+      errors.push({
+        code: "SLOT_OCCUPIED",
+        message: `Period ${period} on ${day} for ${schoolClass} is already scheduled`,
+        severity: "error",
+      });
+    }
+    return { isValid: errors.length === 0, errors };
+  }
+
+  const teachers = await storage.getTeachers(userId);
   const userSettings = await storage.getUserSettings(userId);
   const allSubjects = await storage.getSubjects(userId);
   const fatigueLimit = userSettings.fatigueLimit;
-  
+
   const teacher = teachers.find((t) => t.id === teacherId);
   if (!teacher) {
     errors.push({ code: "TEACHER_NOT_FOUND", message: "Teacher not found", severity: "error" });
@@ -532,16 +563,18 @@ export async function registerRoutes(
     try {
       const userId = getUserId(req);
       const data = placementRequestSchema.parse(req.body);
+      const isActivity = data.isActivity || data.slotType === "activity";
       const result = await validatePlacement(
         userId,
         data.day,
         data.period,
         data.schoolClass,
         data.subject,
-        data.teacherId,
+        data.teacherId ?? "",
         data.slotType,
         data.slashPairSubject,
-        data.slashPairTeacherId
+        data.slashPairTeacherId,
+        isActivity,
       );
       res.json(result);
     } catch (error) {
@@ -553,59 +586,123 @@ export async function registerRoutes(
     }
   });
 
-  // Place subject
+  // Place subject (or activity / fixed period).
+  // Supports `applyToAllClasses` for activities only — schedules the same
+  // label across every class at the same day + period in one batch. The whole
+  // batch fails if any single class fails validation.
   app.post("/api/timetable/place", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
       const data = placementRequestSchema.parse(req.body);
-      
-      const validation = await validatePlacement(
-        userId,
-        data.day,
-        data.period,
-        data.schoolClass,
-        data.subject,
-        data.teacherId,
-        data.slotType,
-        data.slashPairSubject,
-        data.slashPairTeacherId
-      );
-      
-      if (!validation.isValid) {
-        res.status(400).json({ error: "Validation failed", validation });
+      const isActivity = data.isActivity || data.slotType === "activity";
+
+      if (data.applyToAllClasses && !isActivity) {
+        res.status(400).json({
+          error: "Apply to all classes is only supported for non-teaching activities",
+        });
         return;
       }
-      
-      const slot: TimetableSlot = {
-        day: data.day,
-        period: data.period,
-        schoolClass: data.schoolClass,
-        status: "occupied",
-        subject: data.subject,
-        teacherId: data.teacherId,
-        slotType: data.slotType,
-        slashPairSubject: data.slashPairSubject || null,
-        slashPairTeacherId: data.slashPairTeacherId || null,
-      };
-      
-      await storage.setSlot(userId, slot);
-      
-      if (data.slotType === "double") {
-        const nextSlot: TimetableSlot = {
-          ...slot,
-          period: data.period + 1,
-        };
-        await storage.setSlot(userId, nextSlot);
+      if (data.applyToAllClasses && data.slotType === "double") {
+        res.status(400).json({
+          error: "Apply to all classes does not support double periods",
+        });
+        return;
       }
-      
-      await storage.addAction(userId, {
-        type: "place",
-        timestamp: Date.now(),
-        slot,
-        previousSlot: null,
+
+      // Default: activities are always locked, real-subject placements honour
+      // the explicit isLocked flag (defaulting to false).
+      const isLocked = data.isLocked ?? isActivity;
+
+      const targetClasses: SchoolClass[] = data.applyToAllClasses
+        ? [...CLASSES]
+        : [data.schoolClass];
+
+      // Validate every target class up-front so partial bulk writes never
+      // happen.
+      const perClassResults: Array<{ schoolClass: SchoolClass; validation: ValidationResult }> = [];
+      for (const cls of targetClasses) {
+        const validation = await validatePlacement(
+          userId,
+          data.day,
+          data.period,
+          cls,
+          data.subject,
+          data.teacherId ?? "",
+          data.slotType,
+          data.slashPairSubject,
+          data.slashPairTeacherId,
+          isActivity,
+        );
+        perClassResults.push({ schoolClass: cls, validation });
+      }
+
+      const failures = perClassResults.filter((r) => !r.validation.isValid);
+      if (failures.length > 0) {
+        res.status(400).json({
+          error: data.applyToAllClasses
+            ? `Validation failed for ${failures.length} class(es); nothing was placed`
+            : "Validation failed",
+          validation: perClassResults[0].validation,
+          perClass: perClassResults,
+        });
+        return;
+      }
+
+      const placedSlots: TimetableSlot[] = [];
+      const allSlotsToWrite: TimetableSlot[] = [];
+      for (const cls of targetClasses) {
+        const slot: TimetableSlot = {
+          day: data.day,
+          period: data.period,
+          schoolClass: cls,
+          status: "occupied",
+          subject: data.subject,
+          teacherId: isActivity ? null : (data.teacherId ?? null),
+          slotType: data.slotType,
+          slashPairSubject: data.slashPairSubject || null,
+          slashPairTeacherId: data.slashPairTeacherId || null,
+          isLocked,
+        };
+        placedSlots.push(slot);
+        allSlotsToWrite.push(slot);
+
+        if (data.slotType === "double") {
+          allSlotsToWrite.push({ ...slot, period: data.period + 1 });
+        }
+      }
+
+      // All-or-nothing write inside a single transaction. If a concurrent
+      // request occupies any of the target rows after our pre-validation,
+      // the in-tx empty-check throws and the whole batch is rolled back.
+      try {
+        await storage.setSlotsAtomic(userId, allSlotsToWrite, true);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.startsWith("SLOT_OCCUPIED:")) {
+          const [, day, cls, period] = msg.split(":");
+          res.status(409).json({
+            error: `Slot ${day} ${cls} P${period} was just taken; nothing was placed`,
+          });
+          return;
+        }
+        throw e;
+      }
+
+      for (const slot of placedSlots) {
+        await storage.addAction(userId, {
+          type: "place",
+          timestamp: Date.now(),
+          slot,
+          previousSlot: null,
+        });
+      }
+
+      res.json({
+        success: true,
+        slot: placedSlots[0],
+        slots: placedSlots,
+        appliedToAllClasses: !!data.applyToAllClasses,
       });
-      
-      res.json({ success: true, slot });
     } catch (error) {
       if (error instanceof z.ZodError) {
         res.status(400).json({ error: "Invalid placement data", details: error.errors });
@@ -615,23 +712,43 @@ export async function registerRoutes(
     }
   });
 
-  // Remove subject
+  // Remove subject. Locked slots (fixed periods + activities) require an
+  // explicit `?force=true` query param so accidental clicks don't wipe a
+  // user-pinned cell.
   app.delete("/api/timetable/:day/:class/:period", isAuthenticated, async (req, res) => {
     const userId = getUserId(req);
     const { day, class: schoolClass, period } = req.params;
-    
+
     if (!DAYS.includes(day as Day) || !CLASSES.includes(schoolClass as SchoolClass)) {
       res.status(400).json({ error: "Invalid day or class" });
       return;
     }
-    
+
+    const periodNum = parseInt(period);
+    const force = req.query.force === "true";
+
+    const existing = await storage.getSlot(
+      userId,
+      day as Day,
+      schoolClass as SchoolClass,
+      periodNum,
+    );
+
+    if (existing && existing.status === "occupied" && existing.isLocked && !force) {
+      res.status(409).json({
+        error: "Locked slot",
+        message: "This is a fixed period. Pass ?force=true to remove it.",
+      });
+      return;
+    }
+
     const cleared = await storage.clearSlot(
       userId,
       day as Day,
       schoolClass as SchoolClass,
-      parseInt(period)
+      periodNum,
     );
-    
+
     if (cleared) {
       res.json({ success: true, slot: cleared });
     } else {
@@ -1562,6 +1679,7 @@ function initTimetable(lockedSlots: Timetable): Timetable {
             subject: null, teacherId: null,
             slotType: null,
             slashPairSubject: null, slashPairTeacherId: null,
+            isLocked: false,
           });
         }
       }
@@ -2509,6 +2627,15 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
       if (slot.status === "occupied") {
         lockedSlots.set(key, { ...slot });
       }
+    }
+  }
+
+  // Fixed periods (isLocked = true) and non-teaching activities are ALWAYS
+  // locked, regardless of the user's lockExisting / clearFirst choice. Merge
+  // them in last so they take precedence over the preserveExisting copies.
+  for (const [key, slot] of Array.from(existingTimetable.entries())) {
+    if (slot.status === "occupied" && (slot.isLocked || slot.slotType === "activity")) {
+      lockedSlots.set(key, { ...slot });
     }
   }
 

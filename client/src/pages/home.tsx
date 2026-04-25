@@ -159,14 +159,54 @@ export default function Home() {
   );
 
   const handlePlace = useCallback(
-    (
+    async (
       subject: string,
       teacherId: string,
       slotType: SlotType,
-      slashPairSubject?: string,
-      slashPairTeacherId?: string
+      slashPairSubject: string | undefined,
+      slashPairTeacherId: string | undefined,
+      options: { isActivity: boolean; isLocked: boolean; applyToAllClasses: boolean },
     ) => {
       if (!selectedSlot) return;
+
+      // Activities and locked placements live in the database — they must
+      // survive refresh and Clear & Generate. Persist them via the API,
+      // then let /api/timetable refetch reseed local state.
+      if (options.isActivity || options.isLocked) {
+        try {
+          const res = await apiRequest("POST", "/api/timetable/place", {
+            day: selectedSlot.day,
+            period: selectedSlot.period,
+            schoolClass: selectedSlot.schoolClass,
+            subject,
+            teacherId: options.isActivity ? null : teacherId,
+            slotType,
+            slashPairSubject: slashPairSubject || null,
+            slashPairTeacherId: slashPairTeacherId || null,
+            isActivity: options.isActivity,
+            isLocked: options.isLocked,
+            applyToAllClasses: options.applyToAllClasses,
+          });
+          await res.json();
+          await queryClient.invalidateQueries({ queryKey: ["/api/timetable"] });
+          toast({
+            title: options.isActivity ? "Activity scheduled" : "Period locked",
+            description: options.applyToAllClasses
+              ? `${subject} added to every class on ${selectedSlot.day} P${selectedSlot.period}`
+              : `${subject} on ${selectedSlot.day} P${selectedSlot.period} (${selectedSlot.schoolClass})`,
+          });
+          setDialogOpen(false);
+          setSelectedSlot(null);
+          setValidation(null);
+        } catch (e) {
+          toast({
+            title: "Could not save",
+            description: e instanceof Error ? e.message : "Server rejected the placement.",
+            variant: "destructive",
+          });
+        }
+        return;
+      }
 
       const validationResult = validatePlacement(timetable, teachers, {
         day: selectedSlot.day,
@@ -206,6 +246,7 @@ export default function Home() {
           slotType,
           slashPairSubject: slashPairSubject || null,
           slashPairTeacherId: slashPairTeacherId || null,
+          isLocked: false,
         };
 
         newTimetable.set(key, newSlot);
@@ -226,6 +267,7 @@ export default function Home() {
               slotType: "double",
               slashPairSubject: slashPairSubject || null,
               slashPairTeacherId: slashPairTeacherId || null,
+              isLocked: false,
             });
           }
         }
@@ -260,8 +302,37 @@ export default function Home() {
     [selectedSlot, timetable, teachers, toast, actionIndex, fatigueLimit]
   );
 
-  const handleRemove = useCallback(() => {
+  const handleRemove = useCallback(async () => {
     if (!selectedSlot) return;
+
+    // Locked rows + activities live in the DB. Hit DELETE so the row is
+    // actually gone from the server, otherwise it'll come right back on the
+    // next /api/timetable refetch.
+    const isPersisted = selectedSlot.slotType === "activity" || !!selectedSlot.isLocked;
+    if (isPersisted) {
+      try {
+        const url =
+          `/api/timetable/${encodeURIComponent(selectedSlot.day)}` +
+          `/${encodeURIComponent(selectedSlot.schoolClass)}` +
+          `/${selectedSlot.period}?force=true`;
+        await apiRequest("DELETE", url);
+        await queryClient.invalidateQueries({ queryKey: ["/api/timetable"] });
+        toast({
+          title: "Period cleared",
+          description: `Removed ${selectedSlot.subject} from ${selectedSlot.day} P${selectedSlot.period}`,
+        });
+        setDialogOpen(false);
+        setSelectedSlot(null);
+        setValidation(null);
+      } catch (e) {
+        toast({
+          title: "Could not remove",
+          description: e instanceof Error ? e.message : "Server rejected the removal.",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
 
     setTimetable((prev) => {
       const newTimetable = new Map(prev);
@@ -364,6 +435,7 @@ export default function Home() {
                 slotType: null,
                 slashPairSubject: null,
                 slashPairTeacherId: null,
+                isLocked: false,
               });
             }
           }
@@ -377,6 +449,7 @@ export default function Home() {
           slotType: null,
           slashPairSubject: null,
           slashPairTeacherId: null,
+          isLocked: false,
         });
       }
 
