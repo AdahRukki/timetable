@@ -381,20 +381,33 @@ export default function TeachersPage() {
                   <Input
                     id="max-consecutive"
                     type="number"
+                    inputMode="numeric"
                     min={1}
                     max={10}
                     placeholder={`Default (${globalFatigueLimit})`}
                     value={formMaxConsecutive ?? ""}
+                    onFocus={(e) => e.currentTarget.select()}
                     onChange={(e) => {
                       const raw = e.target.value;
                       if (raw === "") {
                         setFormMaxConsecutive(null);
                         return;
                       }
-                      const n = Number(raw);
+                      const cleaned = raw.replace(/[^\d]/g, "");
+                      if (cleaned === "") {
+                        setFormMaxConsecutive(null);
+                        return;
+                      }
+                      const n = Number(cleaned);
                       if (!Number.isFinite(n)) return;
-                      const clamped = Math.max(1, Math.min(10, Math.round(n)));
+                      const clamped = Math.max(1, Math.min(10, Math.trunc(n)));
                       setFormMaxConsecutive(clamped);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        (e.target as HTMLInputElement).blur();
+                      }
                     }}
                     className="w-32"
                     data-testid="input-max-consecutive"

@@ -103,6 +103,13 @@ export interface IStorage {
   // Subject Quotas
   getSubjectQuotas(userId: string): Promise<SubjectQuota[]>;
   updateSubjectQuota(userId: string, subject: string, quota: Partial<SubjectQuota>): Promise<SubjectQuota | undefined>;
+  updateSlashPairQuota(
+    userId: string,
+    subjectA: string,
+    subjectB: string,
+    field: "jssQuota" | "ss1Quota" | "ss2ss3Quota",
+    value: number,
+  ): Promise<{ a: SubjectQuota; b: SubjectQuota } | undefined>;
 
   // Subjects
   getSubjects(userId: string): Promise<Subject[]>;
@@ -417,6 +424,47 @@ export class DatabaseStorage implements IStorage {
       preferredPeriods: updates.preferredPeriods ?? existing.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
       requiredDoubles: updates.requiredDoubles ?? existing.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
     };
+  }
+
+  async updateSlashPairQuota(
+    userId: string,
+    subjectA: string,
+    subjectB: string,
+    field: "jssQuota" | "ss1Quota" | "ss2ss3Quota",
+    value: number,
+  ): Promise<{ a: SubjectQuota; b: SubjectQuota } | undefined> {
+    const setValues: Partial<Record<"jssQuota" | "ss1Quota" | "ss2ss3Quota", number>> = {
+      [field]: value,
+    };
+
+    return await db.transaction(async (tx) => {
+      const [a] = await tx.select().from(subjectQuotas).where(
+        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subjectA))
+      );
+      const [b] = await tx.select().from(subjectQuotas).where(
+        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subjectB))
+      );
+      if (!a || !b) return undefined;
+
+      await tx.update(subjectQuotas).set(setValues).where(
+        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subjectA))
+      );
+      await tx.update(subjectQuotas).set(setValues).where(
+        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subjectB))
+      );
+
+      const toQuota = (row: typeof a): SubjectQuota => ({
+        subject: row.subject,
+        jssQuota: field === "jssQuota" ? value : row.jssQuota,
+        ss1Quota: field === "ss1Quota" ? value : row.ss1Quota,
+        ss2ss3Quota: field === "ss2ss3Quota" ? value : row.ss2ss3Quota,
+        isSlashSubject: row.isSlashSubject === 1,
+        preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
+        requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
+      });
+
+      return { a: toQuota(a), b: toQuota(b) };
+    });
   }
 
   // Subjects

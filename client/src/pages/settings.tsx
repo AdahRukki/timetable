@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { NumberInput } from "@/components/ui/number-input";
 import { useState, useEffect, useMemo } from "react";
 
 export default function SettingsPage() {
@@ -96,6 +97,28 @@ export default function SettingsPage() {
     onError: (error) => {
       toast({
         title: "Failed to update quota",
+        description: error instanceof Error ? error.message : "Invalid quota value",
+        variant: "destructive",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
+    },
+  });
+
+  const updateSlashPairQuotaMutation = useMutation({
+    mutationFn: async (payload: {
+      subjectA: string;
+      subjectB: string;
+      field: "jssQuota" | "ss1Quota" | "ss2ss3Quota";
+      value: number;
+    }) => {
+      return apiRequest("PATCH", "/api/quotas/slash-pair", payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to update slash pair",
         description: error instanceof Error ? error.message : "Invalid quota value",
         variant: "destructive",
       });
@@ -392,39 +415,36 @@ export default function SettingsPage() {
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="jss-quota">JSS Quota</Label>
-                  <Input
+                  <NumberInput
                     id="jss-quota"
-                    type="number"
                     min={0}
                     max={10}
                     value={newSubjectJssQuota}
-                    onChange={(e) => setNewSubjectJssQuota(parseInt(e.target.value) || 0)}
+                    onChange={setNewSubjectJssQuota}
                     data-testid="input-jss-quota"
                   />
                   <p className="text-xs text-muted-foreground">× 3 classes = {newSubjectJssQuota * 3}</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="ss1-quota">SS1 Quota</Label>
-                  <Input
+                  <NumberInput
                     id="ss1-quota"
-                    type="number"
                     min={0}
                     max={10}
                     value={newSubjectSs1Quota}
-                    onChange={(e) => setNewSubjectSs1Quota(parseInt(e.target.value) || 0)}
+                    onChange={setNewSubjectSs1Quota}
                     data-testid="input-ss1-quota"
                   />
                   <p className="text-xs text-muted-foreground">× 1 class = {newSubjectSs1Quota}</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="ss2ss3-quota">SS2/SS3 Quota</Label>
-                  <Input
+                  <NumberInput
                     id="ss2ss3-quota"
-                    type="number"
                     min={0}
                     max={10}
                     value={newSubjectSs2ss3Quota}
-                    onChange={(e) => setNewSubjectSs2ss3Quota(parseInt(e.target.value) || 0)}
+                    onChange={setNewSubjectSs2ss3Quota}
                     data-testid="input-ss2ss3-quota"
                   />
                   <p className="text-xs text-muted-foreground">× 2 classes = {newSubjectSs2ss3Quota * 2}</p>
@@ -494,37 +514,34 @@ export default function SettingsPage() {
                 <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-1">
                     <Label htmlFor="doubles-jss" className="text-xs text-muted-foreground">JSS</Label>
-                    <Input
+                    <NumberInput
                       id="doubles-jss"
-                      type="number"
                       min={0}
-                      max={5}
+                      max={4}
                       value={newSubjectDoublesJss}
-                      onChange={(e) => setNewSubjectDoublesJss(Math.max(0, parseInt(e.target.value) || 0))}
+                      onChange={setNewSubjectDoublesJss}
                       data-testid="input-doubles-jss"
                     />
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor="doubles-ss1" className="text-xs text-muted-foreground">SS1</Label>
-                    <Input
+                    <NumberInput
                       id="doubles-ss1"
-                      type="number"
                       min={0}
-                      max={5}
+                      max={4}
                       value={newSubjectDoublesSs1}
-                      onChange={(e) => setNewSubjectDoublesSs1(Math.max(0, parseInt(e.target.value) || 0))}
+                      onChange={setNewSubjectDoublesSs1}
                       data-testid="input-doubles-ss1"
                     />
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor="doubles-ss2ss3" className="text-xs text-muted-foreground">SS2/SS3</Label>
-                    <Input
+                    <NumberInput
                       id="doubles-ss2ss3"
-                      type="number"
                       min={0}
-                      max={5}
+                      max={4}
                       value={newSubjectDoublesSs2ss3}
-                      onChange={(e) => setNewSubjectDoublesSs2ss3(Math.max(0, parseInt(e.target.value) || 0))}
+                      onChange={setNewSubjectDoublesSs2ss3}
                       data-testid="input-doubles-ss2ss3"
                     />
                   </div>
@@ -698,16 +715,18 @@ export default function SettingsPage() {
                     </Badge>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {quotas.filter(q => q.jssQuota > 0).map((q) => (
-                      <QuotaInput
-                        key={q.subject}
-                        subject={q.subject}
-                        value={q.jssQuota}
-                        onChange={(v) => handleQuotaChange(q.subject, "jssQuota", v)}
-                        isSlash={q.isSlashSubject}
-                        sectionTotal={q.jssQuota * 3}
-                      />
-                    ))}
+                    {[...quotas]
+                      .sort((a, b) => a.subject.localeCompare(b.subject))
+                      .map((q) => (
+                        <QuotaInput
+                          key={q.subject}
+                          subject={q.subject}
+                          value={q.jssQuota}
+                          onChange={(v) => handleQuotaChange(q.subject, "jssQuota", v)}
+                          isSlash={q.isSlashSubject}
+                          sectionTotal={q.jssQuota * 3}
+                        />
+                      ))}
                   </div>
                 </div>
 
@@ -721,16 +740,18 @@ export default function SettingsPage() {
                     </Badge>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {quotas.filter(q => q.ss1Quota > 0).map((q) => (
-                      <QuotaInput
-                        key={q.subject}
-                        subject={q.subject}
-                        value={q.ss1Quota}
-                        onChange={(v) => handleQuotaChange(q.subject, "ss1Quota", v)}
-                        isSlash={q.isSlashSubject}
-                        sectionTotal={q.ss1Quota}
-                      />
-                    ))}
+                    {[...quotas]
+                      .sort((a, b) => a.subject.localeCompare(b.subject))
+                      .map((q) => (
+                        <QuotaInput
+                          key={q.subject}
+                          subject={q.subject}
+                          value={q.ss1Quota}
+                          onChange={(v) => handleQuotaChange(q.subject, "ss1Quota", v)}
+                          isSlash={q.isSlashSubject}
+                          sectionTotal={q.ss1Quota}
+                        />
+                      ))}
                   </div>
                 </div>
 
@@ -776,8 +797,12 @@ export default function SettingsPage() {
                             <p className="text-sm text-muted-foreground mb-3">Slash Subject Pairs (scheduled simultaneously)</p>
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                               {pairs.map(({ a, b }) => {
-                                const q = quotas.find((q) => q.subject === a);
-                                const quota = q?.ss2ss3Quota || 0;
+                                const qa = quotas.find((q) => q.subject === a);
+                                const qb = quotas.find((q) => q.subject === b);
+                                // If the two halves disagree (legacy data), show
+                                // the larger value so the user can see something
+                                // sensible; the next save syncs both atomically.
+                                const quota = Math.max(qa?.ss2ss3Quota ?? 0, qb?.ss2ss3Quota ?? 0);
                                 return (
                                   <div key={`${a}-${b}`} className="flex items-center gap-2">
                                     <div className="flex-1">
@@ -787,17 +812,19 @@ export default function SettingsPage() {
                                         <span className="text-xs text-muted-foreground ml-1">({quota * 2} total)</span>
                                       </Label>
                                     </div>
-                                    <Input
-                                      type="number"
+                                    <NumberInput
                                       min={0}
                                       max={10}
                                       value={quota}
-                                      onChange={(e) => {
-                                        const v = Math.max(0, Math.min(10, parseInt(e.target.value) || 0));
-                                        handleQuotaChange(a, "ss2ss3Quota", v);
-                                        handleQuotaChange(b, "ss2ss3Quota", v);
+                                      onChange={(v) => {
+                                        updateSlashPairQuotaMutation.mutate({
+                                          subjectA: a,
+                                          subjectB: b,
+                                          field: "ss2ss3Quota",
+                                          value: v,
+                                        });
                                       }}
-                                      className="w-16 text-center"
+                                      className="w-16"
                                       data-testid={`input-quota-slash-${a.toLowerCase()}-${b.toLowerCase()}`}
                                     />
                                     <span className="text-sm text-muted-foreground">per week</span>
@@ -810,8 +837,9 @@ export default function SettingsPage() {
 
                         <p className="text-sm text-muted-foreground mb-3">Regular Subjects</p>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {quotas
-                            .filter((q) => q.ss2ss3Quota > 0 && !slashNamesForBadge.has(q.subject))
+                          {[...quotas]
+                            .filter((q) => !slashNamesForBadge.has(q.subject))
+                            .sort((a, b) => a.subject.localeCompare(b.subject))
                             .map((q) => (
                               <QuotaInput
                                 key={q.subject}
@@ -861,12 +889,11 @@ export default function SettingsPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <Input
-                  type="number"
+                <NumberInput
                   min={1}
                   max={10}
                   value={fatigueLimit}
-                  onChange={(e) => setFatigueLimit(Math.min(10, Math.max(1, parseInt(e.target.value) || 1)))}
+                  onChange={setFatigueLimit}
                   className="w-20"
                   data-testid="input-fatigue-limit"
                 />
@@ -900,12 +927,11 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-2">
                   <div className="flex items-center gap-2">
                     <Label className="text-xs text-muted-foreground whitespace-nowrap">Default</Label>
-                    <Input
-                      type="number"
+                    <NumberInput
                       min={0}
                       max={10}
                       value={maxFreePeriodsPerWeek}
-                      onChange={(e) => setMaxFreePeriodsPerWeek(Math.min(10, Math.max(0, parseInt(e.target.value) || 0)))}
+                      onChange={(n) => setMaxFreePeriodsPerWeek(n)}
                       className="w-20"
                       data-testid="input-max-free-week"
                     />
@@ -953,16 +979,20 @@ export default function SettingsPage() {
                           </button>
                         )}
                       </Label>
-                      <Input
-                        type="number"
+                      <NumberInput
                         min={0}
                         max={10}
                         value={value}
-                        onChange={(e) =>
-                          setFreePeriodsPerClass((prev) => ({
-                            ...prev,
-                            [cls]: Math.min(10, Math.max(0, parseInt(e.target.value) || 0)),
-                          }))
+                        onChange={(n) =>
+                          setFreePeriodsPerClass((prev) => {
+                            const next = { ...prev };
+                            if (n === maxFreePeriodsPerWeek) {
+                              delete next[cls];
+                            } else {
+                              next[cls] = n;
+                            }
+                            return next;
+                          })
                         }
                         className={`text-center ${isOverride ? "border-primary" : ""}`}
                         data-testid={`input-free-${cls.toLowerCase()}`}
@@ -981,12 +1011,11 @@ export default function SettingsPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <Input
-                  type="number"
+                <NumberInput
                   min={0}
                   max={5}
                   value={maxFreePeriodsPerDay}
-                  onChange={(e) => setMaxFreePeriodsPerDay(Math.min(5, Math.max(0, parseInt(e.target.value) || 0)))}
+                  onChange={(n) => setMaxFreePeriodsPerDay(n)}
                   className="w-20"
                   data-testid="input-max-free-day"
                 />
@@ -1179,21 +1208,6 @@ function QuotaInput({
   isSlash: boolean;
   sectionTotal: number;
 }) {
-  const [localValue, setLocalValue] = useState(value.toString());
-  
-  useEffect(() => {
-    setLocalValue(value.toString());
-  }, [value]);
-
-  const handleBlur = () => {
-    const numValue = parseInt(localValue) || 0;
-    const clampedValue = Math.max(0, Math.min(10, numValue));
-    setLocalValue(clampedValue.toString());
-    if (clampedValue !== value) {
-      onChange(clampedValue);
-    }
-  };
-
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1">
@@ -1205,14 +1219,12 @@ function QuotaInput({
           <span className="text-xs text-muted-foreground ml-1">({sectionTotal} total)</span>
         </Label>
       </div>
-      <Input
-        type="number"
+      <NumberInput
         min={0}
         max={10}
-        value={localValue}
-        onChange={(e) => setLocalValue(e.target.value)}
-        onBlur={handleBlur}
-        className="w-16 text-center"
+        value={value}
+        onChange={onChange}
+        className="w-16"
         data-testid={`input-quota-${subject.toLowerCase().replace(/\s+/g, "-")}`}
       />
       <span className="text-sm text-muted-foreground">per week</span>

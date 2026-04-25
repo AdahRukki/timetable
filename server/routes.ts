@@ -656,6 +656,39 @@ export async function registerRoutes(
     res.json(quotas);
   });
 
+  // Atomically update both partners of a slash pair to the same quota value.
+  // Used by the slash-pair input on the Settings page so the two halves can
+  // never end up disagreeing if a network hiccup interrupts a sequential pair
+  // of writes.
+  app.patch("/api/quotas/slash-pair", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const slashPairSchema = z.object({
+        subjectA: z.string().min(1),
+        subjectB: z.string().min(1),
+        field: z.enum(["jssQuota", "ss1Quota", "ss2ss3Quota"]),
+        value: z.number().int().min(0).max(10),
+      });
+      const { subjectA, subjectB, field, value } = slashPairSchema.parse(req.body);
+      if (subjectA === subjectB) {
+        res.status(400).json({ error: "Slash pair partners must differ" });
+        return;
+      }
+      const result = await storage.updateSlashPairQuota(userId, subjectA, subjectB, field, value);
+      if (!result) {
+        res.status(404).json({ error: "Slash pair partner not found" });
+        return;
+      }
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid slash-pair quota data", details: error.errors });
+      } else {
+        res.status(500).json({ error: "Failed to update slash-pair quota" });
+      }
+    }
+  });
+
   // Update subject quota
   app.patch("/api/quotas/:subject", isAuthenticated, async (req, res) => {
     try {
