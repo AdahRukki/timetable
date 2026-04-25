@@ -965,17 +965,20 @@ export async function registerRoutes(
   // ===== Auto-Generation =====
   
   app.post("/api/timetable/autogenerate", isAuthenticated, async (req, res) => {
+    const userId = (() => { try { return getUserId(req); } catch { return "<unknown>"; } })();
+    const { lockExisting = false, clearFirst = true } = req.body ?? {};
     try {
-      const userId = getUserId(req);
-      const { lockExisting = false, clearFirst = true } = req.body;
-      
       const result = await autoGenerateTimetable(userId, lockExisting, clearFirst);
       res.json(result);
     } catch (error) {
-      console.error("Auto-generate error:", error);
-      res.status(500).json({ 
-        success: false, 
-        slotsPlaced: 0, 
+      const stack = error instanceof Error ? (error.stack ?? error.message) : String(error);
+      console.error(
+        `[autogenerate] failed user=${userId} lockExisting=${lockExisting} clearFirst=${clearFirst}:`,
+        stack,
+      );
+      res.status(500).json({
+        success: false,
+        slotsPlaced: 0,
         warnings: [],
         errors: ["Failed to auto-generate timetable: " + (error instanceof Error ? error.message : "Unknown error")]
       });
