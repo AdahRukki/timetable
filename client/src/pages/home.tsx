@@ -174,19 +174,24 @@ export default function Home() {
       // then let /api/timetable refetch reseed local state.
       if (options.isActivity || options.isLocked) {
         try {
-          const res = await apiRequest("POST", "/api/timetable/place", {
+          const body: Record<string, unknown> = {
             day: selectedSlot.day,
             period: selectedSlot.period,
             schoolClass: selectedSlot.schoolClass,
             subject,
-            teacherId: options.isActivity ? null : teacherId,
             slotType,
-            slashPairSubject: slashPairSubject || null,
-            slashPairTeacherId: slashPairTeacherId || null,
             isActivity: options.isActivity,
             isLocked: options.isLocked,
             applyToAllClasses: options.applyToAllClasses,
-          });
+          };
+          if (!options.isActivity) {
+            if (teacherId) body.teacherId = teacherId;
+            if (slotType === "slash") {
+              if (slashPairSubject) body.slashPairSubject = slashPairSubject;
+              if (slashPairTeacherId) body.slashPairTeacherId = slashPairTeacherId;
+            }
+          }
+          const res = await apiRequest("POST", "/api/timetable/place", body);
           await res.json();
           await queryClient.invalidateQueries({ queryKey: ["/api/timetable"] });
           toast({

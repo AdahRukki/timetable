@@ -81,7 +81,7 @@ PostgreSQL with Drizzle ORM. Tables:
 - `sessions` - Session storage (managed by auth)
 - `teachers` - Teacher profiles with subjects, classes, unavailability (user-scoped)
 - `timetable_slots` - Individual period assignments (user-scoped)
-- `timetable_actions` - Action history for audit (user-scoped)
+- `timetable_actions` - Action history for audit (user-scoped). `timestamp` column is `bigint` to hold `Date.now()` millisecond values (a plain `integer` overflows around the year 2038 / actually as soon as ms exceed 2^31, which is now).
 - `subject_quotas` - Period allocations per subject (user-scoped)
 - `subjects` - Custom subject definitions with per-class quotas (user-scoped)
 - `user_settings` - User preferences including fatigue limit (user-scoped)

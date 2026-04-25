@@ -707,6 +707,12 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         res.status(400).json({ error: "Invalid placement data", details: error.errors });
       } else {
+        console.error("[/api/timetable/place] failed", {
+          userId: (req.user as { claims?: { sub?: string } } | undefined)?.claims?.sub
+            ?? (req.session as unknown as { passport?: { user?: { id?: string } } } | undefined)?.passport?.user?.id,
+          body: req.body,
+          error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
+        });
         res.status(500).json({ error: "Failed to place subject" });
       }
     }
