@@ -1234,6 +1234,7 @@ function scheduleSubject(
   teachers: Teacher[],
   fatigueLimit: number,
   warnings: string[],
+  flaggedIds: Set<string>,
   relaxDailyRule = false
 ): number {
   const eligible = teachers.filter(t => teacherCanTeachSubjectToClass(t, subject, cls));
@@ -1249,11 +1250,10 @@ function scheduleSubject(
     for (const period of periods) {
       if (placed >= needed) break;
       const remainingNeeded = needed - placed;
-      // Load-balancing: sort eligible teachers by current load (lightest first),
-      // with a shuffled base order so equally-loaded teachers are randomly tie-broken.
-      const sortedEligible = shuffle([...eligible]).sort(
-        (a, b) => countTeacherLoad(timetable, a.id) - countTeacherLoad(timetable, b.id)
-      );
+      // Load-balancing: sort eligible teachers by current load (lightest first).
+      // For flagged-vs-flagged ties, prefer teachers already teaching today
+      // (compresses their week).
+      const sortedEligible = sortEligibleByLoadAndDay(eligible, timetable, day, flaggedIds);
       for (const teacher of sortedEligible) {
         const result = tryPlace(
           timetable, cls, day, period, subject, teacher,
@@ -1344,6 +1344,83 @@ function countTeacherLoad(timetable: Timetable, teacherId: string): number {
     }
   }
   return count;
+}
+
+// ===== Day-off-aware scheduling helpers =====
+// A teacher is "flagged" (eligible for day-off consolidation) when they have
+// at least one entry in their `unavailable` map. Non-flagged teachers behave
+// exactly as before — their ranking is unaffected by day-off considerations.
+function buildFlaggedTeacherIds(teachers: Teacher[]): Set<string> {
+  const set = new Set<string>();
+  for (const t of teachers) {
+    const u = t.unavailable;
+    if (!u) continue;
+    for (const day of DAYS) {
+      const arr = u[day];
+      if (arr && arr.length > 0) { set.add(t.id); break; }
+    }
+  }
+  return set;
+}
+
+function teacherTeachesOnDay(timetable: Timetable, teacherId: string, day: Day): boolean {
+  for (const cls of CLASSES) {
+    for (let p = 1; p <= PERIODS_PER_DAY[day]; p++) {
+      const slot = timetable.get(slotKey(day, cls, p));
+      if (!slot || slot.status !== "occupied") continue;
+      if (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId) return true;
+    }
+  }
+  return false;
+}
+
+function countDistinctTeachingDays(timetable: Timetable, teacherId: string): number {
+  let n = 0;
+  for (const day of DAYS) if (teacherTeachesOnDay(timetable, teacherId, day)) n++;
+  return n;
+}
+
+// Sort eligible teachers by current load (lightest first), preserving the
+// previous tie-breaker (random) for non-flagged teachers. When BOTH compared
+// teachers are flagged, prefer the one already teaching on `day` (compresses
+// their week) and then prefer fewer distinct teaching days so far.
+function sortEligibleByLoadAndDay(
+  eligible: Teacher[],
+  timetable: Timetable,
+  day: Day,
+  flaggedIds: Set<string>,
+): Teacher[] {
+  const annotated = shuffle([...eligible]).map((t) => {
+    const flagged = flaggedIds.has(t.id);
+    return {
+      teacher: t,
+      load: countTeacherLoad(timetable, t.id),
+      flagged,
+      teachesToday: flagged ? teacherTeachesOnDay(timetable, t.id, day) : false,
+      distinctDays: flagged ? countDistinctTeachingDays(timetable, t.id) : 0,
+    };
+  });
+  annotated.sort((a, b) => {
+    if (a.load !== b.load) return a.load - b.load;
+    if (a.flagged && b.flagged) {
+      if (a.teachesToday !== b.teachesToday) return a.teachesToday ? -1 : 1;
+      if (a.distinctDays !== b.distinctDays) return a.distinctDays - b.distinctDays;
+    }
+    return 0;
+  });
+  return annotated.map((x) => x.teacher);
+}
+
+function countFlaggedTeachersWithDayOff(timetable: Timetable, flaggedIds: Set<string>): number {
+  let n = 0;
+  for (const id of Array.from(flaggedIds)) {
+    let hasOff = false;
+    for (const day of DAYS) {
+      if (!teacherTeachesOnDay(timetable, id, day)) { hasOff = true; break; }
+    }
+    if (hasOff) n++;
+  }
+  return n;
 }
 
 function removeExcess(timetable: Timetable, cls: SchoolClass, subject: string, excess: number, lockedSlots: Timetable): void {
@@ -1566,17 +1643,16 @@ function placeOneSubjectPeriod(
   teachers: Teacher[],
   fatigueLimit: number,
   remainingNeeded: number,
+  flaggedIds: Set<string>,
   preferredPeriods: number[] = [],
 ): number {
   const eligible = teachers.filter((t) => teacherCanTeachSubjectToClass(t, subject, cls));
   if (eligible.length === 0) return 0;
-  const sortedEligible = shuffle([...eligible]).sort(
-    (a, b) => countTeacherLoad(timetable, a.id) - countTeacherLoad(timetable, b.id),
-  );
   for (const day of shuffle([...DAYS] as Day[])) {
     if (subjectAlreadyTodayForClass(timetable, cls, day, subject)) continue;
     const allPeriods = Array.from({ length: PERIODS_PER_DAY[day] }, (_, i) => i + 1);
     const periods = periodsByPreference(allPeriods, preferredPeriods);
+    const sortedEligible = sortEligibleByLoadAndDay(eligible, timetable, day, flaggedIds);
     for (const period of periods) {
       for (const teacher of sortedEligible) {
         const r = tryPlace(
@@ -1601,6 +1677,7 @@ function fillSpecificSlot(
   remainingMap: Map<string, number>,
   teachers: Teacher[],
   fatigueLimit: number,
+  flaggedIds: Set<string>,
   preferenceMap?: Map<string, number[]>,
 ): boolean {
   const slot = timetable.get(slotKey(day, cls, period));
@@ -1623,9 +1700,7 @@ function fillSpecificSlot(
     if (subjectAlreadyTodayForClass(timetable, cls, day, subject)) continue;
     const eligible = teachers.filter((t) => teacherCanTeachSubjectToClass(t, subject, cls));
     if (eligible.length === 0) continue;
-    const sortedEligible = shuffle([...eligible]).sort(
-      (a, b) => countTeacherLoad(timetable, a.id) - countTeacherLoad(timetable, b.id),
-    );
+    const sortedEligible = sortEligibleByLoadAndDay(eligible, timetable, day, flaggedIds);
     for (const teacher of sortedEligible) {
       const r = tryPlace(timetable, cls, day, period, subject, teacher, fatigueLimit, false, false);
       if (r > 0) {
@@ -1990,6 +2065,128 @@ function crossClassRebalance(
   return movesApplied;
 }
 
+// Day-off consolidation: for each flagged teacher (those with at least one
+// `unavailable` entry), if they have a single non-empty teaching day with
+// only 1-2 periods, try to relocate those periods to other days where they
+// already teach so the teacher gains a fully empty day. All existing rules
+// (clash, fatigue, daily-occurrence, breaks, locked, slash) are honoured.
+function consolidateTeacherDays(
+  timetable: Timetable,
+  flaggedIds: Set<string>,
+  teachers: Teacher[],
+  fatigueLimit: number,
+  lockedSlots: Timetable,
+): number {
+  let moves = 0;
+  for (const teacher of teachers) {
+    if (!flaggedIds.has(teacher.id)) continue;
+
+    // Group teacher's current periods by day.
+    type SlotRef = { key: string; day: Day; cls: SchoolClass; period: number; subject: string };
+    const byDay = new Map<Day, SlotRef[]>();
+    for (const day of DAYS) {
+      for (const cls of CLASSES) {
+        for (let p = 1; p <= PERIODS_PER_DAY[day]; p++) {
+          const key = slotKey(day, cls, p);
+          const slot = timetable.get(key);
+          if (!slot || slot.status !== "occupied") continue;
+          if (slot.teacherId !== teacher.id && slot.slashPairTeacherId !== teacher.id) continue;
+          if (!byDay.has(day)) byDay.set(day, []);
+          byDay.get(day)!.push({ key, day, cls, period: p, subject: slot.subject ?? "" });
+        }
+      }
+    }
+    if (byDay.size === 0) continue;
+    // Skip if the teacher already has a fully empty day.
+    if (byDay.size < DAYS.length) continue;
+
+    // Pick the lightest non-empty day with 1 or 2 periods (cheapest to move).
+    const sorted = Array.from(byDay.entries()).sort((a, b) => a[1].length - b[1].length);
+    const [lightDay, lightSlots] = sorted[0];
+    if (lightSlots.length === 0 || lightSlots.length > 2) continue;
+
+    // Refuse to touch locked or slash slots — those moves are out of scope.
+    if (lightSlots.some((s) => lockedSlots.has(s.key))) continue;
+    const slotsRaw = lightSlots.map((s) => timetable.get(s.key)!);
+    if (slotsRaw.some((s) => s.slotType !== "single")) continue;
+
+    // Plan a relocation for each period on the light day. We apply each move
+    // immediately so subsequent candidate checks (notably fatigue and clash)
+    // see the prior planned placements. If any source can't be relocated we
+    // revert every applied move atomically — leaving the timetable unchanged.
+    type Move = {
+      fromKey: string;
+      toKey: string;
+      subject: string;
+      cls: SchoolClass;
+      fromSnapshot: TimetableSlot;
+      toSnapshot: TimetableSlot;
+    };
+    const applied: Move[] = [];
+    let allOk = true;
+
+    const revert = () => {
+      for (let i = applied.length - 1; i >= 0; i--) {
+        const m = applied[i];
+        const fromSlot = timetable.get(m.fromKey)!;
+        const toSlot = timetable.get(m.toKey)!;
+        Object.assign(fromSlot, m.fromSnapshot);
+        Object.assign(toSlot, m.toSnapshot);
+      }
+    };
+
+    for (const src of lightSlots) {
+      let placed = false;
+      const otherDays = shuffle(DAYS.filter((d) => d !== lightDay) as Day[]);
+      outer: for (const day of otherDays) {
+        // Daily-occurrence rule: subject can't already be on this day for cls.
+        if (subjectAlreadyTodayForClass(timetable, src.cls, day, src.subject)) continue;
+        const periods = shuffle(Array.from({ length: PERIODS_PER_DAY[day] }, (_, i) => i + 1));
+        for (const period of periods) {
+          const targetKey = slotKey(day, src.cls, period);
+          if (lockedSlots.has(targetKey)) continue;
+          const target = timetable.get(targetKey);
+          if (!target || target.status !== "empty") continue;
+          if (isTeacherUnavailable(teacher, day, period)) continue;
+          if (!isTeacherFreeAt(timetable, teacher.id, day, period)) continue;
+          if (wouldExceedFatigue(timetable, teacher.id, day, [period], fatigueLimit, teacher.maxConsecutivePeriods ?? null)) continue;
+          // Snapshot, then apply this move. Subsequent moves' fatigue/clash
+          // checks will now include this placement.
+          const fromSlot = timetable.get(src.key)!;
+          const fromSnapshot: TimetableSlot = { ...fromSlot };
+          const toSnapshot: TimetableSlot = { ...target };
+          target.status = "occupied";
+          target.subject = src.subject;
+          target.teacherId = teacher.id;
+          target.slotType = "single";
+          target.slashPairSubject = null;
+          target.slashPairTeacherId = null;
+          fromSlot.status = "empty";
+          fromSlot.subject = null;
+          fromSlot.teacherId = null;
+          fromSlot.slotType = null;
+          fromSlot.slashPairSubject = null;
+          fromSlot.slashPairTeacherId = null;
+          applied.push({
+            fromKey: src.key, toKey: targetKey,
+            subject: src.subject, cls: src.cls,
+            fromSnapshot, toSnapshot,
+          });
+          placed = true;
+          break outer;
+        }
+      }
+      if (!placed) { allOk = false; break; }
+    }
+    if (!allOk || applied.length === 0) {
+      revert();
+      continue;
+    }
+    moves++;
+  }
+  return moves;
+}
+
 function runAttempt(
   teachers: Teacher[],
   quotas: SubjectQuota[],
@@ -1999,6 +2196,7 @@ function runAttempt(
   attemptNumber: number,
   freePeriodsPerClass: Record<string, number>,
   defaultMaxFreePerWeek: number,
+  flaggedIds: Set<string>,
 ): { timetable: Timetable; emptyCount: number; warnings: string[] } {
   const timetable = initTimetable(lockedSlots);
   const warnings: string[] = [];
@@ -2080,9 +2278,7 @@ function runAttempt(
         if (remNeeded < 2) break;
         const allPeriods = Array.from({ length: PERIODS_PER_DAY[day] }, (_, i) => i + 1);
         const periods = periodsByPreference(allPeriods, pref);
-        const sortedEligible = shuffle([...eligible]).sort(
-          (a, b) => countTeacherLoad(timetable, a.id) - countTeacherLoad(timetable, b.id),
-        );
+        const sortedEligible = sortEligibleByLoadAndDay(eligible, timetable, day, flaggedIds);
         let placedThisDay = false;
         for (const period of periods) {
           if (placedThisDay) break;
@@ -2130,7 +2326,7 @@ function runAttempt(
       const remaining = remainingByClass.get(cls)!;
       if (remaining.size === 0) continue;
       fillSpecificSlot(
-        timetable, cls, day, 1, remaining, teachers, fatigueLimit,
+        timetable, cls, day, 1, remaining, teachers, fatigueLimit, flaggedIds,
         preferenceByClass.get(cls),
       );
     }
@@ -2180,7 +2376,7 @@ function runAttempt(
         const q = quotas.find((x) => x.subject === subject);
         const pref = q ? getPreferredPeriods(q, cls) : [];
         const placed = placeOneSubjectPeriod(
-          timetable, cls, subject, teachers, fatigueLimit, remNeeded, pref,
+          timetable, cls, subject, teachers, fatigueLimit, remNeeded, flaggedIds, pref,
         );
         if (placed > 0) {
           const newRem = remNeeded - placed;
@@ -2251,6 +2447,14 @@ function runAttempt(
     p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
   }
 
+  // PHASE 9: Day-off consolidation for flagged teachers (those with at least
+  // one `unavailable` entry). Tries to give them a fully empty day by
+  // relocating periods from their lightest day to other days they already
+  // teach. Only applies moves that satisfy all existing rules.
+  if (flaggedIds.size > 0) {
+    consolidateTeacherDays(timetable, flaggedIds, teachers, fatigueLimit, lockedSlots);
+  }
+
   // After rebalancing, if any one class is still significantly worse off than
   // the others, surface a single warning so the user understands.
   let finalWorstCls: SchoolClass | null = null;
@@ -2315,31 +2519,40 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
   const freePeriodsPerClass = userSettings.freePeriodsPerClass ?? {};
   const defaultMaxFreePerWeek = userSettings.maxFreePeriodsPerWeek;
 
+  // Identify "flagged" teachers (those with at least one `unavailable` entry).
+  // Day-off-aware ranking and consolidation only target this subset, so users
+  // who never set unavailability see no behaviour change.
+  const flaggedIds = buildFlaggedTeacherIds(teachers);
+
   // Run up to MAX_ATTEMPTS fully in-memory, pick the attempt with the best
-  // lexicographic score: (fewest empty P1, fewest worst-class empties, fewest total empties).
+  // lexicographic score: (fewest empty P1, fewest worst-class empties, fewest
+  // total empties, then most flagged teachers with a fully empty day).
   type AttemptResult = {
     timetable: Timetable;
     emptyCount: number;
     warnings: string[];
     emptyP1: number;
     worstClassEmpty: number;
+    flaggedDayOff: number;
   };
   let best: AttemptResult | null = null;
   const cmp = (a: AttemptResult, b: AttemptResult): number => {
     if (a.emptyP1 !== b.emptyP1) return a.emptyP1 - b.emptyP1;
     if (a.worstClassEmpty !== b.worstClassEmpty) return a.worstClassEmpty - b.worstClassEmpty;
-    return a.emptyCount - b.emptyCount;
+    if (a.emptyCount !== b.emptyCount) return a.emptyCount - b.emptyCount;
+    return b.flaggedDayOff - a.flaggedDayOff; // more day-offs is better
   };
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const r = runAttempt(
       teachers, quotas, subjects, lockedSlots, fatigueLimit, attempt,
-      freePeriodsPerClass, defaultMaxFreePerWeek,
+      freePeriodsPerClass, defaultMaxFreePerWeek, flaggedIds,
     );
     const scored: AttemptResult = {
       ...r,
       emptyP1: countEmptyP1(r.timetable),
       worstClassEmpty: maxClassEmpty(r.timetable),
+      flaggedDayOff: countFlaggedTeachersWithDayOff(r.timetable, flaggedIds),
     };
     if (!best || cmp(scored, best) < 0) {
       best = scored;
