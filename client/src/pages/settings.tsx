@@ -716,6 +716,7 @@ export default function SettingsPage() {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {[...quotas]
+                      .filter((q) => q.jssQuota > 0)
                       .sort((a, b) => a.subject.localeCompare(b.subject))
                       .map((q) => (
                         <QuotaInput
@@ -741,6 +742,7 @@ export default function SettingsPage() {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {[...quotas]
+                      .filter((q) => q.ss1Quota > 0)
                       .sort((a, b) => a.subject.localeCompare(b.subject))
                       .map((q) => (
                         <QuotaInput
@@ -761,7 +763,7 @@ export default function SettingsPage() {
                   {(() => {
                     // Derive slash pairs from the user's own subjects.
                     const seenPairs = new Set<string>();
-                    const pairs: Array<{ a: string; b: string }> = [];
+                    const allPairs: Array<{ a: string; b: string }> = [];
                     const slashNamesForBadge = new Set<string>();
                     for (const s of subjects) {
                       if (!s.isSlashSubject) continue;
@@ -772,15 +774,23 @@ export default function SettingsPage() {
                       if (seenPairs.has(key)) continue;
                       seenPairs.add(key);
                       const [a, b] = [s.name, partner.name].sort();
-                      pairs.push({ a, b });
+                      allPairs.push({ a, b });
                     }
+                    // Only render pairs that are actually assigned to SS2/SS3.
+                    const pairs = allPairs.filter(({ a, b }) => {
+                      const qa = quotas.find((q) => q.subject === a);
+                      const qb = quotas.find((q) => q.subject === b);
+                      return Math.max(qa?.ss2ss3Quota ?? 0, qb?.ss2ss3Quota ?? 0) > 0;
+                    });
                     const slashTotal = pairs.reduce((sum, p) => {
-                      const q = quotas.find((q) => q.subject === p.a);
-                      return sum + (q?.ss2ss3Quota || 0);
+                      const qa = quotas.find((q) => q.subject === p.a);
+                      const qb = quotas.find((q) => q.subject === p.b);
+                      return sum + Math.max(qa?.ss2ss3Quota ?? 0, qb?.ss2ss3Quota ?? 0);
                     }, 0);
-                    const regularTotal = quotas
+                    const regularSubjects = [...quotas]
                       .filter((q) => q.ss2ss3Quota > 0 && !slashNamesForBadge.has(q.subject))
-                      .reduce((sum, q) => sum + q.ss2ss3Quota, 0);
+                      .sort((a, b) => a.subject.localeCompare(b.subject));
+                    const regularTotal = regularSubjects.reduce((sum, q) => sum + q.ss2ss3Quota, 0);
                     const perClass = slashTotal + regularTotal;
 
                     return (
@@ -835,22 +845,23 @@ export default function SettingsPage() {
                           </div>
                         )}
 
-                        <p className="text-sm text-muted-foreground mb-3">Regular Subjects</p>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {[...quotas]
-                            .filter((q) => !slashNamesForBadge.has(q.subject))
-                            .sort((a, b) => a.subject.localeCompare(b.subject))
-                            .map((q) => (
-                              <QuotaInput
-                                key={q.subject}
-                                subject={q.subject}
-                                value={q.ss2ss3Quota}
-                                onChange={(v) => handleQuotaChange(q.subject, "ss2ss3Quota", v)}
-                                isSlash={false}
-                                sectionTotal={q.ss2ss3Quota * 2}
-                              />
-                            ))}
-                        </div>
+                        {regularSubjects.length > 0 && (
+                          <>
+                            <p className="text-sm text-muted-foreground mb-3">Regular Subjects</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {regularSubjects.map((q) => (
+                                <QuotaInput
+                                  key={q.subject}
+                                  subject={q.subject}
+                                  value={q.ss2ss3Quota}
+                                  onChange={(v) => handleQuotaChange(q.subject, "ss2ss3Quota", v)}
+                                  isSlash={false}
+                                  sectionTotal={q.ss2ss3Quota * 2}
+                                />
+                              ))}
+                            </div>
+                          </>
+                        )}
                       </>
                     );
                   })()}
