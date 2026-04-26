@@ -24,7 +24,7 @@ import {
   savedTimetables,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 function getSlotKey(day: Day, schoolClass: SchoolClass, period: number): string {
@@ -405,12 +405,34 @@ export class DatabaseStorage implements IStorage {
   }
 
   async clearSlot(userId: string, day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined> {
+    // A double period is stored as TWO rows (period N and N+1) sharing the
+    // same subject and slotType="double". When the user removes either half
+    // of a double we must delete the partner row too — otherwise the orphan
+    // half survives in the DB and the auto-generator treats it as a still-
+    // existing locked period and re-renders it on the grid, making the
+    // "deleted" fixed period appear to come back.
+    const existing = await this.getSlot(userId, day, schoolClass, period);
+    const periodsToDelete = new Set<number>([period]);
+    if (existing?.status === "occupied" && existing.slotType === "double") {
+      const partnerCandidates = [period - 1, period + 1].filter((p) => p >= 1);
+      for (const p of partnerCandidates) {
+        const partner = await this.getSlot(userId, day, schoolClass, p);
+        if (
+          partner?.status === "occupied" &&
+          partner.slotType === "double" &&
+          partner.subject === existing.subject
+        ) {
+          periodsToDelete.add(p);
+        }
+      }
+    }
+
     await db.delete(timetableSlots).where(
       and(
         eq(timetableSlots.userId, userId),
         eq(timetableSlots.day, day),
         eq(timetableSlots.schoolClass, schoolClass),
-        eq(timetableSlots.period, period)
+        inArray(timetableSlots.period, Array.from(periodsToDelete))
       )
     );
 

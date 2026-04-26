@@ -128,6 +128,7 @@ Both locked rows and activities:
 - Survive page refresh and `Clear & Generate` (the auto-generator merges them into its locked-set unconditionally).
 - Require `?force=true` on DELETE (the home page sends this automatically when removing a locked cell).
 - Bulk activity creation validates every target class up front and only writes if all 6 are free.
+- Deleting either half of a locked double period removes both halves on the server (`storage.clearSlot` looks at `period - 1` and `period + 1` for partner rows of the same `slotType="double"` and same subject). This prevents orphan halves from being preserved by the auto-generator and re-rendered on the grid.
 
 ### Slash Subjects
 Paired subjects that share a single timetable slot (scheduled simultaneously). Slash pairings are user-configurable from the Settings page — toggle "Slash subject" on a subject and pick its partner from the dropdown. Pairings are mirrored bidirectionally and exclusively in a single transaction (changing or deleting one side automatically clears the partner's back-pointer). No subject pairs are hardcoded.
