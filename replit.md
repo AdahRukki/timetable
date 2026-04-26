@@ -111,11 +111,14 @@ PostgreSQL with Drizzle ORM. Tables:
 ### Subjects
 Users create and manage all subjects in the Settings page with:
 - Subject name (must be unique)
-- Per-class-level period quotas (JSS, SS1, SS2/SS3)
-- **Preferred periods** per class level — chip selector (P1–P9). The auto-generator tries these periods first when scheduling the subject, falling back to any legal slot if preferred periods don't fit. Empty list = any period.
-- **Required doubles per week** per class level — number of double-period blocks the generator must place. Doubles are scheduled in a dedicated pre-pass before single-period scheduling and also honour the preferred-period list.
+- **Per-class period quotas** (JSS1, JSS2, JSS3, SS1, SS2, SS3) — six independent values, one per class. Backed by `subjects.{jss1_quota, jss2_quota, jss3_quota, ss1_quota, ss2_quota, ss3_quota}` and mirrored to `subject_quotas`.
+- **Preferred periods** per class — chip selector (P1–P9) for each of the six classes. Stored as JSON `{ jss1: number[], jss2: number[], jss3: number[], ss1: number[], ss2: number[], ss3: number[] }`. The auto-generator tries these periods first when scheduling the subject, falling back to any legal slot if preferred periods don't fit. Empty list = any period.
+- **Required doubles per week** per class — number of double-period blocks the generator must place, one count per class. Stored as JSON with the same six keys. Doubles are scheduled in a dedicated pre-pass before single-period scheduling and also honour the preferred-period list.
 - Every subject is fully editable and deletable
 - Subjects sync with subject quotas for timetable validation
+- Helpers in `shared/schema.ts`: `QUOTA_FIELDS`, `quotaFieldForClass(cls)`, `classKey(cls)`, `getQuotaForClass(quota, cls)`.
+
+Per-class quota migration: `scripts/migrate-split-quotas.sql` is the data-preserving migration that splits the legacy aggregated columns (`jss_quota`, `ss2ss3_quota`) into six per-class columns and rewrites the `preferred_periods` / `required_doubles` JSON keys (`jss` → `jss1`/`jss2`/`jss3`, `ss2ss3` → `ss2`/`ss3`). It is idempotent and transactional. Run it once on prod before redeploying — `db:push` would drop the old columns and lose the user's quota values.
 
 ### Fixed Periods (locked cells & non-teaching activities)
 Two ways to pin something onto the grid so the auto-generator never moves it:

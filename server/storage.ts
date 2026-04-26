@@ -11,9 +11,13 @@ import {
   type UserSettings,
   type SharedTimetable,
   type SavedTimetable,
+  type PreferredPeriods,
+  type RequiredDoubles,
+  type QuotaField,
   DAYS,
   CLASSES,
   PERIODS_PER_DAY,
+  QUOTA_FIELDS,
   teachers,
   timetableSlots,
   timetableActions,
@@ -29,6 +33,13 @@ import { randomUUID } from "crypto";
 
 function getSlotKey(day: Day, schoolClass: SchoolClass, period: number): string {
   return `${day}-${schoolClass}-${period}`;
+}
+
+function defaultPreferredPeriods(): PreferredPeriods {
+  return { jss1: [], jss2: [], jss3: [], ss1: [], ss2: [], ss3: [] };
+}
+function defaultRequiredDoubles(): RequiredDoubles {
+  return { jss1: 0, jss2: 0, jss3: 0, ss1: 0, ss2: 0, ss3: 0 };
 }
 
 // Slash-pair helpers — keep slash pairings bidirectional and exclusive.
@@ -120,7 +131,7 @@ export interface IStorage {
     userId: string,
     subjectA: string,
     subjectB: string,
-    field: "jssQuota" | "ss1Quota" | "ss2ss3Quota",
+    field: QuotaField,
     value: number,
   ): Promise<{ a: SubjectQuota; b: SubjectQuota } | undefined>;
 
@@ -501,12 +512,15 @@ export class DatabaseStorage implements IStorage {
     const rows = await db.select().from(subjectQuotas).where(eq(subjectQuotas.userId, userId));
     return rows.map((row) => ({
       subject: row.subject,
-      jssQuota: row.jssQuota,
+      jss1Quota: row.jss1Quota,
+      jss2Quota: row.jss2Quota,
+      jss3Quota: row.jss3Quota,
       ss1Quota: row.ss1Quota,
-      ss2ss3Quota: row.ss2ss3Quota,
+      ss2Quota: row.ss2Quota,
+      ss3Quota: row.ss3Quota,
       isSlashSubject: row.isSlashSubject === 1,
-      preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
-      requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
+      preferredPeriods: row.preferredPeriods ?? defaultPreferredPeriods(),
+      requiredDoubles: row.requiredDoubles ?? defaultRequiredDoubles(),
     }));
   }
 
@@ -517,9 +531,9 @@ export class DatabaseStorage implements IStorage {
     if (!existing) return undefined;
 
     const updateValues: Record<string, unknown> = {};
-    if (updates.jssQuota !== undefined) updateValues.jssQuota = updates.jssQuota;
-    if (updates.ss1Quota !== undefined) updateValues.ss1Quota = updates.ss1Quota;
-    if (updates.ss2ss3Quota !== undefined) updateValues.ss2ss3Quota = updates.ss2ss3Quota;
+    for (const field of QUOTA_FIELDS) {
+      if (updates[field] !== undefined) updateValues[field] = updates[field];
+    }
     if (updates.isSlashSubject !== undefined) updateValues.isSlashSubject = updates.isSlashSubject ? 1 : 0;
     if (updates.preferredPeriods !== undefined) updateValues.preferredPeriods = updates.preferredPeriods;
     if (updates.requiredDoubles !== undefined) updateValues.requiredDoubles = updates.requiredDoubles;
@@ -530,12 +544,15 @@ export class DatabaseStorage implements IStorage {
 
     return {
       subject: existing.subject,
-      jssQuota: updates.jssQuota ?? existing.jssQuota,
+      jss1Quota: updates.jss1Quota ?? existing.jss1Quota,
+      jss2Quota: updates.jss2Quota ?? existing.jss2Quota,
+      jss3Quota: updates.jss3Quota ?? existing.jss3Quota,
       ss1Quota: updates.ss1Quota ?? existing.ss1Quota,
-      ss2ss3Quota: updates.ss2ss3Quota ?? existing.ss2ss3Quota,
+      ss2Quota: updates.ss2Quota ?? existing.ss2Quota,
+      ss3Quota: updates.ss3Quota ?? existing.ss3Quota,
       isSlashSubject: updates.isSlashSubject ?? (existing.isSlashSubject === 1),
-      preferredPeriods: updates.preferredPeriods ?? existing.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
-      requiredDoubles: updates.requiredDoubles ?? existing.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
+      preferredPeriods: updates.preferredPeriods ?? existing.preferredPeriods ?? defaultPreferredPeriods(),
+      requiredDoubles: updates.requiredDoubles ?? existing.requiredDoubles ?? defaultRequiredDoubles(),
     };
   }
 
@@ -543,12 +560,10 @@ export class DatabaseStorage implements IStorage {
     userId: string,
     subjectA: string,
     subjectB: string,
-    field: "jssQuota" | "ss1Quota" | "ss2ss3Quota",
+    field: QuotaField,
     value: number,
   ): Promise<{ a: SubjectQuota; b: SubjectQuota } | undefined> {
-    const setValues: Partial<Record<"jssQuota" | "ss1Quota" | "ss2ss3Quota", number>> = {
-      [field]: value,
-    };
+    const setValues: Partial<Record<QuotaField, number>> = { [field]: value };
 
     return await db.transaction(async (tx) => {
       const [a] = await tx.select().from(subjectQuotas).where(
@@ -566,14 +581,27 @@ export class DatabaseStorage implements IStorage {
         and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subjectB))
       );
 
+      // Mirror to subjects table so the auto-generator (which reads slash
+      // periods off Subject rows) sees the new value. Without this, slash
+      // SS2/SS3 quotas saved via Settings would not affect generation.
+      await tx.update(subjects).set(setValues).where(
+        and(eq(subjects.userId, userId), eq(subjects.name, subjectA))
+      );
+      await tx.update(subjects).set(setValues).where(
+        and(eq(subjects.userId, userId), eq(subjects.name, subjectB))
+      );
+
       const toQuota = (row: typeof a): SubjectQuota => ({
         subject: row.subject,
-        jssQuota: field === "jssQuota" ? value : row.jssQuota,
+        jss1Quota: field === "jss1Quota" ? value : row.jss1Quota,
+        jss2Quota: field === "jss2Quota" ? value : row.jss2Quota,
+        jss3Quota: field === "jss3Quota" ? value : row.jss3Quota,
         ss1Quota: field === "ss1Quota" ? value : row.ss1Quota,
-        ss2ss3Quota: field === "ss2ss3Quota" ? value : row.ss2ss3Quota,
+        ss2Quota: field === "ss2Quota" ? value : row.ss2Quota,
+        ss3Quota: field === "ss3Quota" ? value : row.ss3Quota,
         isSlashSubject: row.isSlashSubject === 1,
-        preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
-        requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
+        preferredPeriods: row.preferredPeriods ?? defaultPreferredPeriods(),
+        requiredDoubles: row.requiredDoubles ?? defaultRequiredDoubles(),
       });
 
       return { a: toQuota(a), b: toQuota(b) };
@@ -586,13 +614,16 @@ export class DatabaseStorage implements IStorage {
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
-      jssQuota: row.jssQuota,
+      jss1Quota: row.jss1Quota,
+      jss2Quota: row.jss2Quota,
+      jss3Quota: row.jss3Quota,
       ss1Quota: row.ss1Quota,
-      ss2ss3Quota: row.ss2ss3Quota,
+      ss2Quota: row.ss2Quota,
+      ss3Quota: row.ss3Quota,
       isSlashSubject: row.isSlashSubject === 1,
       slashPairName: row.slashPairName,
-      preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
-      requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
+      preferredPeriods: row.preferredPeriods ?? defaultPreferredPeriods(),
+      requiredDoubles: row.requiredDoubles ?? defaultRequiredDoubles(),
     }));
   }
 
@@ -604,26 +635,35 @@ export class DatabaseStorage implements IStorage {
     return {
       id: row.id,
       name: row.name,
-      jssQuota: row.jssQuota,
+      jss1Quota: row.jss1Quota,
+      jss2Quota: row.jss2Quota,
+      jss3Quota: row.jss3Quota,
       ss1Quota: row.ss1Quota,
-      ss2ss3Quota: row.ss2ss3Quota,
+      ss2Quota: row.ss2Quota,
+      ss3Quota: row.ss3Quota,
       isSlashSubject: row.isSlashSubject === 1,
       slashPairName: row.slashPairName,
-      preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
-      requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
+      preferredPeriods: row.preferredPeriods ?? defaultPreferredPeriods(),
+      requiredDoubles: row.requiredDoubles ?? defaultRequiredDoubles(),
     };
   }
 
   async createSubject(userId: string, subject: InsertSubject): Promise<Subject> {
-    const preferredPeriods = subject.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] };
-    const requiredDoubles = subject.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 };
+    const preferredPeriods = subject.preferredPeriods ?? defaultPreferredPeriods();
+    const requiredDoubles = subject.requiredDoubles ?? defaultRequiredDoubles();
+    const quotaCols = {
+      jss1Quota: subject.jss1Quota,
+      jss2Quota: subject.jss2Quota,
+      jss3Quota: subject.jss3Quota,
+      ss1Quota: subject.ss1Quota,
+      ss2Quota: subject.ss2Quota,
+      ss3Quota: subject.ss3Quota,
+    };
     return await db.transaction(async (tx) => {
       const [inserted] = await tx.insert(subjects).values({
         userId,
         name: subject.name,
-        jssQuota: subject.jssQuota,
-        ss1Quota: subject.ss1Quota,
-        ss2ss3Quota: subject.ss2ss3Quota,
+        ...quotaCols,
         isSlashSubject: subject.isSlashSubject ? 1 : 0,
         slashPairName: subject.isSlashSubject ? subject.slashPairName : null,
         preferredPeriods,
@@ -633,9 +673,7 @@ export class DatabaseStorage implements IStorage {
       await tx.insert(subjectQuotas).values({
         userId,
         subject: subject.name,
-        jssQuota: subject.jssQuota,
-        ss1Quota: subject.ss1Quota,
-        ss2ss3Quota: subject.ss2ss3Quota,
+        ...quotaCols,
         isSlashSubject: subject.isSlashSubject ? 1 : 0,
         preferredPeriods,
         requiredDoubles,
@@ -648,9 +686,7 @@ export class DatabaseStorage implements IStorage {
       return {
         id: inserted.id,
         name: subject.name,
-        jssQuota: subject.jssQuota,
-        ss1Quota: subject.ss1Quota,
-        ss2ss3Quota: subject.ss2ss3Quota,
+        ...quotaCols,
         isSlashSubject: subject.isSlashSubject,
         slashPairName: subject.isSlashSubject ? subject.slashPairName : null,
         preferredPeriods,
@@ -673,9 +709,9 @@ export class DatabaseStorage implements IStorage {
 
       const updateValues: Record<string, unknown> = {};
       if (updates.name !== undefined) updateValues.name = newName;
-      if (updates.jssQuota !== undefined) updateValues.jssQuota = updates.jssQuota;
-      if (updates.ss1Quota !== undefined) updateValues.ss1Quota = updates.ss1Quota;
-      if (updates.ss2ss3Quota !== undefined) updateValues.ss2ss3Quota = updates.ss2ss3Quota;
+      for (const field of QUOTA_FIELDS) {
+        if (updates[field] !== undefined) updateValues[field] = updates[field];
+      }
       if (updates.isSlashSubject !== undefined || updates.slashPairName !== undefined) {
         updateValues.isSlashSubject = newSlash ? 1 : 0;
         updateValues.slashPairName = newPair;
@@ -691,9 +727,9 @@ export class DatabaseStorage implements IStorage {
 
       // Mirror name/quotas/isSlashSubject/preferences into subject_quotas.
       const quotaUpdates: Record<string, unknown> = {};
-      if (updates.jssQuota !== undefined) quotaUpdates.jssQuota = updates.jssQuota;
-      if (updates.ss1Quota !== undefined) quotaUpdates.ss1Quota = updates.ss1Quota;
-      if (updates.ss2ss3Quota !== undefined) quotaUpdates.ss2ss3Quota = updates.ss2ss3Quota;
+      for (const field of QUOTA_FIELDS) {
+        if (updates[field] !== undefined) quotaUpdates[field] = updates[field];
+      }
       if (updates.isSlashSubject !== undefined) quotaUpdates.isSlashSubject = newSlash ? 1 : 0;
       if (updates.preferredPeriods !== undefined) quotaUpdates.preferredPeriods = updates.preferredPeriods;
       if (updates.requiredDoubles !== undefined) quotaUpdates.requiredDoubles = updates.requiredDoubles;
@@ -735,9 +771,12 @@ export class DatabaseStorage implements IStorage {
       return {
         id: existing.id,
         name: newName,
-        jssQuota: updates.jssQuota ?? existing.jssQuota,
+        jss1Quota: updates.jss1Quota ?? existing.jss1Quota,
+        jss2Quota: updates.jss2Quota ?? existing.jss2Quota,
+        jss3Quota: updates.jss3Quota ?? existing.jss3Quota,
         ss1Quota: updates.ss1Quota ?? existing.ss1Quota,
-        ss2ss3Quota: updates.ss2ss3Quota ?? existing.ss2ss3Quota,
+        ss2Quota: updates.ss2Quota ?? existing.ss2Quota,
+        ss3Quota: updates.ss3Quota ?? existing.ss3Quota,
         isSlashSubject: newSlash,
         slashPairName: newPair,
         preferredPeriods: updates.preferredPeriods ?? existing.preferredPeriods,

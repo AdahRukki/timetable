@@ -18,8 +18,11 @@ import {
   PERIODS_PER_DAY,
   BREAK_AFTER_P4,
   BREAK_AFTER_P7,
+  QUOTA_FIELDS,
   findSlashPair,
   getQuotaForClass,
+  classKey,
+  quotaFieldForClass,
   getTeacherSubjectClasses,
   type TimetableSlot,
   type Teacher,
@@ -802,7 +805,7 @@ export async function registerRoutes(
       const slashPairSchema = z.object({
         subjectA: z.string().min(1),
         subjectB: z.string().min(1),
-        field: z.enum(["jssQuota", "ss1Quota", "ss2ss3Quota"]),
+        field: z.enum(QUOTA_FIELDS),
         value: z.number().int().min(0).max(10),
       });
       const { subjectA, subjectB, field, value } = slashPairSchema.parse(req.body);
@@ -832,9 +835,12 @@ export async function registerRoutes(
       const { subject } = req.params;
       
       const partialQuotaSchema = z.object({
-        jssQuota: z.number().min(0).max(10).optional(),
+        jss1Quota: z.number().min(0).max(10).optional(),
+        jss2Quota: z.number().min(0).max(10).optional(),
+        jss3Quota: z.number().min(0).max(10).optional(),
         ss1Quota: z.number().min(0).max(10).optional(),
-        ss2ss3Quota: z.number().min(0).max(10).optional(),
+        ss2Quota: z.number().min(0).max(10).optional(),
+        ss3Quota: z.number().min(0).max(10).optional(),
         isSlashSubject: z.boolean().optional(),
       });
       
@@ -938,9 +944,12 @@ export async function registerRoutes(
       
       const partialSubjectSchema = z.object({
         name: z.string().min(1).optional(),
-        jssQuota: z.number().min(0).max(10).optional(),
+        jss1Quota: z.number().min(0).max(10).optional(),
+        jss2Quota: z.number().min(0).max(10).optional(),
+        jss3Quota: z.number().min(0).max(10).optional(),
         ss1Quota: z.number().min(0).max(10).optional(),
-        ss2ss3Quota: z.number().min(0).max(10).optional(),
+        ss2Quota: z.number().min(0).max(10).optional(),
+        ss3Quota: z.number().min(0).max(10).optional(),
         isSlashSubject: z.boolean().optional(),
         slashPairName: z.string().nullable().optional(),
         preferredPeriods: preferredPeriodsSchema.optional(),
@@ -1752,18 +1761,12 @@ function maxClassEmpty(timetable: Timetable): number {
 
 // Try to place ONE period of `subject` in `cls` somewhere it fits.
 // Returns periods placed (0, 1, or 2 if a double was placed).
-// ===== Per-class-level scheduling preferences =====
-type ClassLevel = "jss" | "ss1" | "ss2ss3";
-function classLevel(cls: SchoolClass): ClassLevel {
-  if (cls.startsWith("JSS")) return "jss";
-  if (cls === "SS1") return "ss1";
-  return "ss2ss3";
-}
+// ===== Per-class scheduling preferences =====
 function getPreferredPeriods(quota: SubjectQuota, cls: SchoolClass): number[] {
-  return quota.preferredPeriods?.[classLevel(cls)] ?? [];
+  return quota.preferredPeriods?.[classKey(cls)] ?? [];
 }
 function getRequiredDoubles(quota: SubjectQuota, cls: SchoolClass): number {
-  return quota.requiredDoubles?.[classLevel(cls)] ?? 0;
+  return quota.requiredDoubles?.[classKey(cls)] ?? 0;
 }
 // Returns periods sorted so preferred ones come first (each group internally
 // shuffled for variety across attempts).
@@ -2351,10 +2354,9 @@ function runAttempt(
     if (seenSlashPairs.has(pairKey)) continue;
     seenSlashPairs.add(pairKey);
 
-    const periods = subj.ss2ss3Quota;
-    if (periods <= 0) continue;
-
     for (const cls of ["SS2", "SS3"] as SchoolClass[]) {
+      const periods = subj[quotaFieldForClass(cls)];
+      if (periods <= 0) continue;
       const placed = scheduleSlashPair(
         timetable, cls,
         subj.name, partner.name,
