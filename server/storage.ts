@@ -102,6 +102,11 @@ export interface IStorage {
   setSlotsAtomic(userId: string, slots: TimetableSlot[], requireEmpty: boolean): Promise<TimetableSlot[]>;
   clearSlot(userId: string, day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined>;
   clearAllSlots(userId: string): Promise<void>;
+  // True wipe: deletes every timetable row for the user, including locked
+  // fixed periods and non-teaching activities. Used by the "Reset timetable"
+  // button. Distinct from clearAllSlots, which preserves locked rows for the
+  // auto-generator's "Clear & Generate" workflow.
+  wipeAllSlots(userId: string): Promise<void>;
 
   // Actions (for undo/redo)
   getActions(userId: string): Promise<TimetableAction[]>;
@@ -432,6 +437,12 @@ export class DatabaseStorage implements IStorage {
         eq(timetableSlots.isLocked, 0),
       )
     );
+  }
+
+  // True wipe used by the "Reset timetable" button — removes every row
+  // unconditionally, including locked fixed periods and activities.
+  async wipeAllSlots(userId: string): Promise<void> {
+    await db.delete(timetableSlots).where(eq(timetableSlots.userId, userId));
   }
 
   // Actions

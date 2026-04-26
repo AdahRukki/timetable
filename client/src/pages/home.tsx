@@ -38,7 +38,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Save, Loader2 } from "lucide-react";
+import { Save, Loader2, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 function extractApiErrorMessage(e: unknown, fallback: string): string {
   if (!(e instanceof Error)) return fallback;
@@ -89,6 +99,7 @@ export default function Home() {
 
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
 
   const { data: teachers = [] } = useQuery<Teacher[]>({
     queryKey: ["/api/teachers"],
@@ -341,32 +352,34 @@ export default function Home() {
   const handleRemove = useCallback(async () => {
     if (!selectedSlot) return;
 
-    // Locked rows + activities live in the DB. Hit DELETE so the row is
-    // actually gone from the server, otherwise it'll come right back on the
-    // next /api/timetable refetch.
-    const isPersisted = selectedSlot.slotType === "activity" || !!selectedSlot.isLocked;
-    if (isPersisted) {
+    // Always hit the server. Auto-generated regular periods are persisted
+    // to the database too (not just locked rows + activities), so a
+    // local-only delete would leave a stranded DB row that blocks any
+    // subsequent placement in the same cell with SLOT_OCCUPIED. A 404
+    // means the cell wasn't persisted (purely local placement) — safe to
+    // ignore. `force=true` is required for locked rows.
+    try {
+      const url =
+        `/api/timetable/${encodeURIComponent(selectedSlot.day)}` +
+        `/${encodeURIComponent(selectedSlot.schoolClass)}` +
+        `/${selectedSlot.period}?force=true`;
       try {
-        const url =
-          `/api/timetable/${encodeURIComponent(selectedSlot.day)}` +
-          `/${encodeURIComponent(selectedSlot.schoolClass)}` +
-          `/${selectedSlot.period}?force=true`;
         await apiRequest("DELETE", url);
-        await queryClient.invalidateQueries({ queryKey: ["/api/timetable"] });
-        toast({
-          title: "Period cleared",
-          description: `Removed ${selectedSlot.subject} from ${selectedSlot.day} P${selectedSlot.period}`,
-        });
-        setDialogOpen(false);
-        setSelectedSlot(null);
-        setValidation(null);
       } catch (e) {
-        toast({
-          title: "Could not remove",
-          description: extractApiErrorMessage(e, "Server rejected the removal."),
-          variant: "destructive",
-        });
+        // 404 = nothing in the DB; the cell only existed locally. Anything
+        // else (4xx/5xx) is a real failure we surface to the user.
+        const msg = e instanceof Error ? e.message : "";
+        if (!/^404:/.test(msg)) {
+          throw e;
+        }
       }
+      await queryClient.invalidateQueries({ queryKey: ["/api/timetable"] });
+    } catch (e) {
+      toast({
+        title: "Could not remove",
+        description: extractApiErrorMessage(e, "Server rejected the removal."),
+        variant: "destructive",
+      });
       return;
     }
 
@@ -550,6 +563,33 @@ export default function Home() {
     autoGenerateMutation.mutate(options);
   }, [autoGenerateMutation]);
 
+  const resetTimetableMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", "/api/timetable");
+    },
+    onSuccess: async () => {
+      // Wipe local state and let the server query refetch (which will be
+      // empty). Also clear the session-only undo/redo stack since every
+      // referenced slot is gone.
+      setTimetable(initializeTimetable());
+      setActions([]);
+      setActionIndex(-1);
+      await queryClient.invalidateQueries({ queryKey: ["/api/timetable"] });
+      setResetDialogOpen(false);
+      toast({
+        title: "Timetable reset",
+        description: "Every period has been cleared. Start fresh whenever you're ready.",
+      });
+    },
+    onError: (e: unknown) => {
+      toast({
+        title: "Reset failed",
+        description: extractApiErrorMessage(e, "Could not reset the timetable."),
+        variant: "destructive",
+      });
+    },
+  });
+
   const saveTimetableMutation = useMutation({
     mutationFn: async (name: string) => {
       // Snapshot the live client grid (source of truth for unsaved edits)
@@ -606,7 +646,17 @@ export default function Home() {
           maxFreePeriodsPerDay={userSettings?.maxFreePeriodsPerDay}
           freePeriodsPerClass={userSettings?.freePeriodsPerClass}
         />
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setResetDialogOpen(true)}
+            disabled={resetTimetableMutation.isPending}
+            className="text-destructive hover:text-destructive"
+            data-testid="button-reset-timetable"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Reset Timetable
+          </Button>
           <Button
             variant="outline"
             onClick={handleOpenSaveDialog}
@@ -671,6 +721,45 @@ export default function Home() {
           handleOpenSaveDialog();
         }}
       />
+
+      <AlertDialog
+        open={resetDialogOpen}
+        onOpenChange={(o) => !resetTimetableMutation.isPending && setResetDialogOpen(o)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset the entire timetable?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will erase every period for every class — including fixed
+              periods and non-teaching activities. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={resetTimetableMutation.isPending}
+              data-testid="button-reset-cancel"
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                resetTimetableMutation.mutate();
+              }}
+              disabled={resetTimetableMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              data-testid="button-reset-confirm"
+            >
+              {resetTimetableMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-2" />
+              )}
+              Yes, reset everything
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
         <DialogContent>

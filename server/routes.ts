@@ -718,9 +718,22 @@ export async function registerRoutes(
     }
   });
 
-  // Remove subject. Locked slots (fixed periods + activities) require an
-  // explicit `?force=true` query param so accidental clicks don't wipe a
-  // user-pinned cell.
+  // Wipe every timetable row for the current user — including locked fixed
+  // periods and non-teaching activities. Used by the "Reset timetable" button
+  // on the home page. The frontend gates this behind a confirmation dialog.
+  app.delete("/api/timetable", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      await storage.wipeAllSlots(userId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("[/api/timetable] wipe failed", {
+        error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
+      });
+      res.status(500).json({ error: "Failed to reset timetable" });
+    }
+  });
+
   app.delete("/api/timetable/:day/:class/:period", isAuthenticated, async (req, res) => {
     const userId = getUserId(req);
     const { day, class: schoolClass, period } = req.params;
