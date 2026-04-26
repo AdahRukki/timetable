@@ -572,8 +572,8 @@ export async function registerRoutes(
         data.subject,
         data.teacherId ?? "",
         data.slotType,
-        data.slashPairSubject,
-        data.slashPairTeacherId,
+        data.slashPairSubject ?? undefined,
+        data.slashPairTeacherId ?? undefined,
         isActivity,
       );
       res.json(result);
@@ -629,8 +629,8 @@ export async function registerRoutes(
           data.subject,
           data.teacherId ?? "",
           data.slotType,
-          data.slashPairSubject,
-          data.slashPairTeacherId,
+          data.slashPairSubject ?? undefined,
+          data.slashPairTeacherId ?? undefined,
           isActivity,
         );
         perClassResults.push({ schoolClass: cls, validation });

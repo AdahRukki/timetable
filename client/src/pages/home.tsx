@@ -40,6 +40,37 @@ import {
 } from "@/components/ui/dialog";
 import { Save, Loader2 } from "lucide-react";
 
+function extractApiErrorMessage(e: unknown, fallback: string): string {
+  if (!(e instanceof Error)) return fallback;
+  const match = e.message.match(/^(\d{3}):\s*([\s\S]*)$/);
+  if (!match) return e.message || fallback;
+  const status = Number(match[1]);
+  const body = match[2].trim();
+  if (status >= 500) return "Server error — please try again.";
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: string;
+      validation?: { errors?: Array<{ message?: string }> };
+      perClass?: Array<{ schoolClass?: string; validation?: { errors?: Array<{ message?: string }> } }>;
+    };
+    const failures = parsed.perClass?.filter(
+      (r) => r.validation && r.validation.errors && r.validation.errors.length > 0,
+    ) ?? [];
+    if (failures.length > 1) {
+      const first = failures[0].validation?.errors?.[0]?.message;
+      return first
+        ? `${failures.length} classes blocked it. First: ${first}`
+        : `${failures.length} classes blocked this placement.`;
+    }
+    const firstError = parsed.validation?.errors?.[0]?.message;
+    if (firstError) return firstError;
+    if (parsed.error) return parsed.error;
+  } catch {
+    // body wasn't JSON — fall through
+  }
+  return body || fallback;
+}
+
 export default function Home() {
   const { toast } = useToast();
 
@@ -206,7 +237,7 @@ export default function Home() {
         } catch (e) {
           toast({
             title: "Could not save",
-            description: e instanceof Error ? e.message : "Server rejected the placement.",
+            description: extractApiErrorMessage(e, "Server rejected the placement."),
             variant: "destructive",
           });
         }
@@ -332,7 +363,7 @@ export default function Home() {
       } catch (e) {
         toast({
           title: "Could not remove",
-          description: e instanceof Error ? e.message : "Server rejected the removal.",
+          description: extractApiErrorMessage(e, "Server rejected the removal."),
           variant: "destructive",
         });
       }
