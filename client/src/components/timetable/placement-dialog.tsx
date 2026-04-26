@@ -7,7 +7,6 @@ import {
   type ValidationResult,
   type Subject,
   findSlashPair,
-  getQuotaForClass,
   PERIODS_PER_DAY,
 } from "@shared/schema";
 import {
@@ -117,7 +116,15 @@ export function PlacementDialog({
   const availableSubjects = useMemo(() => {
     if (!schoolClass) return [];
     return customSubjects
-      .filter((s) => getQuotaForClass(s, schoolClass) > 0)
+      .filter((s) => {
+        if (schoolClass.startsWith("JSS")) {
+          return s.jssQuota > 0;
+        } else if (schoolClass === "SS1") {
+          return s.ss1Quota > 0;
+        } else {
+          return s.ss2ss3Quota > 0;
+        }
+      })
       .map((s) => s.name)
       .sort();
   }, [schoolClass, customSubjects]);

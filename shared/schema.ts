@@ -91,47 +91,26 @@ export const timetableActions = pgTable("timetable_actions", {
   id: varchar("id").primaryKey(),
   userId: varchar("user_id").notNull(),
   type: text("type").notNull(),
-  timestamp: bigint("timestamp", { mode: "number" }).notNull(),
+  timestamp: integer("timestamp").notNull(),
   slotData: jsonb("slot_data").notNull(),
   previousSlotData: jsonb("previous_slot_data"),
 });
 
-// Per-class scheduling preference shapes (mirrored on subjects + subject_quotas)
-export type PreferredPeriods = {
-  jss1: number[];
-  jss2: number[];
-  jss3: number[];
-  ss1: number[];
-  ss2: number[];
-  ss3: number[];
-};
-export type RequiredDoubles = {
-  jss1: number;
-  jss2: number;
-  jss3: number;
-  ss1: number;
-  ss2: number;
-  ss3: number;
-};
+// Per-class-level scheduling preference shapes (mirrored on subjects + subject_quotas)
+export type PreferredPeriods = { jss: number[]; ss1: number[]; ss2ss3: number[] };
+export type RequiredDoubles = { jss: number; ss1: number; ss2ss3: number };
 
-const DEFAULT_PREFERRED_PERIODS: PreferredPeriods = {
-  jss1: [], jss2: [], jss3: [], ss1: [], ss2: [], ss3: [],
-};
-const DEFAULT_REQUIRED_DOUBLES: RequiredDoubles = {
-  jss1: 0, jss2: 0, jss3: 0, ss1: 0, ss2: 0, ss3: 0,
-};
+const DEFAULT_PREFERRED_PERIODS: PreferredPeriods = { jss: [], ss1: [], ss2ss3: [] };
+const DEFAULT_REQUIRED_DOUBLES: RequiredDoubles = { jss: 0, ss1: 0, ss2ss3: 0 };
 
 // Subject quotas table
 export const subjectQuotas = pgTable("subject_quotas", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(),
   subject: text("subject").notNull(),
-  jss1Quota: integer("jss1_quota").notNull().default(0),
-  jss2Quota: integer("jss2_quota").notNull().default(0),
-  jss3Quota: integer("jss3_quota").notNull().default(0),
+  jssQuota: integer("jss_quota").notNull(),
   ss1Quota: integer("ss1_quota").notNull(),
-  ss2Quota: integer("ss2_quota").notNull().default(0),
-  ss3Quota: integer("ss3_quota").notNull().default(0),
+  ss2ss3Quota: integer("ss2ss3_quota").notNull(),
   isSlashSubject: integer("is_slash_subject").notNull().default(0),
   preferredPeriods: jsonb("preferred_periods")
     .$type<PreferredPeriods>()
@@ -148,12 +127,9 @@ export const subjects = pgTable("subjects", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(),
   name: text("name").notNull(),
-  jss1Quota: integer("jss1_quota").notNull().default(0),
-  jss2Quota: integer("jss2_quota").notNull().default(0),
-  jss3Quota: integer("jss3_quota").notNull().default(0),
+  jssQuota: integer("jss_quota").notNull().default(0),
   ss1Quota: integer("ss1_quota").notNull().default(0),
-  ss2Quota: integer("ss2_quota").notNull().default(0),
-  ss3Quota: integer("ss3_quota").notNull().default(0),
+  ss2ss3Quota: integer("ss2ss3_quota").notNull().default(0),
   isSlashSubject: integer("is_slash_subject").notNull().default(0),
   slashPairName: text("slash_pair_name"),
   preferredPeriods: jsonb("preferred_periods")
@@ -316,10 +292,10 @@ export const placementRequestSchema = z
     period: z.number(),
     schoolClass: z.enum(CLASSES),
     subject: z.string().min(1, "Subject or activity label is required"),
-    teacherId: z.string().nullish(),
+    teacherId: z.string().optional(),
     slotType: slotTypeSchema,
-    slashPairSubject: z.string().nullish(),
-    slashPairTeacherId: z.string().nullish(),
+    slashPairSubject: z.string().optional(),
+    slashPairTeacherId: z.string().optional(),
     isActivity: z.boolean().optional(),
     isLocked: z.boolean().optional(),
     applyToAllClasses: z.boolean().optional(),
@@ -379,41 +355,28 @@ export const subjectPeriodCountSchema = z.object({
 
 export type SubjectPeriodCount = z.infer<typeof subjectPeriodCountSchema>;
 
-// Per-class scheduling preference Zod schemas (shared by subjects + subject quotas)
+// Per-class-level scheduling preference Zod schemas (shared by subjects + subject quotas)
 export const preferredPeriodsSchema = z.object({
-  jss1: z.array(z.number().int().min(1).max(9)).default([]),
-  jss2: z.array(z.number().int().min(1).max(9)).default([]),
-  jss3: z.array(z.number().int().min(1).max(9)).default([]),
+  jss: z.array(z.number().int().min(1).max(9)).default([]),
   ss1: z.array(z.number().int().min(1).max(9)).default([]),
-  ss2: z.array(z.number().int().min(1).max(9)).default([]),
-  ss3: z.array(z.number().int().min(1).max(9)).default([]),
+  ss2ss3: z.array(z.number().int().min(1).max(9)).default([]),
 });
 
 export const requiredDoublesSchema = z.object({
-  jss1: z.number().int().min(0).max(4).default(0),
-  jss2: z.number().int().min(0).max(4).default(0),
-  jss3: z.number().int().min(0).max(4).default(0),
+  jss: z.number().int().min(0).max(4).default(0),
   ss1: z.number().int().min(0).max(4).default(0),
-  ss2: z.number().int().min(0).max(4).default(0),
-  ss3: z.number().int().min(0).max(4).default(0),
+  ss2ss3: z.number().int().min(0).max(4).default(0),
 });
 
 // Subject quota configuration
 export const subjectQuotaSchema = z.object({
   subject: z.string(),
-  jss1Quota: z.number().min(0).max(10),
-  jss2Quota: z.number().min(0).max(10),
-  jss3Quota: z.number().min(0).max(10),
+  jssQuota: z.number().min(0).max(10),
   ss1Quota: z.number().min(0).max(10),
-  ss2Quota: z.number().min(0).max(10),
-  ss3Quota: z.number().min(0).max(10),
+  ss2ss3Quota: z.number().min(0).max(10),
   isSlashSubject: z.boolean().default(false),
-  preferredPeriods: preferredPeriodsSchema.default(() => ({
-    jss1: [], jss2: [], jss3: [], ss1: [], ss2: [], ss3: [],
-  })),
-  requiredDoubles: requiredDoublesSchema.default(() => ({
-    jss1: 0, jss2: 0, jss3: 0, ss1: 0, ss2: 0, ss3: 0,
-  })),
+  preferredPeriods: preferredPeriodsSchema.default({ jss: [], ss1: [], ss2ss3: [] }),
+  requiredDoubles: requiredDoublesSchema.default({ jss: 0, ss1: 0, ss2ss3: 0 }),
 });
 
 export type SubjectQuota = z.infer<typeof subjectQuotaSchema>;
@@ -425,20 +388,13 @@ export type InsertSubjectQuota = z.infer<typeof insertSubjectQuotaSchema>;
 export const subjectSchema = z.object({
   id: z.number(),
   name: z.string().min(1, "Subject name is required"),
-  jss1Quota: z.number().min(0).max(10).default(0),
-  jss2Quota: z.number().min(0).max(10).default(0),
-  jss3Quota: z.number().min(0).max(10).default(0),
+  jssQuota: z.number().min(0).max(10).default(0),
   ss1Quota: z.number().min(0).max(10).default(0),
-  ss2Quota: z.number().min(0).max(10).default(0),
-  ss3Quota: z.number().min(0).max(10).default(0),
+  ss2ss3Quota: z.number().min(0).max(10).default(0),
   isSlashSubject: z.boolean().default(false),
   slashPairName: z.string().nullable().default(null),
-  preferredPeriods: preferredPeriodsSchema.default(() => ({
-    jss1: [], jss2: [], jss3: [], ss1: [], ss2: [], ss3: [],
-  })),
-  requiredDoubles: requiredDoublesSchema.default(() => ({
-    jss1: 0, jss2: 0, jss3: 0, ss1: 0, ss2: 0, ss3: 0,
-  })),
+  preferredPeriods: preferredPeriodsSchema.default({ jss: [], ss1: [], ss2ss3: [] }),
+  requiredDoubles: requiredDoublesSchema.default({ jss: 0, ss1: 0, ss2ss3: 0 }),
 });
 
 export type Subject = z.infer<typeof subjectSchema>;
@@ -446,34 +402,15 @@ export type Subject = z.infer<typeof subjectSchema>;
 export const insertSubjectSchema = subjectSchema.omit({ id: true });
 export type InsertSubject = z.infer<typeof insertSubjectSchema>;
 
-// The valid keys for the per-class quota / preferred-periods / required-doubles fields.
-export const QUOTA_FIELDS = [
-  "jss1Quota",
-  "jss2Quota",
-  "jss3Quota",
-  "ss1Quota",
-  "ss2Quota",
-  "ss3Quota",
-] as const;
-export type QuotaField = typeof QUOTA_FIELDS[number];
-
-// Map a SchoolClass ("JSS1", "SS3", ...) to:
-//   - its quota field on a SubjectQuota / Subject ("jss1Quota", "ss3Quota", ...)
-//   - its key in PreferredPeriods / RequiredDoubles ("jss1", "ss3", ...)
-export function quotaFieldForClass(schoolClass: SchoolClass): QuotaField {
-  return `${schoolClass.toLowerCase()}Quota` as QuotaField;
-}
-export function classKey(schoolClass: SchoolClass): keyof PreferredPeriods {
-  return schoolClass.toLowerCase() as keyof PreferredPeriods;
-}
-
-// Get quota for a specific class. Accepts anything with the per-class quota
-// fields — both SubjectQuota and Subject qualify.
-export function getQuotaForClass(
-  quota: Record<QuotaField, number>,
-  schoolClass: SchoolClass,
-): number {
-  return quota[quotaFieldForClass(schoolClass)];
+// Get quota for a specific class
+export function getQuotaForClass(quota: SubjectQuota, schoolClass: SchoolClass): number {
+  if (schoolClass.startsWith("JSS")) {
+    return quota.jssQuota;
+  } else if (schoolClass === "SS1") {
+    return quota.ss1Quota;
+  } else {
+    return quota.ss2ss3Quota;
+  }
 }
 
 // Auto-generation result

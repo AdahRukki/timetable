@@ -200,14 +200,6 @@ sudo -u timetable npm run build
 sudo systemctl restart timetable
 ```
 
-If `npm run db:push` reports a column-type change it can't apply automatically (e.g. widening
-`timetable_actions.timestamp` from `integer` to `bigint`), run the SQL directly first, then
-re-run `db:push`:
-
-```bash
-sudo -u postgres psql timetable -c "ALTER TABLE timetable_actions ALTER COLUMN timestamp TYPE bigint USING timestamp::bigint;"
-```
-
 ## Troubleshooting
 
 - **502 Bad Gateway** — Node process isn't running. Check `journalctl -u timetable -f`.

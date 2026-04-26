@@ -11,16 +11,8 @@ import { Settings, Bell, Shield, Clock, Download, Upload, BookOpen, Loader2, Plu
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import type {
-  SubjectQuota,
-  Subject,
-  UserSettings,
-  SchoolClass,
-  PreferredPeriods,
-  RequiredDoubles,
-  QuotaField,
-} from "@shared/schema";
-import { findSlashPair, CLASSES, classKey, quotaFieldForClass } from "@shared/schema";
+import type { SubjectQuota, Subject, UserSettings } from "@shared/schema";
+import { findSlashPair, CLASSES } from "@shared/schema";
 import {
   Select,
   SelectContent,
@@ -31,33 +23,22 @@ import {
 import { NumberInput } from "@/components/ui/number-input";
 import { useState, useEffect, useMemo } from "react";
 
-type ClassKey = keyof PreferredPeriods;
-const EMPTY_QUOTAS: Record<ClassKey, number> = {
-  jss1: 4, jss2: 4, jss3: 4, ss1: 4, ss2: 4, ss3: 4,
-};
-const EMPTY_PREFERRED: Record<ClassKey, number[]> = {
-  jss1: [], jss2: [], jss3: [], ss1: [], ss2: [], ss3: [],
-};
-const EMPTY_DOUBLES: Record<ClassKey, number> = {
-  jss1: 0, jss2: 0, jss3: 0, ss1: 0, ss2: 0, ss3: 0,
-};
-const CLASS_LABELS: Record<ClassKey, string> = {
-  jss1: "JSS1", jss2: "JSS2", jss3: "JSS3", ss1: "SS1", ss2: "SS2", ss3: "SS3",
-};
-const CLASS_KEYS: ClassKey[] = ["jss1", "jss2", "jss3", "ss1", "ss2", "ss3"];
-
 export default function SettingsPage() {
   const { toast } = useToast();
   const [subjectDialogOpen, setSubjectDialogOpen] = useState(false);
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
   const [newSubjectName, setNewSubjectName] = useState("");
-  const [newSubjectQuotas, setNewSubjectQuotas] = useState<Record<ClassKey, number>>({ ...EMPTY_QUOTAS });
+  const [newSubjectJssQuota, setNewSubjectJssQuota] = useState(4);
+  const [newSubjectSs1Quota, setNewSubjectSs1Quota] = useState(4);
+  const [newSubjectSs2ss3Quota, setNewSubjectSs2ss3Quota] = useState(4);
   const [newSubjectIsSlash, setNewSubjectIsSlash] = useState(false);
   const [newSubjectSlashPair, setNewSubjectSlashPair] = useState<string>("");
-  const [newSubjectPreferred, setNewSubjectPreferred] = useState<Record<ClassKey, number[]>>({
-    jss1: [], jss2: [], jss3: [], ss1: [], ss2: [], ss3: [],
-  });
-  const [newSubjectDoubles, setNewSubjectDoubles] = useState<Record<ClassKey, number>>({ ...EMPTY_DOUBLES });
+  const [newSubjectPreferredJss, setNewSubjectPreferredJss] = useState<number[]>([]);
+  const [newSubjectPreferredSs1, setNewSubjectPreferredSs1] = useState<number[]>([]);
+  const [newSubjectPreferredSs2ss3, setNewSubjectPreferredSs2ss3] = useState<number[]>([]);
+  const [newSubjectDoublesJss, setNewSubjectDoublesJss] = useState(0);
+  const [newSubjectDoublesSs1, setNewSubjectDoublesSs1] = useState(0);
+  const [newSubjectDoublesSs2ss3, setNewSubjectDoublesSs2ss3] = useState(0);
   const [fatigueLimit, setFatigueLimit] = useState(5);
   const [maxFreePeriodsPerWeek, setMaxFreePeriodsPerWeek] = useState(3);
   const [maxFreePeriodsPerDay, setMaxFreePeriodsPerDay] = useState(2);
@@ -127,7 +108,7 @@ export default function SettingsPage() {
     mutationFn: async (payload: {
       subjectA: string;
       subjectB: string;
-      field: QuotaField;
+      field: "jssQuota" | "ss1Quota" | "ss2ss3Quota";
       value: number;
     }) => {
       return apiRequest("PATCH", "/api/quotas/slash-pair", payload);
@@ -148,16 +129,13 @@ export default function SettingsPage() {
   const createSubjectMutation = useMutation({
     mutationFn: async (data: {
       name: string;
-      jss1Quota: number;
-      jss2Quota: number;
-      jss3Quota: number;
+      jssQuota: number;
       ss1Quota: number;
-      ss2Quota: number;
-      ss3Quota: number;
+      ss2ss3Quota: number;
       isSlashSubject: boolean;
       slashPairName: string | null;
-      preferredPeriods?: PreferredPeriods;
-      requiredDoubles?: RequiredDoubles;
+      preferredPeriods?: { jss: number[]; ss1: number[]; ss2ss3: number[] };
+      requiredDoubles?: { jss: number; ss1: number; ss2ss3: number };
     }) => {
       return apiRequest("POST", "/api/subjects", data);
     },
@@ -222,11 +200,17 @@ export default function SettingsPage() {
 
   const resetSubjectForm = () => {
     setNewSubjectName("");
-    setNewSubjectQuotas({ ...EMPTY_QUOTAS });
+    setNewSubjectJssQuota(4);
+    setNewSubjectSs1Quota(4);
+    setNewSubjectSs2ss3Quota(4);
     setNewSubjectIsSlash(false);
     setNewSubjectSlashPair("");
-    setNewSubjectPreferred({ jss1: [], jss2: [], jss3: [], ss1: [], ss2: [], ss3: [] });
-    setNewSubjectDoubles({ ...EMPTY_DOUBLES });
+    setNewSubjectPreferredJss([]);
+    setNewSubjectPreferredSs1([]);
+    setNewSubjectPreferredSs2ss3([]);
+    setNewSubjectDoublesJss(0);
+    setNewSubjectDoublesSs1(0);
+    setNewSubjectDoublesSs2ss3(0);
     setEditingSubject(null);
   };
 
@@ -238,32 +222,17 @@ export default function SettingsPage() {
   const openEditSubjectDialog = (subject: Subject) => {
     setEditingSubject(subject);
     setNewSubjectName(subject.name);
-    setNewSubjectQuotas({
-      jss1: subject.jss1Quota,
-      jss2: subject.jss2Quota,
-      jss3: subject.jss3Quota,
-      ss1: subject.ss1Quota,
-      ss2: subject.ss2Quota,
-      ss3: subject.ss3Quota,
-    });
+    setNewSubjectJssQuota(subject.jssQuota);
+    setNewSubjectSs1Quota(subject.ss1Quota);
+    setNewSubjectSs2ss3Quota(subject.ss2ss3Quota);
     setNewSubjectIsSlash(subject.isSlashSubject);
     setNewSubjectSlashPair(subject.slashPairName || "");
-    setNewSubjectPreferred({
-      jss1: subject.preferredPeriods?.jss1 ?? [],
-      jss2: subject.preferredPeriods?.jss2 ?? [],
-      jss3: subject.preferredPeriods?.jss3 ?? [],
-      ss1: subject.preferredPeriods?.ss1 ?? [],
-      ss2: subject.preferredPeriods?.ss2 ?? [],
-      ss3: subject.preferredPeriods?.ss3 ?? [],
-    });
-    setNewSubjectDoubles({
-      jss1: subject.requiredDoubles?.jss1 ?? 0,
-      jss2: subject.requiredDoubles?.jss2 ?? 0,
-      jss3: subject.requiredDoubles?.jss3 ?? 0,
-      ss1: subject.requiredDoubles?.ss1 ?? 0,
-      ss2: subject.requiredDoubles?.ss2 ?? 0,
-      ss3: subject.requiredDoubles?.ss3 ?? 0,
-    });
+    setNewSubjectPreferredJss(subject.preferredPeriods?.jss ?? []);
+    setNewSubjectPreferredSs1(subject.preferredPeriods?.ss1 ?? []);
+    setNewSubjectPreferredSs2ss3(subject.preferredPeriods?.ss2ss3 ?? []);
+    setNewSubjectDoublesJss(subject.requiredDoubles?.jss ?? 0);
+    setNewSubjectDoublesSs1(subject.requiredDoubles?.ss1 ?? 0);
+    setNewSubjectDoublesSs2ss3(subject.requiredDoubles?.ss2ss3 ?? 0);
     setSubjectDialogOpen(true);
   };
 
@@ -280,29 +249,24 @@ export default function SettingsPage() {
   const handleSubjectSubmit = () => {
     const isSlash = newSubjectIsSlash;
     const pairName = isSlash && newSubjectSlashPair ? newSubjectSlashPair : null;
-    const preferredPeriods: PreferredPeriods = {
-      jss1: [...newSubjectPreferred.jss1].sort((a, b) => a - b),
-      jss2: [...newSubjectPreferred.jss2].sort((a, b) => a - b),
-      jss3: [...newSubjectPreferred.jss3].sort((a, b) => a - b),
-      ss1: [...newSubjectPreferred.ss1].sort((a, b) => a - b),
-      ss2: [...newSubjectPreferred.ss2].sort((a, b) => a - b),
-      ss3: [...newSubjectPreferred.ss3].sort((a, b) => a - b),
+    const preferredPeriods = {
+      jss: [...newSubjectPreferredJss].sort((a, b) => a - b),
+      ss1: [...newSubjectPreferredSs1].sort((a, b) => a - b),
+      ss2ss3: [...newSubjectPreferredSs2ss3].sort((a, b) => a - b),
     };
-    const requiredDoubles: RequiredDoubles = { ...newSubjectDoubles };
-    const quotaPayload = {
-      jss1Quota: newSubjectQuotas.jss1,
-      jss2Quota: newSubjectQuotas.jss2,
-      jss3Quota: newSubjectQuotas.jss3,
-      ss1Quota: newSubjectQuotas.ss1,
-      ss2Quota: newSubjectQuotas.ss2,
-      ss3Quota: newSubjectQuotas.ss3,
+    const requiredDoubles = {
+      jss: newSubjectDoublesJss,
+      ss1: newSubjectDoublesSs1,
+      ss2ss3: newSubjectDoublesSs2ss3,
     };
     if (editingSubject) {
       updateSubjectMutation.mutate({
         id: editingSubject.id,
         updates: {
           name: newSubjectName,
-          ...quotaPayload,
+          jssQuota: newSubjectJssQuota,
+          ss1Quota: newSubjectSs1Quota,
+          ss2ss3Quota: newSubjectSs2ss3Quota,
           isSlashSubject: isSlash,
           slashPairName: pairName,
           preferredPeriods,
@@ -312,7 +276,9 @@ export default function SettingsPage() {
     } else {
       createSubjectMutation.mutate({
         name: newSubjectName,
-        ...quotaPayload,
+        jssQuota: newSubjectJssQuota,
+        ss1Quota: newSubjectSs1Quota,
+        ss2ss3Quota: newSubjectSs2ss3Quota,
         isSlashSubject: isSlash,
         slashPairName: pairName,
         preferredPeriods,
@@ -320,15 +286,6 @@ export default function SettingsPage() {
       });
     }
   };
-
-  // Helpers for the per-class Settings UI.
-  function quotaSum(q: SubjectQuota | Subject): number {
-    return q.jss1Quota + q.jss2Quota + q.jss3Quota + q.ss1Quota + q.ss2Quota + q.ss3Quota;
-  }
-  function classTotal(cls: SchoolClass): number {
-    const field = quotaFieldForClass(cls);
-    return quotas.reduce((sum, q) => sum + q[field], 0);
-  }
 
   const handleExport = () => {
     toast({
@@ -343,6 +300,9 @@ export default function SettingsPage() {
       description: "Import functionality will be available in a future update",
     });
   };
+
+  const jssSubjects = quotas.filter(q => q.jssQuota > 0 || (!q.isSlashSubject && q.ss1Quota === 0 && q.ss2ss3Quota === 0));
+  const ssSubjects = quotas.filter(q => q.ss1Quota > 0 || q.ss2ss3Quota > 0);
 
   return (
     <ScrollArea className="h-full">
@@ -401,13 +361,10 @@ export default function SettingsPage() {
                         <span className="font-medium">{subject.name}</span>
                       </div>
                       <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
-                        <span>JSS1: {subject.jss1Quota}</span>
-                        <span>JSS2: {subject.jss2Quota}</span>
-                        <span>JSS3: {subject.jss3Quota}</span>
+                        <span>JSS: {subject.jssQuota}</span>
                         <span>SS1: {subject.ss1Quota}</span>
-                        <span>SS2: {subject.ss2Quota}</span>
-                        <span>SS3: {subject.ss3Quota}</span>
-                        <span className="font-medium text-foreground">Total: {quotaSum(subject)}</span>
+                        <span>SS2/SS3: {subject.ss2ss3Quota}</span>
+                        <span className="font-medium text-foreground">Total: {(subject.jssQuota * 3) + subject.ss1Quota + (subject.ss2ss3Quota * 2)}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
@@ -455,35 +412,50 @@ export default function SettingsPage() {
                   data-testid="input-subject-name"
                 />
               </div>
-              <div>
-                <Label className="text-sm font-medium">Periods per week (per class)</Label>
-                <p className="text-xs text-muted-foreground mb-2">
-                  Set how many periods this subject should run in each class.
-                </p>
-                <div className="grid grid-cols-3 gap-3">
-                  {CLASS_KEYS.map((k) => (
-                    <div key={k} className="space-y-1">
-                      <Label htmlFor={`quota-${k}`} className="text-xs text-muted-foreground">
-                        {CLASS_LABELS[k]}
-                      </Label>
-                      <NumberInput
-                        id={`quota-${k}`}
-                        min={0}
-                        max={10}
-                        value={newSubjectQuotas[k]}
-                        onChange={(v) => setNewSubjectQuotas((prev) => ({ ...prev, [k]: v }))}
-                        data-testid={`input-quota-${k}`}
-                      />
-                    </div>
-                  ))}
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="jss-quota">JSS Quota</Label>
+                  <NumberInput
+                    id="jss-quota"
+                    min={0}
+                    max={10}
+                    value={newSubjectJssQuota}
+                    onChange={setNewSubjectJssQuota}
+                    data-testid="input-jss-quota"
+                  />
+                  <p className="text-xs text-muted-foreground">× 3 classes = {newSubjectJssQuota * 3}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ss1-quota">SS1 Quota</Label>
+                  <NumberInput
+                    id="ss1-quota"
+                    min={0}
+                    max={10}
+                    value={newSubjectSs1Quota}
+                    onChange={setNewSubjectSs1Quota}
+                    data-testid="input-ss1-quota"
+                  />
+                  <p className="text-xs text-muted-foreground">× 1 class = {newSubjectSs1Quota}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ss2ss3-quota">SS2/SS3 Quota</Label>
+                  <NumberInput
+                    id="ss2ss3-quota"
+                    min={0}
+                    max={10}
+                    value={newSubjectSs2ss3Quota}
+                    onChange={setNewSubjectSs2ss3Quota}
+                    data-testid="input-ss2ss3-quota"
+                  />
+                  <p className="text-xs text-muted-foreground">× 2 classes = {newSubjectSs2ss3Quota * 2}</p>
                 </div>
               </div>
               <div className="bg-muted/50 rounded-md p-3 mt-2">
                 <p className="text-sm font-medium">
-                  Total Weekly Periods: {CLASS_KEYS.reduce((sum, k) => sum + newSubjectQuotas[k], 0)}
+                  Total Weekly Periods: {(newSubjectJssQuota * 3) + newSubjectSs1Quota + (newSubjectSs2ss3Quota * 2)}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Sum across JSS1, JSS2, JSS3, SS1, SS2 and SS3
+                  JSS ({newSubjectJssQuota} × 3) + SS1 ({newSubjectSs1Quota} × 1) + SS2/SS3 ({newSubjectSs2ss3Quota} × 2)
                 </p>
               </div>
 
@@ -494,11 +466,19 @@ export default function SettingsPage() {
                     Pick the periods this subject should land in first. Leave empty to allow any period.
                   </p>
                 </div>
-                {CLASS_KEYS.map((k) => {
-                  const value = newSubjectPreferred[k];
+                {(["jss", "ss1", "ss2ss3"] as const).map((lvl) => {
+                  const label = lvl === "jss" ? "JSS" : lvl === "ss1" ? "SS1" : "SS2/SS3";
+                  const value =
+                    lvl === "jss" ? newSubjectPreferredJss
+                    : lvl === "ss1" ? newSubjectPreferredSs1
+                    : newSubjectPreferredSs2ss3;
+                  const setter =
+                    lvl === "jss" ? setNewSubjectPreferredJss
+                    : lvl === "ss1" ? setNewSubjectPreferredSs1
+                    : setNewSubjectPreferredSs2ss3;
                   return (
-                    <div key={k} className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">{CLASS_LABELS[k]}</Label>
+                    <div key={lvl} className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">{label}</Label>
                       <div className="flex flex-wrap gap-1">
                         {Array.from({ length: 9 }, (_, i) => i + 1).map((p) => {
                           const on = value.includes(p);
@@ -510,12 +490,9 @@ export default function SettingsPage() {
                               variant={on ? "default" : "outline"}
                               className="h-7 w-9 p-0 text-xs"
                               onClick={() =>
-                                setNewSubjectPreferred((prev) => ({
-                                  ...prev,
-                                  [k]: on ? prev[k].filter((x) => x !== p) : [...prev[k], p],
-                                }))
+                                setter(on ? value.filter((x) => x !== p) : [...value, p])
                               }
-                              data-testid={`chip-pref-${k}-${p}`}
+                              data-testid={`chip-pref-${lvl}-${p}`}
                             >
                               P{p}
                             </Button>
@@ -535,21 +512,39 @@ export default function SettingsPage() {
                   </p>
                 </div>
                 <div className="grid grid-cols-3 gap-3">
-                  {CLASS_KEYS.map((k) => (
-                    <div key={k} className="space-y-1">
-                      <Label htmlFor={`doubles-${k}`} className="text-xs text-muted-foreground">
-                        {CLASS_LABELS[k]}
-                      </Label>
-                      <NumberInput
-                        id={`doubles-${k}`}
-                        min={0}
-                        max={4}
-                        value={newSubjectDoubles[k]}
-                        onChange={(v) => setNewSubjectDoubles((prev) => ({ ...prev, [k]: v }))}
-                        data-testid={`input-doubles-${k}`}
-                      />
-                    </div>
-                  ))}
+                  <div className="space-y-1">
+                    <Label htmlFor="doubles-jss" className="text-xs text-muted-foreground">JSS</Label>
+                    <NumberInput
+                      id="doubles-jss"
+                      min={0}
+                      max={4}
+                      value={newSubjectDoublesJss}
+                      onChange={setNewSubjectDoublesJss}
+                      data-testid="input-doubles-jss"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="doubles-ss1" className="text-xs text-muted-foreground">SS1</Label>
+                    <NumberInput
+                      id="doubles-ss1"
+                      min={0}
+                      max={4}
+                      value={newSubjectDoublesSs1}
+                      onChange={setNewSubjectDoublesSs1}
+                      data-testid="input-doubles-ss1"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="doubles-ss2ss3" className="text-xs text-muted-foreground">SS2/SS3</Label>
+                    <NumberInput
+                      id="doubles-ss2ss3"
+                      min={0}
+                      max={4}
+                      value={newSubjectDoublesSs2ss3}
+                      onChange={setNewSubjectDoublesSs2ss3}
+                      data-testid="input-doubles-ss2ss3"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -656,10 +651,9 @@ export default function SettingsPage() {
                     </div>
                     <div className="text-right">
                       {(() => {
-                        // Per-class totals. For SS2/SS3 each slash pair occupies
-                        // one slot but counts toward both partners' quotas — we
-                        // count each side once and de-dupe pairs to match the
-                        // actual number of timetable slots used.
+                        // For SS2/SS3 totals, slash pairs share a single timetable
+                        // slot, so each pair counts once (not twice). We pick one
+                        // canonical side per pair (alphabetically first) to count.
                         const seenPairs = new Set<string>();
                         const countedSlashNames = new Set<string>();
                         for (const s of subjects) {
@@ -674,32 +668,32 @@ export default function SettingsPage() {
                         const slashNames = new Set(
                           subjects.filter((s) => s.isSlashSubject && findSlashPair(subjects, s.name)).map((s) => s.name),
                         );
-                        const totalForClass = (cls: SchoolClass): number => {
-                          const field = quotaFieldForClass(cls);
-                          if (cls === "SS2" || cls === "SS3") {
-                            const slashTotal = quotas
-                              .filter((q) => countedSlashNames.has(q.subject))
-                              .reduce((sum, q) => sum + q[field], 0);
-                            const regularTotal = quotas
-                              .filter((q) => q[field] > 0 && !slashNames.has(q.subject))
-                              .reduce((sum, q) => sum + q[field], 0);
-                            return slashTotal + regularTotal;
-                          }
-                          return quotas.reduce((sum, q) => sum + q[field], 0);
-                        };
+                        const jssTotal = quotas.reduce((sum, q) => sum + q.jssQuota, 0);
+                        const ss1Total = quotas.reduce((sum, q) => sum + q.ss1Quota, 0);
+                        const ss2ss3SlashTotal = quotas
+                          .filter((q) => countedSlashNames.has(q.subject))
+                          .reduce((sum, q) => sum + q.ss2ss3Quota, 0);
+                        const ss2ss3RegularTotal = quotas
+                          .filter((q) => q.ss2ss3Quota > 0 && !slashNames.has(q.subject))
+                          .reduce((sum, q) => sum + q.ss2ss3Quota, 0);
+                        const ss2ss3Total = ss2ss3SlashTotal + ss2ss3RegularTotal;
+                        
+                        const jssInRange = jssTotal >= 37 && jssTotal <= 40;
+                        const ss1InRange = ss1Total >= 37 && ss1Total <= 40;
+                        const ss2ss3InRange = ss2ss3Total >= 37 && ss2ss3Total <= 40;
+                        
                         return (
                           <div className="space-y-1">
-                            <div className="flex flex-wrap items-center justify-end gap-2">
-                              {CLASSES.map((cls) => {
-                                const total = totalForClass(cls);
-                                const inRange = total >= 37 && total <= 40;
-                                const cls2 = total > 40 ? 'text-destructive' : inRange ? 'text-green-600' : 'text-amber-600';
-                                return (
-                                  <span key={cls} className={`text-sm ${cls2}`}>
-                                    {cls}: {total}/40
-                                  </span>
-                                );
-                              })}
+                            <div className="flex items-center justify-end gap-2">
+                              <span className={`text-sm ${jssInRange ? 'text-green-600' : jssTotal > 40 ? 'text-destructive' : 'text-amber-600'}`}>
+                                JSS: {jssTotal}/40
+                              </span>
+                              <span className={`text-sm ${ss1InRange ? 'text-green-600' : ss1Total > 40 ? 'text-destructive' : 'text-amber-600'}`}>
+                                SS1: {ss1Total}/40
+                              </span>
+                              <span className={`text-sm ${ss2ss3InRange ? 'text-green-600' : ss2ss3Total > 40 ? 'text-destructive' : 'text-amber-600'}`}>
+                                SS2/SS3: {ss2ss3Total}/40
+                              </span>
                             </div>
                             <p className="text-xs text-muted-foreground">
                               Target: 37-40 periods per class (up to 3 free periods allowed)
@@ -711,117 +705,167 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                {CLASSES.map((cls) => {
-                  const field = quotaFieldForClass(cls);
-                  const isSlashClass = cls === "SS2" || cls === "SS3";
+                <Separator />
 
-                  // Build slash pair list (only relevant for SS2/SS3).
-                  const seenPairs = new Set<string>();
-                  const allPairs: Array<{ a: string; b: string }> = [];
-                  const slashNamesForBadge = new Set<string>();
-                  for (const s of subjects) {
-                    if (!s.isSlashSubject) continue;
-                    const partner = findSlashPair(subjects, s.name);
-                    if (!partner) continue;
-                    slashNamesForBadge.add(s.name);
-                    const key = [s.name, partner.name].sort().join("|");
-                    if (seenPairs.has(key)) continue;
-                    seenPairs.add(key);
-                    const [a, b] = [s.name, partner.name].sort();
-                    allPairs.push({ a, b });
-                  }
-                  const pairs = isSlashClass
-                    ? allPairs.filter(({ a, b }) => {
-                        const qa = quotas.find((q) => q.subject === a);
-                        const qb = quotas.find((q) => q.subject === b);
-                        return Math.max(qa?.[field] ?? 0, qb?.[field] ?? 0) > 0;
-                      })
-                    : [];
-                  const slashTotal = pairs.reduce((sum, p) => {
-                    const qa = quotas.find((q) => q.subject === p.a);
-                    const qb = quotas.find((q) => q.subject === p.b);
-                    return sum + Math.max(qa?.[field] ?? 0, qb?.[field] ?? 0);
-                  }, 0);
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-medium">JSS Subjects (JSS1-JSS3)</h3>
+                    <Badge variant="secondary">
+                      {quotas.reduce((sum, q) => sum + q.jssQuota, 0)} periods/class ({quotas.reduce((sum, q) => sum + q.jssQuota, 0) * 3} total for 3 classes)
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {[...quotas]
+                      .filter((q) => q.jssQuota > 0)
+                      .sort((a, b) => a.subject.localeCompare(b.subject))
+                      .map((q) => (
+                        <QuotaInput
+                          key={q.subject}
+                          subject={q.subject}
+                          value={q.jssQuota}
+                          onChange={(v) => handleQuotaChange(q.subject, "jssQuota", v)}
+                          isSlash={q.isSlashSubject}
+                          sectionTotal={q.jssQuota * 3}
+                        />
+                      ))}
+                  </div>
+                </div>
 
-                  const regularSubjects = [...quotas]
-                    .filter((q) => q[field] > 0 && (!isSlashClass || !slashNamesForBadge.has(q.subject)))
-                    .sort((a, b) => a.subject.localeCompare(b.subject));
-                  const regularTotal = regularSubjects.reduce((sum, q) => sum + q[field], 0);
-                  const perClass = slashTotal + regularTotal;
+                <Separator />
 
-                  return (
-                    <div key={cls}>
-                      <Separator className="mb-6" />
-                      <div className="flex items-center justify-between mb-3">
-                        <h3 className="font-medium">
-                          {cls} Subjects{isSlashClass && pairs.length > 0 ? " (includes slash pairing)" : ""}
-                        </h3>
-                        <Badge variant="secondary">{perClass} periods/class</Badge>
-                      </div>
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-medium">SS1 Subjects</h3>
+                    <Badge variant="secondary">
+                      {quotas.reduce((sum, q) => sum + q.ss1Quota, 0)} periods/class
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {[...quotas]
+                      .filter((q) => q.ss1Quota > 0)
+                      .sort((a, b) => a.subject.localeCompare(b.subject))
+                      .map((q) => (
+                        <QuotaInput
+                          key={q.subject}
+                          subject={q.subject}
+                          value={q.ss1Quota}
+                          onChange={(v) => handleQuotaChange(q.subject, "ss1Quota", v)}
+                          isSlash={q.isSlashSubject}
+                          sectionTotal={q.ss1Quota}
+                        />
+                      ))}
+                  </div>
+                </div>
 
-                      {pairs.length > 0 && (
-                        <div className="mb-4">
-                          <p className="text-sm text-muted-foreground mb-3">Slash Subject Pairs (scheduled simultaneously)</p>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {pairs.map(({ a, b }) => {
-                              const qa = quotas.find((q) => q.subject === a);
-                              const qb = quotas.find((q) => q.subject === b);
-                              const quota = Math.max(qa?.[field] ?? 0, qb?.[field] ?? 0);
-                              return (
-                                <div key={`${a}-${b}`} className="flex items-center gap-2">
-                                  <div className="flex-1">
-                                    <Label className="text-sm flex items-center gap-1">
-                                      {a} / {b}
-                                      <Badge variant="outline" className="text-xs ml-1">Slash</Badge>
-                                    </Label>
-                                  </div>
-                                  <NumberInput
-                                    min={0}
-                                    max={10}
-                                    value={quota}
-                                    onChange={(v) => {
-                                      updateSlashPairQuotaMutation.mutate({
-                                        subjectA: a,
-                                        subjectB: b,
-                                        field,
-                                        value: v,
-                                      });
-                                    }}
-                                    className="w-16"
-                                    data-testid={`input-quota-slash-${cls.toLowerCase()}-${a.toLowerCase()}-${b.toLowerCase()}`}
-                                  />
-                                  <span className="text-sm text-muted-foreground">per week</span>
-                                </div>
-                              );
-                            })}
-                          </div>
+                <Separator />
+
+                <div>
+                  {(() => {
+                    // Derive slash pairs from the user's own subjects.
+                    const seenPairs = new Set<string>();
+                    const allPairs: Array<{ a: string; b: string }> = [];
+                    const slashNamesForBadge = new Set<string>();
+                    for (const s of subjects) {
+                      if (!s.isSlashSubject) continue;
+                      const partner = findSlashPair(subjects, s.name);
+                      if (!partner) continue;
+                      slashNamesForBadge.add(s.name);
+                      const key = [s.name, partner.name].sort().join("|");
+                      if (seenPairs.has(key)) continue;
+                      seenPairs.add(key);
+                      const [a, b] = [s.name, partner.name].sort();
+                      allPairs.push({ a, b });
+                    }
+                    // Only render pairs that are actually assigned to SS2/SS3.
+                    const pairs = allPairs.filter(({ a, b }) => {
+                      const qa = quotas.find((q) => q.subject === a);
+                      const qb = quotas.find((q) => q.subject === b);
+                      return Math.max(qa?.ss2ss3Quota ?? 0, qb?.ss2ss3Quota ?? 0) > 0;
+                    });
+                    const slashTotal = pairs.reduce((sum, p) => {
+                      const qa = quotas.find((q) => q.subject === p.a);
+                      const qb = quotas.find((q) => q.subject === p.b);
+                      return sum + Math.max(qa?.ss2ss3Quota ?? 0, qb?.ss2ss3Quota ?? 0);
+                    }, 0);
+                    const regularSubjects = [...quotas]
+                      .filter((q) => q.ss2ss3Quota > 0 && !slashNamesForBadge.has(q.subject))
+                      .sort((a, b) => a.subject.localeCompare(b.subject));
+                    const regularTotal = regularSubjects.reduce((sum, q) => sum + q.ss2ss3Quota, 0);
+                    const perClass = slashTotal + regularTotal;
+
+                    return (
+                      <>
+                        <div className="flex items-center justify-between mb-3">
+                          <h3 className="font-medium">SS2/SS3 Subjects (includes slash pairing)</h3>
+                          <Badge variant="secondary">
+                            {`${perClass} periods/class (${perClass * 2} total for 2 classes)`}
+                          </Badge>
                         </div>
-                      )}
 
-                      {regularSubjects.length > 0 ? (
-                        <>
-                          {pairs.length > 0 && (
-                            <p className="text-sm text-muted-foreground mb-3">Regular Subjects</p>
-                          )}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {regularSubjects.map((q) => (
-                              <QuotaInput
-                                key={q.subject}
-                                subject={q.subject}
-                                value={q[field]}
-                                onChange={(v) => handleQuotaChange(q.subject, field, v)}
-                                isSlash={q.isSlashSubject}
-                                sectionTotal={q[field]}
-                              />
-                            ))}
+                        {pairs.length > 0 && (
+                          <div className="mb-4">
+                            <p className="text-sm text-muted-foreground mb-3">Slash Subject Pairs (scheduled simultaneously)</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {pairs.map(({ a, b }) => {
+                                const qa = quotas.find((q) => q.subject === a);
+                                const qb = quotas.find((q) => q.subject === b);
+                                // If the two halves disagree (legacy data), show
+                                // the larger value so the user can see something
+                                // sensible; the next save syncs both atomically.
+                                const quota = Math.max(qa?.ss2ss3Quota ?? 0, qb?.ss2ss3Quota ?? 0);
+                                return (
+                                  <div key={`${a}-${b}`} className="flex items-center gap-2">
+                                    <div className="flex-1">
+                                      <Label className="text-sm flex items-center gap-1">
+                                        {a} / {b}
+                                        <Badge variant="outline" className="text-xs ml-1">Slash</Badge>
+                                        <span className="text-xs text-muted-foreground ml-1">({quota * 2} total)</span>
+                                      </Label>
+                                    </div>
+                                    <NumberInput
+                                      min={0}
+                                      max={10}
+                                      value={quota}
+                                      onChange={(v) => {
+                                        updateSlashPairQuotaMutation.mutate({
+                                          subjectA: a,
+                                          subjectB: b,
+                                          field: "ss2ss3Quota",
+                                          value: v,
+                                        });
+                                      }}
+                                      className="w-16"
+                                      data-testid={`input-quota-slash-${a.toLowerCase()}-${b.toLowerCase()}`}
+                                    />
+                                    <span className="text-sm text-muted-foreground">per week</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
-                        </>
-                      ) : pairs.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">No subjects assigned to {cls} yet.</p>
-                      ) : null}
-                    </div>
-                  );
-                })}
+                        )}
+
+                        {regularSubjects.length > 0 && (
+                          <>
+                            <p className="text-sm text-muted-foreground mb-3">Regular Subjects</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {regularSubjects.map((q) => (
+                                <QuotaInput
+                                  key={q.subject}
+                                  subject={q.subject}
+                                  value={q.ss2ss3Quota}
+                                  onChange={(v) => handleQuotaChange(q.subject, "ss2ss3Quota", v)}
+                                  isSlash={false}
+                                  sectionTotal={q.ss2ss3Quota * 2}
+                                />
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
               </>
             )}
           </CardContent>

@@ -81,7 +81,7 @@ PostgreSQL with Drizzle ORM. Tables:
 - `sessions` - Session storage (managed by auth)
 - `teachers` - Teacher profiles with subjects, classes, unavailability (user-scoped)
 - `timetable_slots` - Individual period assignments (user-scoped)
-- `timetable_actions` - Action history for audit (user-scoped). `timestamp` column is `bigint` to hold `Date.now()` millisecond values (a plain `integer` overflows around the year 2038 / actually as soon as ms exceed 2^31, which is now).
+- `timetable_actions` - Action history for audit (user-scoped)
 - `subject_quotas` - Period allocations per subject (user-scoped)
 - `subjects` - Custom subject definitions with per-class quotas (user-scoped)
 - `user_settings` - User preferences including fatigue limit (user-scoped)
@@ -111,14 +111,11 @@ PostgreSQL with Drizzle ORM. Tables:
 ### Subjects
 Users create and manage all subjects in the Settings page with:
 - Subject name (must be unique)
-- **Per-class period quotas** (JSS1, JSS2, JSS3, SS1, SS2, SS3) — six independent values, one per class. Backed by `subjects.{jss1_quota, jss2_quota, jss3_quota, ss1_quota, ss2_quota, ss3_quota}` and mirrored to `subject_quotas`.
-- **Preferred periods** per class — chip selector (P1–P9) for each of the six classes. Stored as JSON `{ jss1: number[], jss2: number[], jss3: number[], ss1: number[], ss2: number[], ss3: number[] }`. The auto-generator tries these periods first when scheduling the subject, falling back to any legal slot if preferred periods don't fit. Empty list = any period.
-- **Required doubles per week** per class — number of double-period blocks the generator must place, one count per class. Stored as JSON with the same six keys. Doubles are scheduled in a dedicated pre-pass before single-period scheduling and also honour the preferred-period list.
+- Per-class-level period quotas (JSS, SS1, SS2/SS3)
+- **Preferred periods** per class level — chip selector (P1–P9). The auto-generator tries these periods first when scheduling the subject, falling back to any legal slot if preferred periods don't fit. Empty list = any period.
+- **Required doubles per week** per class level — number of double-period blocks the generator must place. Doubles are scheduled in a dedicated pre-pass before single-period scheduling and also honour the preferred-period list.
 - Every subject is fully editable and deletable
 - Subjects sync with subject quotas for timetable validation
-- Helpers in `shared/schema.ts`: `QUOTA_FIELDS`, `quotaFieldForClass(cls)`, `classKey(cls)`, `getQuotaForClass(quota, cls)`.
-
-Per-class quota migration: `scripts/migrate-split-quotas.sql` is the data-preserving migration that splits the legacy aggregated columns (`jss_quota`, `ss2ss3_quota`) into six per-class columns and rewrites the `preferred_periods` / `required_doubles` JSON keys (`jss` → `jss1`/`jss2`/`jss3`, `ss2ss3` → `ss2`/`ss3`). It is idempotent and transactional. Run it once on prod before redeploying — `db:push` would drop the old columns and lose the user's quota values.
 
 ### Fixed Periods (locked cells & non-teaching activities)
 Two ways to pin something onto the grid so the auto-generator never moves it:
@@ -131,7 +128,6 @@ Both locked rows and activities:
 - Survive page refresh and `Clear & Generate` (the auto-generator merges them into its locked-set unconditionally).
 - Require `?force=true` on DELETE (the home page sends this automatically when removing a locked cell).
 - Bulk activity creation validates every target class up front and only writes if all 6 are free.
-- Deleting either half of a locked double period removes both halves on the server (`storage.clearSlot` looks at `period - 1` and `period + 1` for partner rows of the same `slotType="double"` and same subject). This prevents orphan halves from being preserved by the auto-generator and re-rendered on the grid.
 
 ### Slash Subjects
 Paired subjects that share a single timetable slot (scheduled simultaneously). Slash pairings are user-configurable from the Settings page — toggle "Slash subject" on a subject and pick its partner from the dropdown. Pairings are mirrored bidirectionally and exclusively in a single transaction (changing or deleting one side automatically clears the partner's back-pointer). No subject pairs are hardcoded.

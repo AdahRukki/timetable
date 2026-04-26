@@ -18,11 +18,8 @@ import {
   PERIODS_PER_DAY,
   BREAK_AFTER_P4,
   BREAK_AFTER_P7,
-  QUOTA_FIELDS,
   findSlashPair,
   getQuotaForClass,
-  classKey,
-  quotaFieldForClass,
   getTeacherSubjectClasses,
   type TimetableSlot,
   type Teacher,
@@ -575,8 +572,8 @@ export async function registerRoutes(
         data.subject,
         data.teacherId ?? "",
         data.slotType,
-        data.slashPairSubject ?? undefined,
-        data.slashPairTeacherId ?? undefined,
+        data.slashPairSubject,
+        data.slashPairTeacherId,
         isActivity,
       );
       res.json(result);
@@ -632,8 +629,8 @@ export async function registerRoutes(
           data.subject,
           data.teacherId ?? "",
           data.slotType,
-          data.slashPairSubject ?? undefined,
-          data.slashPairTeacherId ?? undefined,
+          data.slashPairSubject,
+          data.slashPairTeacherId,
           isActivity,
         );
         perClassResults.push({ schoolClass: cls, validation });
@@ -710,33 +707,14 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         res.status(400).json({ error: "Invalid placement data", details: error.errors });
       } else {
-        console.error("[/api/timetable/place] failed", {
-          userId: (req.user as { claims?: { sub?: string } } | undefined)?.claims?.sub
-            ?? (req.session as unknown as { passport?: { user?: { id?: string } } } | undefined)?.passport?.user?.id,
-          body: req.body,
-          error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
-        });
         res.status(500).json({ error: "Failed to place subject" });
       }
     }
   });
 
-  // Wipe every timetable row for the current user — including locked fixed
-  // periods and non-teaching activities. Used by the "Reset timetable" button
-  // on the home page. The frontend gates this behind a confirmation dialog.
-  app.delete("/api/timetable", isAuthenticated, async (req, res) => {
-    try {
-      const userId = getUserId(req);
-      await storage.wipeAllSlots(userId);
-      res.json({ success: true });
-    } catch (error) {
-      console.error("[/api/timetable] wipe failed", {
-        error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
-      });
-      res.status(500).json({ error: "Failed to reset timetable" });
-    }
-  });
-
+  // Remove subject. Locked slots (fixed periods + activities) require an
+  // explicit `?force=true` query param so accidental clicks don't wipe a
+  // user-pinned cell.
   app.delete("/api/timetable/:day/:class/:period", isAuthenticated, async (req, res) => {
     const userId = getUserId(req);
     const { day, class: schoolClass, period } = req.params;
@@ -805,7 +783,7 @@ export async function registerRoutes(
       const slashPairSchema = z.object({
         subjectA: z.string().min(1),
         subjectB: z.string().min(1),
-        field: z.enum(QUOTA_FIELDS),
+        field: z.enum(["jssQuota", "ss1Quota", "ss2ss3Quota"]),
         value: z.number().int().min(0).max(10),
       });
       const { subjectA, subjectB, field, value } = slashPairSchema.parse(req.body);
@@ -835,12 +813,9 @@ export async function registerRoutes(
       const { subject } = req.params;
       
       const partialQuotaSchema = z.object({
-        jss1Quota: z.number().min(0).max(10).optional(),
-        jss2Quota: z.number().min(0).max(10).optional(),
-        jss3Quota: z.number().min(0).max(10).optional(),
+        jssQuota: z.number().min(0).max(10).optional(),
         ss1Quota: z.number().min(0).max(10).optional(),
-        ss2Quota: z.number().min(0).max(10).optional(),
-        ss3Quota: z.number().min(0).max(10).optional(),
+        ss2ss3Quota: z.number().min(0).max(10).optional(),
         isSlashSubject: z.boolean().optional(),
       });
       
@@ -944,12 +919,9 @@ export async function registerRoutes(
       
       const partialSubjectSchema = z.object({
         name: z.string().min(1).optional(),
-        jss1Quota: z.number().min(0).max(10).optional(),
-        jss2Quota: z.number().min(0).max(10).optional(),
-        jss3Quota: z.number().min(0).max(10).optional(),
+        jssQuota: z.number().min(0).max(10).optional(),
         ss1Quota: z.number().min(0).max(10).optional(),
-        ss2Quota: z.number().min(0).max(10).optional(),
-        ss3Quota: z.number().min(0).max(10).optional(),
+        ss2ss3Quota: z.number().min(0).max(10).optional(),
         isSlashSubject: z.boolean().optional(),
         slashPairName: z.string().nullable().optional(),
         preferredPeriods: preferredPeriodsSchema.optional(),
@@ -1761,12 +1733,18 @@ function maxClassEmpty(timetable: Timetable): number {
 
 // Try to place ONE period of `subject` in `cls` somewhere it fits.
 // Returns periods placed (0, 1, or 2 if a double was placed).
-// ===== Per-class scheduling preferences =====
+// ===== Per-class-level scheduling preferences =====
+type ClassLevel = "jss" | "ss1" | "ss2ss3";
+function classLevel(cls: SchoolClass): ClassLevel {
+  if (cls.startsWith("JSS")) return "jss";
+  if (cls === "SS1") return "ss1";
+  return "ss2ss3";
+}
 function getPreferredPeriods(quota: SubjectQuota, cls: SchoolClass): number[] {
-  return quota.preferredPeriods?.[classKey(cls)] ?? [];
+  return quota.preferredPeriods?.[classLevel(cls)] ?? [];
 }
 function getRequiredDoubles(quota: SubjectQuota, cls: SchoolClass): number {
-  return quota.requiredDoubles?.[classKey(cls)] ?? 0;
+  return quota.requiredDoubles?.[classLevel(cls)] ?? 0;
 }
 // Returns periods sorted so preferred ones come first (each group internally
 // shuffled for variety across attempts).
@@ -2354,9 +2332,10 @@ function runAttempt(
     if (seenSlashPairs.has(pairKey)) continue;
     seenSlashPairs.add(pairKey);
 
+    const periods = subj.ss2ss3Quota;
+    if (periods <= 0) continue;
+
     for (const cls of ["SS2", "SS3"] as SchoolClass[]) {
-      const periods = subj[quotaFieldForClass(cls)];
-      if (periods <= 0) continue;
       const placed = scheduleSlashPair(
         timetable, cls,
         subj.name, partner.name,

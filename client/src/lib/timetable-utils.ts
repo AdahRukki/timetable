@@ -542,7 +542,7 @@ export function validatePlacement(
   
   // Check fatigue limit (per-teacher override wins over global)
   const teacherLimit = getEffectiveFatigueLimit(teacher, fatigueLimit);
-  if (wouldExceedFatigueLimit(timetable, teacher.id, day, period, slotType === "double", teacherLimit)) {
+  if (wouldExceedFatigueLimit(timetable, teacherId, day, period, slotType === "double", teacherLimit)) {
     errors.push({
       code: "FATIGUE_LIMIT",
       message: `${teacher.name} would exceed ${teacherLimit} consecutive teaching periods`,
