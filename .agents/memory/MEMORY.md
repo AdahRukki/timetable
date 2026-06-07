@@ -1,0 +1,2 @@
+- [Autogen doubles chokepoint](autogen-doubles.md) — doubles are created only in tryPlace's double branch; all other tryPlace callsites pass allowDouble=false.
+- [db:push interactive prompt](db-push-prompt.md) — npm run db:push blocks on an unrelated users_google_id_unique prompt that piped stdin can't dismiss; apply additive columns via psql.

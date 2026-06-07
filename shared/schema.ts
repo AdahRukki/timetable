@@ -112,6 +112,7 @@ export const subjectQuotas = pgTable("subject_quotas", {
   ss1Quota: integer("ss1_quota").notNull(),
   ss2ss3Quota: integer("ss2ss3_quota").notNull(),
   isSlashSubject: integer("is_slash_subject").notNull().default(0),
+  singleOnly: integer("single_only").notNull().default(0),
   preferredPeriods: jsonb("preferred_periods")
     .$type<PreferredPeriods>()
     .notNull()
@@ -132,6 +133,7 @@ export const subjects = pgTable("subjects", {
   ss2ss3Quota: integer("ss2ss3_quota").notNull().default(0),
   isSlashSubject: integer("is_slash_subject").notNull().default(0),
   slashPairName: text("slash_pair_name"),
+  singleOnly: integer("single_only").notNull().default(0),
   preferredPeriods: jsonb("preferred_periods")
     .$type<PreferredPeriods>()
     .notNull()
@@ -375,6 +377,7 @@ export const subjectQuotaSchema = z.object({
   ss1Quota: z.number().min(0).max(10),
   ss2ss3Quota: z.number().min(0).max(10),
   isSlashSubject: z.boolean().default(false),
+  singleOnly: z.boolean().default(false),
   preferredPeriods: preferredPeriodsSchema.default({ jss: [], ss1: [], ss2ss3: [] }),
   requiredDoubles: requiredDoublesSchema.default({ jss: 0, ss1: 0, ss2ss3: 0 }),
 });
@@ -393,6 +396,7 @@ export const subjectSchema = z.object({
   ss2ss3Quota: z.number().min(0).max(10).default(0),
   isSlashSubject: z.boolean().default(false),
   slashPairName: z.string().nullable().default(null),
+  singleOnly: z.boolean().default(false),
   preferredPeriods: preferredPeriodsSchema.default({ jss: [], ss1: [], ss2ss3: [] }),
   requiredDoubles: requiredDoublesSchema.default({ jss: 0, ss1: 0, ss2ss3: 0 }),
 });

@@ -924,6 +924,7 @@ export async function registerRoutes(
         ss2ss3Quota: z.number().min(0).max(10).optional(),
         isSlashSubject: z.boolean().optional(),
         slashPairName: z.string().nullable().optional(),
+        singleOnly: z.boolean().optional(),
         preferredPeriods: preferredPeriodsSchema.optional(),
         requiredDoubles: requiredDoublesSchema.optional(),
       });
@@ -1315,7 +1316,8 @@ function tryPlace(
   teacher: Teacher,
   fatigueLimit: number,
   allowDouble: boolean,
-  relaxDailyRule = false
+  relaxDailyRule = false,
+  singleOnlySubjects?: ReadonlySet<string>,
 ): number {
   const slot = timetable.get(slotKey(day, cls, period));
   if (!slot || slot.status !== "empty") return 0;
@@ -1323,8 +1325,9 @@ function tryPlace(
   if (isTeacherUnavailable(teacher, day, period)) return 0;
   if (!isTeacherFreeAt(timetable, teacher.id, day, period)) return 0;
 
-  // Try double first
-  if (allowDouble && period < PERIODS_PER_DAY[day] && !wouldCrossBreak(day, period)) {
+  // Try double first — never for subjects marked single-periods-only.
+  const canDouble = allowDouble && !singleOnlySubjects?.has(subject);
+  if (canDouble && period < PERIODS_PER_DAY[day] && !wouldCrossBreak(day, period)) {
     const next = period + 1;
     const slot2 = timetable.get(slotKey(day, cls, next));
     if (
@@ -1766,6 +1769,7 @@ function placeOneSubjectPeriod(
   remainingNeeded: number,
   flaggedIds: Set<string>,
   preferredPeriods: number[] = [],
+  singleOnlySubjects?: ReadonlySet<string>,
 ): number {
   const eligible = teachers.filter((t) => teacherCanTeachSubjectToClass(t, subject, cls));
   if (eligible.length === 0) return 0;
@@ -1778,7 +1782,7 @@ function placeOneSubjectPeriod(
       for (const teacher of sortedEligible) {
         const r = tryPlace(
           timetable, cls, day, period, subject, teacher,
-          fatigueLimit, remainingNeeded >= 2, false,
+          fatigueLimit, remainingNeeded >= 2, false, singleOnlySubjects,
         );
         if (r > 0) return r;
       }
@@ -2376,6 +2380,11 @@ function runAttempt(
     preferenceByClass.set(cls, m);
   }
 
+  // Subjects flagged single-periods-only: never scheduled as doubles.
+  const singleOnlySubjects: ReadonlySet<string> = new Set(
+    quotas.filter((q) => q.singleOnly).map((q) => q.subject),
+  );
+
   // PHASE 2.5: Required doubles pre-pass — for each (cls, subject), place the
   // user-requested number of double-period blocks before single-period scheduling.
   // Doubles try preferred periods first; if none fit, any legal slot is used.
@@ -2383,6 +2392,7 @@ function runAttempt(
     const remaining = remainingByClass.get(cls)!;
     const subjectsForClass = shuffle(quotas.map((q) => q.subject));
     for (const subject of subjectsForClass) {
+      if (singleOnlySubjects.has(subject)) continue;
       const quota = quotas.find((q) => q.subject === subject);
       if (!quota) continue;
       if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) continue;
@@ -2406,7 +2416,7 @@ function runAttempt(
           for (const teacher of sortedEligible) {
             const r = tryPlace(
               timetable, cls, day, period, subject, teacher,
-              fatigueLimit, true, false,
+              fatigueLimit, true, false, singleOnlySubjects,
             );
             if (r === 2) {
               const newRem = remNeeded - 2;
@@ -2497,7 +2507,7 @@ function runAttempt(
         const q = quotas.find((x) => x.subject === subject);
         const pref = q ? getPreferredPeriods(q, cls) : [];
         const placed = placeOneSubjectPeriod(
-          timetable, cls, subject, teachers, fatigueLimit, remNeeded, flaggedIds, pref,
+          timetable, cls, subject, teachers, fatigueLimit, remNeeded, flaggedIds, pref, singleOnlySubjects,
         );
         if (placed > 0) {
           const newRem = remNeeded - placed;

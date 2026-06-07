@@ -39,6 +39,7 @@ export default function SettingsPage() {
   const [newSubjectDoublesJss, setNewSubjectDoublesJss] = useState(0);
   const [newSubjectDoublesSs1, setNewSubjectDoublesSs1] = useState(0);
   const [newSubjectDoublesSs2ss3, setNewSubjectDoublesSs2ss3] = useState(0);
+  const [newSubjectSingleOnly, setNewSubjectSingleOnly] = useState(false);
   const [fatigueLimit, setFatigueLimit] = useState(5);
   const [maxFreePeriodsPerWeek, setMaxFreePeriodsPerWeek] = useState(3);
   const [maxFreePeriodsPerDay, setMaxFreePeriodsPerDay] = useState(2);
@@ -136,6 +137,7 @@ export default function SettingsPage() {
       slashPairName: string | null;
       preferredPeriods?: { jss: number[]; ss1: number[]; ss2ss3: number[] };
       requiredDoubles?: { jss: number; ss1: number; ss2ss3: number };
+      singleOnly?: boolean;
     }) => {
       return apiRequest("POST", "/api/subjects", data);
     },
@@ -211,6 +213,7 @@ export default function SettingsPage() {
     setNewSubjectDoublesJss(0);
     setNewSubjectDoublesSs1(0);
     setNewSubjectDoublesSs2ss3(0);
+    setNewSubjectSingleOnly(false);
     setEditingSubject(null);
   };
 
@@ -233,6 +236,7 @@ export default function SettingsPage() {
     setNewSubjectDoublesJss(subject.requiredDoubles?.jss ?? 0);
     setNewSubjectDoublesSs1(subject.requiredDoubles?.ss1 ?? 0);
     setNewSubjectDoublesSs2ss3(subject.requiredDoubles?.ss2ss3 ?? 0);
+    setNewSubjectSingleOnly(subject.singleOnly ?? false);
     setSubjectDialogOpen(true);
   };
 
@@ -254,11 +258,13 @@ export default function SettingsPage() {
       ss1: [...newSubjectPreferredSs1].sort((a, b) => a - b),
       ss2ss3: [...newSubjectPreferredSs2ss3].sort((a, b) => a - b),
     };
-    const requiredDoubles = {
-      jss: newSubjectDoublesJss,
-      ss1: newSubjectDoublesSs1,
-      ss2ss3: newSubjectDoublesSs2ss3,
-    };
+    const requiredDoubles = newSubjectSingleOnly
+      ? { jss: 0, ss1: 0, ss2ss3: 0 }
+      : {
+          jss: newSubjectDoublesJss,
+          ss1: newSubjectDoublesSs1,
+          ss2ss3: newSubjectDoublesSs2ss3,
+        };
     if (editingSubject) {
       updateSubjectMutation.mutate({
         id: editingSubject.id,
@@ -271,6 +277,7 @@ export default function SettingsPage() {
           slashPairName: pairName,
           preferredPeriods,
           requiredDoubles,
+          singleOnly: newSubjectSingleOnly,
         },
       });
     } else {
@@ -283,6 +290,7 @@ export default function SettingsPage() {
         slashPairName: pairName,
         preferredPeriods,
         requiredDoubles,
+        singleOnly: newSubjectSingleOnly,
       });
     }
   };
@@ -505,10 +513,26 @@ export default function SettingsPage() {
               </div>
 
               <div className="space-y-3 border-t pt-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="subject-single-only">Single periods only</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Never schedule this subject as a double period.
+                    </p>
+                  </div>
+                  <Switch
+                    id="subject-single-only"
+                    checked={newSubjectSingleOnly}
+                    onCheckedChange={setNewSubjectSingleOnly}
+                    data-testid="switch-subject-single-only"
+                  />
+                </div>
                 <div>
                   <Label className="text-sm font-medium">Required doubles per week</Label>
                   <p className="text-xs text-muted-foreground">
-                    Number of double-period blocks the generator must place per class.
+                    {newSubjectSingleOnly
+                      ? "Disabled — this subject is set to single periods only."
+                      : "Number of double-period blocks the generator must place per class."}
                   </p>
                 </div>
                 <div className="grid grid-cols-3 gap-3">
@@ -518,8 +542,9 @@ export default function SettingsPage() {
                       id="doubles-jss"
                       min={0}
                       max={4}
-                      value={newSubjectDoublesJss}
+                      value={newSubjectSingleOnly ? 0 : newSubjectDoublesJss}
                       onChange={setNewSubjectDoublesJss}
+                      disabled={newSubjectSingleOnly}
                       data-testid="input-doubles-jss"
                     />
                   </div>
@@ -529,8 +554,9 @@ export default function SettingsPage() {
                       id="doubles-ss1"
                       min={0}
                       max={4}
-                      value={newSubjectDoublesSs1}
+                      value={newSubjectSingleOnly ? 0 : newSubjectDoublesSs1}
                       onChange={setNewSubjectDoublesSs1}
+                      disabled={newSubjectSingleOnly}
                       data-testid="input-doubles-ss1"
                     />
                   </div>
@@ -540,8 +566,9 @@ export default function SettingsPage() {
                       id="doubles-ss2ss3"
                       min={0}
                       max={4}
-                      value={newSubjectDoublesSs2ss3}
+                      value={newSubjectSingleOnly ? 0 : newSubjectDoublesSs2ss3}
                       onChange={setNewSubjectDoublesSs2ss3}
+                      disabled={newSubjectSingleOnly}
                       data-testid="input-doubles-ss2ss3"
                     />
                   </div>
