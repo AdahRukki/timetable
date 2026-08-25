@@ -180,7 +180,12 @@ export default function SharedTimetablePage() {
             <Tabs value={selectedDay} onValueChange={(v) => setSelectedDay(v as Day)}>
               <TabsList className="grid w-full grid-cols-5 mb-4">
                 {DAYS.map((day) => (
-                  <TabsTrigger key={day} value={day} data-testid={`tab-${day.toLowerCase()}`}>
+                  <TabsTrigger
+                    key={day}
+                    value={day}
+                    className="text-xs sm:text-sm px-1.5 sm:px-3"
+                    data-testid={`tab-${day.toLowerCase()}`}
+                  >
                     {day.slice(0, 3)}
                   </TabsTrigger>
                 ))}

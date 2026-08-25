@@ -420,7 +420,7 @@ export default function SettingsPage() {
                   data-testid="input-subject-name"
                 />
               </div>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="jss-quota">JSS Quota</Label>
                   <NumberInput
@@ -535,7 +535,7 @@ export default function SettingsPage() {
                       : "Number of double-period blocks the generator must place per class."}
                   </p>
                 </div>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
                   <div className="space-y-1">
                     <Label htmlFor="doubles-jss" className="text-xs text-muted-foreground">JSS</Label>
                     <NumberInput
@@ -1143,7 +1143,7 @@ export default function SettingsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
               <div>
                 <Label className="text-muted-foreground">Monday</Label>
                 <p className="font-medium">P1 - P9</p>

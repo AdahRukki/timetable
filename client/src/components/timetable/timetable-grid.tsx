@@ -254,7 +254,7 @@ export function TimetableGrid({
                 <TabsTrigger
                   key={day}
                   value={day}
-                  className="text-sm"
+                  className="text-xs sm:text-sm px-1.5 sm:px-3"
                   data-testid={`tab-${day.toLowerCase()}`}
                 >
                   {day.slice(0, 3)}
