@@ -97,8 +97,22 @@ export const timetableActions = pgTable("timetable_actions", {
 });
 
 // Per-class-level scheduling preference shapes (mirrored on subjects + subject_quotas)
-export type PreferredPeriods = { jss: number[]; ss1: number[]; ss2ss3: number[] };
-export type RequiredDoubles = { jss: number; ss1: number; ss2ss3: number };
+export type PreferredPeriods = {
+  jss: number[];
+  jss1?: number[];
+  jss2?: number[];
+  jss3?: number[];
+  ss1: number[];
+  ss2ss3: number[];
+};
+export type RequiredDoubles = {
+  jss: number;
+  jss1?: number;
+  jss2?: number;
+  jss3?: number;
+  ss1: number;
+  ss2ss3: number;
+};
 
 const DEFAULT_PREFERRED_PERIODS: PreferredPeriods = { jss: [], ss1: [], ss2ss3: [] };
 const DEFAULT_REQUIRED_DOUBLES: RequiredDoubles = { jss: 0, ss1: 0, ss2ss3: 0 };
@@ -109,6 +123,10 @@ export const subjectQuotas = pgTable("subject_quotas", {
   userId: varchar("user_id").notNull(),
   subject: text("subject").notNull(),
   jssQuota: integer("jss_quota").notNull(),
+  // Per-JSS-class overrides. Null means fall back to the legacy shared JSS quota.
+  jss1Quota: integer("jss1_quota"),
+  jss2Quota: integer("jss2_quota"),
+  jss3Quota: integer("jss3_quota"),
   ss1Quota: integer("ss1_quota").notNull(),
   ss2ss3Quota: integer("ss2ss3_quota").notNull(),
   isSlashSubject: integer("is_slash_subject").notNull().default(0),
@@ -129,6 +147,10 @@ export const subjects = pgTable("subjects", {
   userId: varchar("user_id").notNull(),
   name: text("name").notNull(),
   jssQuota: integer("jss_quota").notNull().default(0),
+  // Per-JSS-class overrides. Null means fall back to the legacy shared JSS quota.
+  jss1Quota: integer("jss1_quota"),
+  jss2Quota: integer("jss2_quota"),
+  jss3Quota: integer("jss3_quota"),
   ss1Quota: integer("ss1_quota").notNull().default(0),
   ss2ss3Quota: integer("ss2ss3_quota").notNull().default(0),
   isSlashSubject: integer("is_slash_subject").notNull().default(0),
@@ -359,13 +381,21 @@ export type SubjectPeriodCount = z.infer<typeof subjectPeriodCountSchema>;
 
 // Per-class-level scheduling preference Zod schemas (shared by subjects + subject quotas)
 export const preferredPeriodsSchema = z.object({
+  // `jss` is kept as a backwards-compatible fallback for older saved subjects.
   jss: z.array(z.number().int().min(1).max(9)).default([]),
+  jss1: z.array(z.number().int().min(1).max(9)).optional(),
+  jss2: z.array(z.number().int().min(1).max(9)).optional(),
+  jss3: z.array(z.number().int().min(1).max(9)).optional(),
   ss1: z.array(z.number().int().min(1).max(9)).default([]),
   ss2ss3: z.array(z.number().int().min(1).max(9)).default([]),
 });
 
 export const requiredDoublesSchema = z.object({
+  // `jss` is kept as a backwards-compatible fallback for older saved subjects.
   jss: z.number().int().min(0).max(4).default(0),
+  jss1: z.number().int().min(0).max(4).optional(),
+  jss2: z.number().int().min(0).max(4).optional(),
+  jss3: z.number().int().min(0).max(4).optional(),
   ss1: z.number().int().min(0).max(4).default(0),
   ss2ss3: z.number().int().min(0).max(4).default(0),
 });
@@ -374,6 +404,9 @@ export const requiredDoublesSchema = z.object({
 export const subjectQuotaSchema = z.object({
   subject: z.string(),
   jssQuota: z.number().min(0).max(10),
+  jss1Quota: z.number().min(0).max(10).optional(),
+  jss2Quota: z.number().min(0).max(10).optional(),
+  jss3Quota: z.number().min(0).max(10).optional(),
   ss1Quota: z.number().min(0).max(10),
   ss2ss3Quota: z.number().min(0).max(10),
   isSlashSubject: z.boolean().default(false),
@@ -392,6 +425,9 @@ export const subjectSchema = z.object({
   id: z.number(),
   name: z.string().min(1, "Subject name is required"),
   jssQuota: z.number().min(0).max(10).default(0),
+  jss1Quota: z.number().min(0).max(10).optional(),
+  jss2Quota: z.number().min(0).max(10).optional(),
+  jss3Quota: z.number().min(0).max(10).optional(),
   ss1Quota: z.number().min(0).max(10).default(0),
   ss2ss3Quota: z.number().min(0).max(10).default(0),
   isSlashSubject: z.boolean().default(false),
@@ -408,13 +444,11 @@ export type InsertSubject = z.infer<typeof insertSubjectSchema>;
 
 // Get quota for a specific class
 export function getQuotaForClass(quota: SubjectQuota, schoolClass: SchoolClass): number {
-  if (schoolClass.startsWith("JSS")) {
-    return quota.jssQuota;
-  } else if (schoolClass === "SS1") {
-    return quota.ss1Quota;
-  } else {
-    return quota.ss2ss3Quota;
-  }
+  if (schoolClass === "JSS1") return quota.jss1Quota ?? quota.jssQuota;
+  if (schoolClass === "JSS2") return quota.jss2Quota ?? quota.jssQuota;
+  if (schoolClass === "JSS3") return quota.jss3Quota ?? quota.jssQuota;
+  if (schoolClass === "SS1") return quota.ss1Quota;
+  return quota.ss2ss3Quota;
 }
 
 // Auto-generation result
