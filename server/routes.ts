@@ -1522,6 +1522,26 @@ function countPlacements(timetable: Timetable, cls: SchoolClass, subject: string
   return count;
 }
 
+type CoverageMetrics = {
+  zeroRequiredSubjects: string[];
+  missingPeriods: number;
+};
+
+function getCoverageMetrics(timetable: Timetable, quotas: SubjectQuota[]): CoverageMetrics {
+  const zeroRequiredSubjects: string[] = [];
+  let missingPeriods = 0;
+  for (const cls of CLASSES) {
+    for (const quota of quotas) {
+      const needed = getQuotaForClass(quota, cls);
+      if (needed <= 0) continue;
+      const placed = countPlacements(timetable, cls, quota.subject);
+      if (placed === 0) zeroRequiredSubjects.push(`${cls}:${quota.subject}`);
+      if (placed < needed) missingPeriods += needed - placed;
+    }
+  }
+  return { zeroRequiredSubjects, missingPeriods };
+}
+
 function countTeacherLoad(timetable: Timetable, teacherId: string): number {
   let count = 0;
   for (const slot of Array.from(timetable.values())) {
@@ -2194,7 +2214,14 @@ function tryRebalanceFromWorst(
             continue;
           }
 
-          // RELOCATE failed. Fall back to DROP: empty c2's slot.
+          // RELOCATE failed. Fall back to DROP only when the donor subject
+          // is genuinely above its configured quota. Fairness must never
+          // create a new subject shortage (especially a zero-occurrence one).
+          const donorQuota = quotas.find((q) => q.subject === c2OriginalSubject);
+          const donorNeeded = donorQuota ? getQuotaForClass(donorQuota, c2) : 0;
+          const donorPlaced = countPlacements(timetable, c2, c2OriginalSubject);
+          if (donorNeeded > 0 && donorPlaced <= donorNeeded) continue;
+
           // Only do this if it strictly improves the max-class-empty score.
           const newWorstEmpty = worstEmpty - 1;
           const newC2Empty = c2Empty + 1;
@@ -2478,6 +2505,46 @@ function runAttempt(
     quotas.filter((q) => q.singleOnly).map((q) => q.subject),
   );
 
+  // PHASE 2.25: First-occurrence guarantee. Every subject with quota > 0
+  // gets a chance to receive one legal single period before any subject is
+  // allowed to consume repeat periods. Constrained subjects (fewest eligible
+  // teachers) are attempted first. SS2/SS3 slash groups were already handled
+  // atomically in Phase 1 and must never be split here.
+  for (const cls of shuffle([...CLASSES] as SchoolClass[])) {
+    const remaining = remainingByClass.get(cls)!;
+    const candidates = quotas
+      .filter((quota) => {
+        if (getQuotaForClass(quota, cls) <= 0) return false;
+        if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) return false;
+        if (countPlacements(timetable, cls, quota.subject) > 0) return false;
+        return (remaining.get(quota.subject) ?? 0) > 0;
+      })
+      .map((quota) => ({
+        quota,
+        eligibleCount: teachers.filter((t) =>
+          teacherCanTeachSubjectToClass(t, quota.subject, cls),
+        ).length,
+      }));
+
+    // Shuffle first so subjects with equal constraint levels do not always
+    // receive the same deterministic ordering across attempts.
+    const ordered = shuffle(candidates).sort((a, b) => a.eligibleCount - b.eligibleCount);
+    for (const { quota } of ordered) {
+      const subject = quota.subject;
+      const remNeeded = remaining.get(subject) ?? 0;
+      if (remNeeded <= 0 || countPlacements(timetable, cls, subject) > 0) continue;
+      const placed = placeOneSubjectPeriod(
+        timetable, cls, subject, teachers, fatigueLimit, 1, flaggedIds,
+        getPreferredPeriods(quota, cls), singleOnlySubjects,
+      );
+      if (placed > 0) {
+        const newRem = remNeeded - placed;
+        if (newRem <= 0) remaining.delete(subject);
+        else remaining.set(subject, newRem);
+      }
+    }
+  }
+
   // PHASE 2.5: Required doubles pre-pass — for each (cls, subject), place the
   // user-requested number of double-period blocks before single-period scheduling.
   // Doubles try preferred periods first; if none fit, any legal slot is used.
@@ -2698,6 +2765,13 @@ function runAttempt(
     consolidateTeacherDays(timetable, flaggedIds, teachers, fatigueLimit, lockedSlots);
   }
 
+  const finalCoverage = getCoverageMetrics(timetable, quotas);
+  if (finalCoverage.zeroRequiredSubjects.length > 0) {
+    warnings.push(
+      `CRITICAL: Required subject(s) with zero timetable occurrences: ${finalCoverage.zeroRequiredSubjects.join(", ")}`,
+    );
+  }
+
   // After rebalancing, if any one class is still significantly worse off than
   // the others, surface a single warning so the user understands.
   let finalWorstCls: SchoolClass | null = null;
@@ -2783,12 +2857,18 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
     timetable: Timetable;
     emptyCount: number;
     warnings: string[];
+    zeroRequiredCount: number;
+    missingRequiredPeriods: number;
     emptyP1: number;
     worstClassEmpty: number;
     flaggedDayOff: number;
   };
   let best: AttemptResult | null = null;
   const cmp = (a: AttemptResult, b: AttemptResult): number => {
+    // Subject coverage is a hard priority: never prefer a prettier/full-looking
+    // timetable that completely omits a required subject.
+    if (a.zeroRequiredCount !== b.zeroRequiredCount) return a.zeroRequiredCount - b.zeroRequiredCount;
+    if (a.missingRequiredPeriods !== b.missingRequiredPeriods) return a.missingRequiredPeriods - b.missingRequiredPeriods;
     if (a.emptyP1 !== b.emptyP1) return a.emptyP1 - b.emptyP1;
     if (a.worstClassEmpty !== b.worstClassEmpty) return a.worstClassEmpty - b.worstClassEmpty;
     if (a.emptyCount !== b.emptyCount) return a.emptyCount - b.emptyCount;
@@ -2800,8 +2880,11 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
       teachers, quotas, subjects, lockedSlots, fatigueLimit, attempt,
       freePeriodsPerClass, defaultMaxFreePerWeek, flaggedIds,
     );
+    const coverage = getCoverageMetrics(r.timetable, quotas);
     const scored: AttemptResult = {
       ...r,
+      zeroRequiredCount: coverage.zeroRequiredSubjects.length,
+      missingRequiredPeriods: coverage.missingPeriods,
       emptyP1: countEmptyP1(r.timetable),
       worstClassEmpty: maxClassEmpty(r.timetable),
       flaggedDayOff: countFlaggedTeachersWithDayOff(r.timetable, flaggedIds),
@@ -2809,7 +2892,12 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
     if (!best || cmp(scored, best) < 0) {
       best = scored;
     }
-    if (best.emptyP1 === 0 && best.emptyCount <= EARLY_EXIT_EMPTY) break;
+    if (
+      best.zeroRequiredCount === 0 &&
+      best.missingRequiredPeriods === 0 &&
+      best.emptyP1 === 0 &&
+      best.emptyCount <= EARLY_EXIT_EMPTY
+    ) break;
   }
 
   if (!best) {
