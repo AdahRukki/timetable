@@ -6,6 +6,7 @@ on:
       - jss-class-split
     paths:
       - scripts/apply-three-way-slash.py
+      - scripts/fix-three-way-slash-patch.py
       - .github/workflows/apply-three-way-slash.yml
 
 permissions:
@@ -29,6 +30,9 @@ jobs:
 
       - name: Apply three-way slash patch
         run: python3 scripts/apply-three-way-slash.py
+
+      - name: Clean patch boundaries
+        run: python3 scripts/fix-three-way-slash-patch.py
 
       - name: Install dependencies
         run: npm ci
