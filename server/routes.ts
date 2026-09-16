@@ -242,6 +242,21 @@ async function validatePlacement(
   const allSubjects = await storage.getSubjects(userId);
   const fatigueLimit = userSettings.fatigueLimit;
 
+  if (slotType === "double" && !userSettings.allowDoublePeriods) {
+    errors.push({
+      code: "DOUBLE_PERIODS_DISABLED",
+      message: "Double periods are disabled in Settings",
+      severity: "error",
+    });
+  }
+  if (slotType === "double" && period === 8 && !userSettings.allowDoubleInP8P9) {
+    errors.push({
+      code: "DOUBLE_P8P9_DISABLED",
+      message: "Double periods in P8/P9 are disabled in Settings",
+      severity: "error",
+    });
+  }
+
   const teacher = teachers.find((t) => t.id === teacherId);
   if (!teacher) {
     errors.push({ code: "TEACHER_NOT_FOUND", message: "Teacher not found", severity: "error" });
@@ -1367,6 +1382,8 @@ function tryPlace(
   allowDouble: boolean,
   relaxDailyRule = false,
   singleOnlySubjects?: ReadonlySet<string>,
+  allowDoublePeriods = true,
+  allowDoubleInP8P9 = true,
 ): number {
   const slot = timetable.get(slotKey(day, cls, period));
   if (!slot || slot.status !== "empty") return 0;
@@ -1375,7 +1392,11 @@ function tryPlace(
   if (!isTeacherFreeAt(timetable, teacher.id, day, period)) return 0;
 
   // Try double first — never for subjects marked single-periods-only.
-  const canDouble = allowDouble && !singleOnlySubjects?.has(subject);
+  const canDouble =
+    allowDouble &&
+    allowDoublePeriods &&
+    !singleOnlySubjects?.has(subject) &&
+    (allowDoubleInP8P9 || period !== 8);
   if (canDouble && period < PERIODS_PER_DAY[day] && !wouldCrossBreak(day, period)) {
     const next = period + 1;
     const slot2 = timetable.get(slotKey(day, cls, next));
@@ -1396,6 +1417,36 @@ function tryPlace(
     return 1;
   }
   return 0;
+}
+
+function tryPlaceStrictDouble(
+  timetable: Timetable,
+  cls: SchoolClass,
+  day: Day,
+  period: number,
+  subject: string,
+  teacher: Teacher,
+  fatigueLimit: number,
+  singleOnlySubjects: ReadonlySet<string>,
+  allowDoublePeriods: boolean,
+  allowDoubleInP8P9: boolean,
+): number {
+  if (!allowDoublePeriods || singleOnlySubjects.has(subject)) return 0;
+  if (!allowDoubleInP8P9 && period === 8) return 0;
+  if (period >= PERIODS_PER_DAY[day] || wouldCrossBreak(day, period)) return 0;
+  if (subjectAlreadyTodayForClass(timetable, cls, day, subject)) return 0;
+
+  const slot1 = timetable.get(slotKey(day, cls, period));
+  const slot2 = timetable.get(slotKey(day, cls, period + 1));
+  if (!slot1 || !slot2 || slot1.status !== "empty" || slot2.status !== "empty") return 0;
+  if (isTeacherUnavailable(teacher, day, period) || isTeacherUnavailable(teacher, day, period + 1)) return 0;
+  if (!isTeacherFreeAt(timetable, teacher.id, day, period) || !isTeacherFreeAt(timetable, teacher.id, day, period + 1)) return 0;
+  if (wouldExceedFatigue(
+    timetable, teacher.id, day, [period, period + 1], fatigueLimit, teacher.maxConsecutivePeriods ?? null,
+  )) return 0;
+
+  placeSlot(timetable, cls, day, period, subject, teacher.id, "double", period + 1);
+  return 2;
 }
 
 function scheduleSubject(
@@ -1540,6 +1591,34 @@ function getCoverageMetrics(timetable: Timetable, quotas: SubjectQuota[]): Cover
     }
   }
   return { zeroRequiredSubjects, missingPeriods };
+}
+
+function countDoubleBlocks(timetable: Timetable, cls: SchoolClass, subject: string): number {
+  let blocks = 0;
+  for (const day of DAYS) {
+    for (let p = 1; p <= PERIODS_PER_DAY[day]; p++) {
+      const slot = timetable.get(slotKey(day, cls, p));
+      if (!slot || slot.status !== "occupied" || slot.slotType !== "double" || slot.subject !== subject) continue;
+      const prev = p > 1 ? timetable.get(slotKey(day, cls, p - 1)) : undefined;
+      if (prev?.status === "occupied" && prev.slotType === "double" && prev.subject === subject) continue;
+      blocks++;
+    }
+  }
+  return blocks;
+}
+
+function getRequiredDoubleDeficit(timetable: Timetable, quotas: SubjectQuota[]): number {
+  let deficit = 0;
+  for (const cls of CLASSES) {
+    for (const quota of quotas) {
+      const required = getRequiredDoubles(quota, cls);
+      if (required <= 0) continue;
+      if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) continue;
+      const actual = countDoubleBlocks(timetable, cls, quota.subject);
+      deficit += Math.max(0, required - actual);
+    }
+  }
+  return deficit;
 }
 
 function countTeacherLoad(timetable: Timetable, teacherId: string): number {
@@ -1735,11 +1814,29 @@ function swapRepairPass(
   return 0;
 }
 
-function preValidate(teachers: Teacher[], quotas: SubjectQuota[], warnings: string[]): void {
+function preValidate(
+  teachers: Teacher[],
+  quotas: SubjectQuota[],
+  warnings: string[],
+  allowDoublePeriods: boolean,
+): void {
   for (const cls of CLASSES) {
     for (const quota of quotas) {
       const needed = getQuotaForClass(quota, cls);
       if (needed === 0) continue;
+      const requiredDoubles = getRequiredDoubles(quota, cls);
+      if (quota.singleOnly && needed > DAYS.length) {
+        warnings.push(`PRE-VALIDATE: ${quota.subject} → ${cls} is single-only with quota ${needed}; at most ${DAYS.length} periods fit under the once-per-day rule`);
+      }
+      if (requiredDoubles * 2 > needed) {
+        warnings.push(`PRE-VALIDATE: ${quota.subject} → ${cls} requests ${requiredDoubles} double block(s) but quota ${needed} is too small`);
+      }
+      if (requiredDoubles > 0 && (!allowDoublePeriods || quota.singleOnly)) {
+        warnings.push(`PRE-VALIDATE: ${quota.subject} → ${cls} requires doubles but doubles are disabled for this configuration`);
+      }
+      if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3") && needed > DAYS.length) {
+        warnings.push(`PRE-VALIDATE: Slash subject ${quota.subject} → ${cls} needs ${needed}/week but slash groups can occur at most once per day (${DAYS.length}/week)`);
+      }
       const eligible = teachers.filter(t => teacherCanTeachSubjectToClass(t, quota.subject, cls));
       if (eligible.length === 0) {
         warnings.push(`PRE-VALIDATE: No teacher for "${quota.subject}" → ${cls} (needs ${needed}/week)`);
@@ -1807,6 +1904,35 @@ function countEmptyForClass(timetable: Timetable, cls: SchoolClass): number {
   return totalPeriodsForClass() - countOccupiedForClass(timetable, cls);
 }
 
+function countEmptyForClassOnDay(timetable: Timetable, cls: SchoolClass, day: Day): number {
+  let count = 0;
+  for (let p = 1; p <= PERIODS_PER_DAY[day]; p++) {
+    const slot = timetable.get(slotKey(day, cls, p));
+    if (!slot || slot.status === "empty") count++;
+  }
+  return count;
+}
+
+type FreePeriodMetrics = { dailyExcess: number; weeklyExcess: number };
+function getFreePeriodMetrics(
+  timetable: Timetable,
+  freePeriodsPerClass: Record<string, number>,
+  defaultMaxFreePerWeek: number,
+  maxFreePeriodsPerDay: number,
+): FreePeriodMetrics {
+  let dailyExcess = 0;
+  let weeklyExcess = 0;
+  for (const cls of CLASSES) {
+    const weeklyFree = countEmptyForClass(timetable, cls);
+    const weeklyCap = getMaxFreeForClass(cls, freePeriodsPerClass, defaultMaxFreePerWeek);
+    weeklyExcess += Math.max(0, weeklyFree - weeklyCap);
+    for (const day of DAYS) {
+      dailyExcess += Math.max(0, countEmptyForClassOnDay(timetable, cls, day) - maxFreePeriodsPerDay);
+    }
+  }
+  return { dailyExcess, weeklyExcess };
+}
+
 function countEmptyP1(timetable: Timetable): number {
   let count = 0;
   for (const day of DAYS) {
@@ -1862,6 +1988,23 @@ function periodsByPreference(allPeriods: number[], preferred: number[]): number[
   return [...shuffle(pref), ...shuffle(rest)];
 }
 
+function daysByFreeNeed(
+  timetable: Timetable,
+  cls: SchoolClass,
+  maxFreePeriodsPerDay: number,
+): Day[] {
+  const days = shuffle([...DAYS] as Day[]);
+  days.sort((a, b) => {
+    const ea = countEmptyForClassOnDay(timetable, cls, a);
+    const eb = countEmptyForClassOnDay(timetable, cls, b);
+    const xa = Math.max(0, ea - maxFreePeriodsPerDay);
+    const xb = Math.max(0, eb - maxFreePeriodsPerDay);
+    if (xa !== xb) return xb - xa;
+    return eb - ea;
+  });
+  return days;
+}
+
 function placeOneSubjectPeriod(
   timetable: Timetable,
   cls: SchoolClass,
@@ -1872,10 +2015,13 @@ function placeOneSubjectPeriod(
   flaggedIds: Set<string>,
   preferredPeriods: number[] = [],
   singleOnlySubjects?: ReadonlySet<string>,
+  maxFreePeriodsPerDay = 2,
+  allowDoublePeriods = true,
+  allowDoubleInP8P9 = true,
 ): number {
   const eligible = teachers.filter((t) => teacherCanTeachSubjectToClass(t, subject, cls));
   if (eligible.length === 0) return 0;
-  for (const day of shuffle([...DAYS] as Day[])) {
+  for (const day of daysByFreeNeed(timetable, cls, maxFreePeriodsPerDay)) {
     if (subjectAlreadyTodayForClass(timetable, cls, day, subject)) continue;
     const allPeriods = Array.from({ length: PERIODS_PER_DAY[day] }, (_, i) => i + 1);
     const periods = periodsByPreference(allPeriods, preferredPeriods);
@@ -1885,6 +2031,7 @@ function placeOneSubjectPeriod(
         const r = tryPlace(
           timetable, cls, day, period, subject, teacher,
           fatigueLimit, remainingNeeded >= 2, false, singleOnlySubjects,
+          allowDoublePeriods, allowDoubleInP8P9,
         );
         if (r > 0) return r;
       }
@@ -2438,6 +2585,9 @@ function runAttempt(
   attemptNumber: number,
   freePeriodsPerClass: Record<string, number>,
   defaultMaxFreePerWeek: number,
+  maxFreePeriodsPerDay: number,
+  allowDoublePeriods: boolean,
+  allowDoubleInP8P9: boolean,
   flaggedIds: Set<string>,
 ): { timetable: Timetable; emptyCount: number; warnings: string[] } {
   const timetable = initTimetable(lockedSlots);
@@ -2536,6 +2686,7 @@ function runAttempt(
       const placed = placeOneSubjectPeriod(
         timetable, cls, subject, teachers, fatigueLimit, 1, flaggedIds,
         getPreferredPeriods(quota, cls), singleOnlySubjects,
+        maxFreePeriodsPerDay, allowDoublePeriods, allowDoubleInP8P9,
       );
       if (placed > 0) {
         const newRem = remNeeded - placed;
@@ -2552,17 +2703,20 @@ function runAttempt(
     const remaining = remainingByClass.get(cls)!;
     const subjectsForClass = shuffle(quotas.map((q) => q.subject));
     for (const subject of subjectsForClass) {
-      if (singleOnlySubjects.has(subject)) continue;
       const quota = quotas.find((q) => q.subject === subject);
       if (!quota) continue;
       if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) continue;
       const wantDoubles = getRequiredDoubles(quota, cls);
       if (wantDoubles <= 0) continue;
+      if (!allowDoublePeriods || singleOnlySubjects.has(subject)) {
+        warnings.push(`Attempt ${attemptNumber}: ${subject} → ${cls}: required doubles cannot be placed because doubles are disabled`);
+        continue;
+      }
       const eligible = teachers.filter((t) => teacherCanTeachSubjectToClass(t, subject, cls));
       if (eligible.length === 0) continue;
       const pref = getPreferredPeriods(quota, cls);
       let placedDoubles = 0;
-      for (const day of shuffle([...DAYS] as Day[])) {
+      for (const day of daysByFreeNeed(timetable, cls, maxFreePeriodsPerDay)) {
         if (placedDoubles >= wantDoubles) break;
         if (subjectAlreadyTodayForClass(timetable, cls, day, subject)) continue;
         const remNeeded = remaining.get(subject) ?? 0;
@@ -2574,25 +2728,15 @@ function runAttempt(
         for (const period of periods) {
           if (placedThisDay) break;
           for (const teacher of sortedEligible) {
-            const r = tryPlace(
-              timetable, cls, day, period, subject, teacher,
-              fatigueLimit, true, false, singleOnlySubjects,
+            const r = tryPlaceStrictDouble(
+              timetable, cls, day, period, subject, teacher, fatigueLimit,
+              singleOnlySubjects, allowDoublePeriods, allowDoubleInP8P9,
             );
             if (r === 2) {
               const newRem = remNeeded - 2;
               if (newRem <= 0) remaining.delete(subject);
               else remaining.set(subject, newRem);
               placedDoubles++;
-              placedThisDay = true;
-              break;
-            }
-            // If a single landed accidentally, undo by ignoring — tryPlace only
-            // returns 1 when allowDouble could not fit; treat as a regular
-            // single placement and keep trying for more doubles on other days.
-            if (r === 1) {
-              const newRem = remNeeded - 1;
-              if (newRem <= 0) remaining.delete(subject);
-              else remaining.set(subject, newRem);
               placedThisDay = true;
               break;
             }
@@ -2687,6 +2831,7 @@ function runAttempt(
         const pref = q ? getPreferredPeriods(q, cls) : [];
         const placed = placeOneSubjectPeriod(
           timetable, cls, subject, teachers, fatigueLimit, remNeeded, flaggedIds, pref, singleOnlySubjects,
+          maxFreePeriodsPerDay, allowDoublePeriods, allowDoubleInP8P9,
         );
         if (placed > 0) {
           const newRem = remNeeded - placed;
@@ -2762,7 +2907,11 @@ function runAttempt(
   // relocating periods from their lightest day to other days they already
   // teach. Only applies moves that satisfy all existing rules.
   if (flaggedIds.size > 0) {
-    consolidateTeacherDays(timetable, flaggedIds, teachers, fatigueLimit, lockedSlots);
+    const consolidationMoves = consolidateTeacherDays(timetable, flaggedIds, teachers, fatigueLimit, lockedSlots);
+    if (consolidationMoves > 0) {
+      p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
+      p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
+    }
   }
 
   const finalCoverage = getCoverageMetrics(timetable, quotas);
@@ -2770,6 +2919,19 @@ function runAttempt(
     warnings.push(
       `CRITICAL: Required subject(s) with zero timetable occurrences: ${finalCoverage.zeroRequiredSubjects.join(", ")}`,
     );
+  }
+  const finalDoubleDeficit = getRequiredDoubleDeficit(timetable, quotas);
+  if (finalDoubleDeficit > 0) {
+    warnings.push(`CRITICAL: ${finalDoubleDeficit} required double-period block(s) remain unmet`);
+  }
+  const finalFreeMetrics = getFreePeriodMetrics(
+    timetable, freePeriodsPerClass, defaultMaxFreePerWeek, maxFreePeriodsPerDay,
+  );
+  if (finalFreeMetrics.weeklyExcess > 0) {
+    warnings.push(`CRITICAL: Weekly free-period limits exceeded by ${finalFreeMetrics.weeklyExcess} period(s) across classes`);
+  }
+  if (finalFreeMetrics.dailyExcess > 0) {
+    warnings.push(`CRITICAL: Daily free-period limits exceeded by ${finalFreeMetrics.dailyExcess} period(s) across class-days`);
   }
 
   // After rebalancing, if any one class is still significantly worse off than
@@ -2812,6 +2974,9 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
   const subjects = await storage.getSubjects(userId);
   const userSettings = await storage.getUserSettings(userId);
   const fatigueLimit = userSettings.fatigueLimit;
+  const maxFreePeriodsPerDay = userSettings.maxFreePeriodsPerDay;
+  const allowDoublePeriods = userSettings.allowDoublePeriods;
+  const allowDoubleInP8P9 = userSettings.allowDoubleInP8P9;
 
   // Load existing timetable to determine locked slots
   const existingTimetable = await storage.getTimetable(userId);
@@ -2840,7 +3005,7 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
 
   // Pre-validate: warn about impossible assignments before wasting attempts
   const preWarnings: string[] = [];
-  preValidate(teachers, quotas, preWarnings);
+  preValidate(teachers, quotas, preWarnings, allowDoublePeriods);
 
   const freePeriodsPerClass = userSettings.freePeriodsPerClass ?? {};
   const defaultMaxFreePerWeek = userSettings.maxFreePeriodsPerWeek;
@@ -2859,6 +3024,9 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
     warnings: string[];
     zeroRequiredCount: number;
     missingRequiredPeriods: number;
+    requiredDoubleDeficit: number;
+    weeklyFreeExcess: number;
+    dailyFreeExcess: number;
     emptyP1: number;
     worstClassEmpty: number;
     flaggedDayOff: number;
@@ -2869,6 +3037,9 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
     // timetable that completely omits a required subject.
     if (a.zeroRequiredCount !== b.zeroRequiredCount) return a.zeroRequiredCount - b.zeroRequiredCount;
     if (a.missingRequiredPeriods !== b.missingRequiredPeriods) return a.missingRequiredPeriods - b.missingRequiredPeriods;
+    if (a.requiredDoubleDeficit !== b.requiredDoubleDeficit) return a.requiredDoubleDeficit - b.requiredDoubleDeficit;
+    if (a.weeklyFreeExcess !== b.weeklyFreeExcess) return a.weeklyFreeExcess - b.weeklyFreeExcess;
+    if (a.dailyFreeExcess !== b.dailyFreeExcess) return a.dailyFreeExcess - b.dailyFreeExcess;
     if (a.emptyP1 !== b.emptyP1) return a.emptyP1 - b.emptyP1;
     if (a.worstClassEmpty !== b.worstClassEmpty) return a.worstClassEmpty - b.worstClassEmpty;
     if (a.emptyCount !== b.emptyCount) return a.emptyCount - b.emptyCount;
@@ -2878,13 +3049,20 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const r = runAttempt(
       teachers, quotas, subjects, lockedSlots, fatigueLimit, attempt,
-      freePeriodsPerClass, defaultMaxFreePerWeek, flaggedIds,
+      freePeriodsPerClass, defaultMaxFreePerWeek, maxFreePeriodsPerDay,
+      allowDoublePeriods, allowDoubleInP8P9, flaggedIds,
     );
     const coverage = getCoverageMetrics(r.timetable, quotas);
+    const freeMetrics = getFreePeriodMetrics(
+      r.timetable, freePeriodsPerClass, defaultMaxFreePerWeek, maxFreePeriodsPerDay,
+    );
     const scored: AttemptResult = {
       ...r,
       zeroRequiredCount: coverage.zeroRequiredSubjects.length,
       missingRequiredPeriods: coverage.missingPeriods,
+      requiredDoubleDeficit: getRequiredDoubleDeficit(r.timetable, quotas),
+      weeklyFreeExcess: freeMetrics.weeklyExcess,
+      dailyFreeExcess: freeMetrics.dailyExcess,
       emptyP1: countEmptyP1(r.timetable),
       worstClassEmpty: maxClassEmpty(r.timetable),
       flaggedDayOff: countFlaggedTeachersWithDayOff(r.timetable, flaggedIds),
@@ -2895,6 +3073,9 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
     if (
       best.zeroRequiredCount === 0 &&
       best.missingRequiredPeriods === 0 &&
+      best.requiredDoubleDeficit === 0 &&
+      best.weeklyFreeExcess === 0 &&
+      best.dailyFreeExcess === 0 &&
       best.emptyP1 === 0 &&
       best.emptyCount <= EARLY_EXIT_EMPTY
     ) break;
