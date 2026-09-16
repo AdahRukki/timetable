@@ -1234,6 +1234,7 @@ function isTeacherFreeAt(timetable: Timetable, teacherId: string, day: Day, peri
     if (!slot || slot.status !== "occupied") continue;
     if (slot.teacherId === teacherId) return false;
     if (slot.slashPairTeacherId === teacherId) return false;
+    if (slot.slashThirdTeacherId === teacherId) return false;
   }
   return true;
 }
@@ -1308,6 +1309,7 @@ function subjectAlreadyTodayForClass(timetable: Timetable, cls: SchoolClass, day
     const slot = timetable.get(slotKey(day, cls, p));
     if (slot?.status === "occupied" && slot.subject === subject) return true;
     if (slot?.status === "occupied" && slot.slashPairSubject === subject) return true;
+    if (slot?.status === "occupied" && slot.slashThirdSubject === subject) return true;
   }
   return false;
 }
@@ -1494,6 +1496,8 @@ function scheduleSlashGroup(
       slot.slashThirdSubject = groupSubjects[2] ?? null;
       slot.slashThirdTeacherId = chosen[2]?.id ?? null;
       placed++;
+      // A subject/slash group may occur only once per class per day.
+      break;
     }
   }
   return placed;
