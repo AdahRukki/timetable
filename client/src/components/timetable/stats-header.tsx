@@ -159,7 +159,13 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
               const teacherName = teacher?.name || "";
               if (slot.slotType === "slash") {
                 const slashTeacher = teachers.find(t => t.id === slot.slashPairTeacherId);
-                row.push(`${slot.subject || ""}\n(${teacherName})\n/\n${slot.slashPairSubject || ""}\n(${slashTeacher?.name || ""})`);
+                const slashThirdTeacher = teachers.find(t => t.id === slot.slashThirdTeacherId);
+                const parts = [
+                  `${slot.subject || ""}\n(${teacherName})`,
+                  `${slot.slashPairSubject || ""}\n(${slashTeacher?.name || ""})`,
+                ];
+                if (slot.slashThirdSubject) parts.push(`${slot.slashThirdSubject}\n(${slashThirdTeacher?.name || ""})`);
+                row.push(parts.join("\n/\n"));
               } else {
                 const doubleMarker = slot.slotType === "double" ? " [D]" : "";
                 row.push(`${slot.subject || ""}${doubleMarker}\n(${teacherName})`);
@@ -234,7 +240,7 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
           for (const period of periods) {
             for (const schoolClass of CLASSES) {
               const slot = timetable.get(getSlotKey(day, schoolClass, period));
-              if (slot && (slot.teacherId === teacher.id || slot.slashPairTeacherId === teacher.id)) {
+              if (slot && (slot.teacherId === teacher.id || slot.slashPairTeacherId === teacher.id || slot.slashThirdTeacherId === teacher.id)) {
                 periodCount++;
               }
             }
@@ -359,7 +365,7 @@ export function StatsHeader({ timetable, teachers, onAutoGenerate, isGenerating,
           for (const period of periods) {
             for (const schoolClass of CLASSES) {
               const slot = timetable.get(getSlotKey(day, schoolClass, period));
-              if (slot && (slot.teacherId === teacher.id || slot.slashPairTeacherId === teacher.id)) {
+              if (slot && (slot.teacherId === teacher.id || slot.slashPairTeacherId === teacher.id || slot.slashThirdTeacherId === teacher.id)) {
                 periodCount++;
               }
             }

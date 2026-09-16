@@ -33,19 +33,46 @@ export const MIN_TEACHING_PERIODS_PER_WEEK = TOTAL_PERIODS_PER_WEEK - MAX_FREE_P
 
 // Friday special structure: P1-P3, Prayer 11:30-12:00, Break 12:00-12:30, P4-P6
 
-// Find the partner Subject for a slash subject by name. Returns null when
-// the named subject is not paired or its declared partner does not exist
-// (or does not point back). Used by client and server to derive slash
-// behavior from the user's own subjects table — no hardcoded pairs.
-export function findSlashPair<S extends { name: string; isSlashSubject: boolean; slashPairName: string | null }>(
-  subjects: S[],
-  subjectName: string,
-): S | null {
+// Resolve a slash group. Groups may contain two or three subjects. The legacy
+// slashPairName remains the first partner; slashThirdName adds an optional
+// second partner. Every member must point to the same complete group.
+export function findSlashGroup<S extends {
+  name: string;
+  isSlashSubject: boolean;
+  slashPairName: string | null;
+  slashThirdName?: string | null;
+}>(subjects: S[], subjectName: string): S[] {
   const self = subjects.find((s) => s.name === subjectName);
-  if (!self || !self.isSlashSubject || !self.slashPairName) return null;
-  const partner = subjects.find((s) => s.name === self.slashPairName);
-  if (!partner || !partner.isSlashSubject || partner.slashPairName !== self.name) return null;
-  return partner;
+  if (!self || !self.isSlashSubject || !self.slashPairName) return [];
+
+  const declared = [self.name, self.slashPairName, self.slashThirdName ?? null]
+    .filter((name): name is string => !!name);
+  const unique = Array.from(new Set(declared));
+  if (unique.length < 2 || unique.length > 3) return [];
+
+  const group = unique
+    .map((name) => subjects.find((s) => s.name === name))
+    .filter((s): s is S => !!s);
+  if (group.length !== unique.length || group.some((s) => !s.isSlashSubject)) return [];
+
+  const expected = [...unique].sort().join("|");
+  for (const member of group) {
+    const memberDeclared = [member.name, member.slashPairName, member.slashThirdName ?? null]
+      .filter((name): name is string => !!name);
+    if (Array.from(new Set(memberDeclared)).sort().join("|") !== expected) return [];
+  }
+  return group;
+}
+
+// Backwards-compatible helper for code that only needs the first partner.
+export function findSlashPair<S extends {
+  name: string;
+  isSlashSubject: boolean;
+  slashPairName: string | null;
+  slashThirdName?: string | null;
+}>(subjects: S[], subjectName: string): S | null {
+  const group = findSlashGroup(subjects, subjectName);
+  return group.find((s) => s.name !== subjectName) ?? null;
 }
 
 // ===== DATABASE TABLES =====
@@ -80,6 +107,8 @@ export const timetableSlots = pgTable("timetable_slots", {
   slotType: text("slot_type"),
   slashPairSubject: text("slash_pair_subject"),
   slashPairTeacherId: varchar("slash_pair_teacher_id"),
+  slashThirdSubject: text("slash_third_subject"),
+  slashThirdTeacherId: varchar("slash_third_teacher_id"),
   // Fixed-period flag. When 1, the slot survives Clear & Generate and the
   // auto-generator's lockedSlots map always includes it regardless of the
   // user's "lock existing" toggle. Defaults to 0 for backwards compatibility.
@@ -155,6 +184,7 @@ export const subjects = pgTable("subjects", {
   ss2ss3Quota: integer("ss2ss3_quota").notNull().default(0),
   isSlashSubject: integer("is_slash_subject").notNull().default(0),
   slashPairName: text("slash_pair_name"),
+  slashThirdName: text("slash_third_name"),
   singleOnly: integer("single_only").notNull().default(0),
   preferredPeriods: jsonb("preferred_periods")
     .$type<PreferredPeriods>()
@@ -207,6 +237,8 @@ type SavedSlotShape = {
   slotType: "single" | "double" | "slash" | "activity" | null;
   slashPairSubject: string | null;
   slashPairTeacherId: string | null;
+  slashThirdSubject?: string | null;
+  slashThirdTeacherId?: string | null;
   isLocked?: boolean;
 };
 
@@ -268,6 +300,8 @@ export const timetableSlotSchema = z.object({
   slotType: slotTypeSchema.nullable(),
   slashPairSubject: z.string().nullable(),
   slashPairTeacherId: z.string().nullable(),
+  slashThirdSubject: z.string().nullable().default(null),
+  slashThirdTeacherId: z.string().nullable().default(null),
   // Fixed-period flag. When true the slot is preserved across Clear & Generate
   // and the auto-generator never overwrites it. Defaults to false for older
   // payloads (saved timetables, shared timetables) that predate this column.
@@ -320,6 +354,8 @@ export const placementRequestSchema = z
     slotType: slotTypeSchema,
     slashPairSubject: z.string().optional(),
     slashPairTeacherId: z.string().optional(),
+    slashThirdSubject: z.string().optional(),
+    slashThirdTeacherId: z.string().optional(),
     isActivity: z.boolean().optional(),
     isLocked: z.boolean().optional(),
     applyToAllClasses: z.boolean().optional(),
@@ -334,7 +370,7 @@ export const placementRequestSchema = z
           message: "Activity placements must use slotType=\"activity\"",
         });
       }
-      if (data.slashPairSubject || data.slashPairTeacherId) {
+      if (data.slashPairSubject || data.slashPairTeacherId || data.slashThirdSubject || data.slashThirdTeacherId) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["slashPairSubject"],
@@ -432,6 +468,7 @@ export const subjectSchema = z.object({
   ss2ss3Quota: z.number().min(0).max(10).default(0),
   isSlashSubject: z.boolean().default(false),
   slashPairName: z.string().nullable().default(null),
+  slashThirdName: z.string().nullable().default(null),
   singleOnly: z.boolean().default(false),
   preferredPeriods: preferredPeriodsSchema.default({ jss: [], ss1: [], ss2ss3: [] }),
   requiredDoubles: requiredDoublesSchema.default({ jss: 0, ss1: 0, ss2ss3: 0 }),

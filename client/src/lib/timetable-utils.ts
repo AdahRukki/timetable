@@ -9,6 +9,7 @@ import {
   TOTAL_PERIODS_PER_WEEK,
   MIN_TEACHING_PERIODS_PER_WEEK,
   findSlashPair,
+  findSlashGroup,
   type Day,
   type Subject,
   type SchoolClass,
@@ -95,6 +96,8 @@ export function initializeTimetable(): Map<string, TimetableSlot> {
           slotType: null,
           slashPairSubject: null,
           slashPairTeacherId: null,
+          slashThirdSubject: null,
+          slashThirdTeacherId: null,
           isLocked: false,
         });
       }
@@ -260,7 +263,7 @@ export function getConsecutiveTeachingPeriods(
     let isTeaching = false;
     for (const schoolClass of CLASSES) {
       const slot = getSlot(timetable, day, schoolClass, period);
-      if (slot && (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId)) {
+      if (slot && (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId || slot.slashThirdTeacherId === teacherId)) {
         isTeaching = true;
         break;
       }
@@ -322,7 +325,7 @@ export function getConsecutiveSameSubjectCount(
   for (let period = 1; period <= maxPeriods; period++) {
     const slot = getSlot(timetable, day, schoolClass, period);
     // Check both subject and slashPairSubject for slash subject handling
-    if (slot && (slot.subject === subject || slot.slashPairSubject === subject)) {
+    if (slot && (slot.subject === subject || slot.slashPairSubject === subject || slot.slashThirdSubject === subject)) {
       subjectPeriods.add(period);
     }
   }
@@ -369,7 +372,7 @@ export function getTotalSubjectCountForDay(
     if (newPeriods.includes(period)) continue;
     
     const slot = getSlot(timetable, day, schoolClass, period);
-    if (slot && (slot.subject === subject || slot.slashPairSubject === subject)) {
+    if (slot && (slot.subject === subject || slot.slashPairSubject === subject || slot.slashThirdSubject === subject)) {
       count++;
     }
   }
@@ -407,7 +410,7 @@ export function wouldExceedFatigueLimit(
   for (const p of periods) {
     for (const schoolClass of CLASSES) {
       const slot = getSlot(timetable, day, schoolClass, p);
-      if (slot && (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId)) {
+      if (slot && (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId || slot.slashThirdTeacherId === teacherId)) {
         teachingPeriods.add(p);
         break;
       }
@@ -560,41 +563,52 @@ export function validatePlacement(
     });
   }
   
-  // For slash subjects, also check the paired subject
-  if (request.slashPairSubject) {
-    const dailyPairCount = getTotalSubjectCountForDay(timetable, day, schoolClass, request.slashPairSubject, []);
+  // For slash subjects, also check every partner subject.
+  for (const partnerSubject of [request.slashPairSubject, request.slashThirdSubject].filter((s): s is string => !!s)) {
+    const dailyPairCount = getTotalSubjectCountForDay(timetable, day, schoolClass, partnerSubject, []);
     if (dailyPairCount >= 1) {
       errors.push({
         code: "SUBJECT_ALREADY_SCHEDULED",
-        message: `${request.slashPairSubject} is already scheduled for ${schoolClass} on ${day}`,
+        message: `${partnerSubject} is already scheduled for ${schoolClass} on ${day}`,
         severity: "error",
       });
     }
   }
   
-  // Slash subject validation
+  // Slash subject validation supports two- and three-way groups.
   if (slotType === "slash") {
-    const partner = findSlashPair(subjects, subject);
-    if (!partner) {
+    const group = findSlashGroup(subjects, subject);
+    const expected = group.filter((s) => s.name !== subject).map((s) => s.name).sort();
+    const requested = [request.slashPairSubject, request.slashThirdSubject]
+      .filter((s): s is string => !!s)
+      .sort();
+    if (group.length < 2) {
       errors.push({
         code: "INVALID_SLASH_SUBJECT",
-        message: `${subject} is not configured as a slash subject`,
+        message: `${subject} is not configured as a slash group`,
         severity: "error",
       });
-    } else {
-      if (!request.slashPairSubject || !request.slashPairTeacherId) {
-        errors.push({
-          code: "MISSING_SLASH_PAIR",
-          message: "Slash subjects require both subjects and teachers",
-          severity: "error",
-        });
-      } else if (request.slashPairSubject !== partner.name) {
-        errors.push({
-          code: "SLASH_PAIR_MISMATCH",
-          message: `${subject} is paired with ${partner.name}, not ${request.slashPairSubject}`,
-          severity: "error",
-        });
-      }
+    } else if (expected.join("|") !== requested.join("|")) {
+      errors.push({
+        code: "SLASH_GROUP_MISMATCH",
+        message: `${subject} must be scheduled with ${expected.join(" / ")}`,
+        severity: "error",
+      });
+    }
+    if (!request.slashPairTeacherId || (expected.length === 2 && !request.slashThirdTeacherId)) {
+      errors.push({
+        code: "MISSING_SLASH_TEACHER",
+        message: "Every slash subject requires its own teacher",
+        severity: "error",
+      });
+    }
+    const ids = [teacherId, request.slashPairTeacherId, request.slashThirdTeacherId].filter((id): id is string => !!id);
+    if (new Set(ids).size !== ids.length) {
+      errors.push({
+        code: "SLASH_TEACHER_DUPLICATE",
+        message: "Each slash subject must have a different teacher",
+        severity: "error",
+      });
     }
   }
   

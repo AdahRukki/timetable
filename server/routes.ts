@@ -19,6 +19,7 @@ import {
   BREAK_AFTER_P4,
   BREAK_AFTER_P7,
   findSlashPair,
+  findSlashGroup,
   getQuotaForClass,
   getTeacherSubjectClasses,
   type TimetableSlot,
@@ -46,7 +47,7 @@ function isTeacherAvailable(
   for (const schoolClass of CLASSES) {
     const key = `${day}-${schoolClass}-${period}`;
     const slot = timetable.get(key);
-    if (slot && (slot.teacherId === teacher.id || slot.slashPairTeacherId === teacher.id)) {
+    if (slot && (slot.teacherId === teacher.id || slot.slashPairTeacherId === teacher.id || slot.slashThirdTeacherId === teacher.id)) {
       return false;
     }
   }
@@ -76,7 +77,7 @@ function getConsecutiveSameSubjectCount(
     const key = `${day}-${schoolClass}-${period}`;
     const slot = timetable.get(key);
     // Check both subject and slashPairSubject for slash subject handling
-    if (slot && (slot.subject === subject || slot.slashPairSubject === subject)) {
+    if (slot && (slot.subject === subject || slot.slashPairSubject === subject || slot.slashThirdSubject === subject)) {
       subjectPeriods.add(period);
     }
   }
@@ -124,7 +125,7 @@ function getTotalSubjectCountForDay(
     
     const key = `${day}-${schoolClass}-${period}`;
     const slot = timetable.get(key);
-    if (slot && (slot.subject === subject || slot.slashPairSubject === subject)) {
+    if (slot && (slot.subject === subject || slot.slashPairSubject === subject || slot.slashThirdSubject === subject)) {
       count++;
     }
   }
@@ -157,7 +158,7 @@ function getConsecutiveTeachingCount(
     for (const schoolClass of CLASSES) {
       const key = `${day}-${schoolClass}-${period}`;
       const slot = timetable.get(key);
-      if (slot && (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId)) {
+      if (slot && (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId || slot.slashThirdTeacherId === teacherId)) {
         teachingPeriods.add(period);
         break;
       }
@@ -200,6 +201,8 @@ async function validatePlacement(
   slotType: string,
   slashPairSubject?: string,
   slashPairTeacherId?: string,
+  slashThirdSubject?: string,
+  slashThirdTeacherId?: string,
   // Non-teaching activity (Assembly, Library, ...). When true we skip every
   // teacher- and subject-quota-based check; only the basic cell sanity checks
   // (cell empty + period exists in the day) still run.
@@ -352,98 +355,94 @@ async function validatePlacement(
     
   }
   
-  // Slash subject validation
+  // Slash subject validation (two- or three-way groups).
   if (slotType === "slash") {
-    const partner = findSlashPair(allSubjects, subject);
-    if (!partner) {
+    const group = findSlashGroup(allSubjects, subject);
+    const expectedPartners = group.filter((s) => s.name !== subject).map((s) => s.name);
+    const requestedPartners = [slashPairSubject, slashThirdSubject]
+      .filter((name): name is string => !!name);
+
+    if (group.length < 2) {
       errors.push({
         code: "INVALID_SLASH",
-        message: `${subject} is not configured as a slash subject`,
+        message: `${subject} is not configured as a slash group`,
         severity: "error",
       });
-    } else if (slashPairSubject && slashPairSubject !== partner.name) {
+    } else if ([...expectedPartners].sort().join("|") !== [...requestedPartners].sort().join("|")) {
       errors.push({
-        code: "SLASH_PAIR_MISMATCH",
-        message: `${subject} is paired with ${partner.name}, not ${slashPairSubject}`,
+        code: "SLASH_GROUP_MISMATCH",
+        message: `${subject} must be scheduled with ${expectedPartners.join(" / ")}`,
         severity: "error",
       });
     }
 
-    // Validate slash pair teacher is provided
-    if (!slashPairTeacherId) {
-      errors.push({
-        code: "MISSING_SLASH_TEACHER",
-        message: "Slash subjects require a teacher for the paired subject",
-        severity: "error",
-      });
-    } else {
-      const slashPairTeacher = teachers.find((t) => t.id === slashPairTeacherId);
-      if (!slashPairTeacher) {
+    const extras = [
+      { subject: slashPairSubject, teacherId: slashPairTeacherId },
+      { subject: slashThirdSubject, teacherId: slashThirdTeacherId },
+    ].filter((item) => !!item.subject);
+
+    for (const extra of extras) {
+      if (!extra.teacherId) {
         errors.push({
-          code: "SLASH_TEACHER_NOT_FOUND",
-          message: "Paired subject teacher not found",
+          code: "MISSING_SLASH_TEACHER",
+          message: `Slash subject ${extra.subject} requires a teacher`,
           severity: "error",
         });
-      } else {
-        // Validate slash pair teacher is assigned to teach the paired subject
-        if (slashPairSubject && !slashPairTeacher.subjects.includes(slashPairSubject)) {
-          errors.push({
-            code: "SLASH_TEACHER_SUBJECT_MISMATCH",
-            message: `${slashPairTeacher.name} is not assigned to teach ${slashPairSubject}`,
-            severity: "error",
-          });
-        }
-        
-        if (!slashPairTeacher.classes.includes(schoolClass)) {
-          errors.push({
-            code: "SLASH_TEACHER_CLASS_MISMATCH",
-            message: `${slashPairTeacher.name} is not assigned to teach ${schoolClass}`,
-            severity: "error",
-          });
-        }
-        
-        // Check slash pair teacher subject-class mapping
-        if (slashPairSubject) {
-          const allowedClassesForSlashSubject = getTeacherSubjectClasses(slashPairTeacher, slashPairSubject);
-          if (!allowedClassesForSlashSubject.includes(schoolClass)) {
-            errors.push({
-              code: "SLASH_TEACHER_SUBJECT_CLASS_MISMATCH",
-              message: `${slashPairTeacher.name} is not assigned to teach ${slashPairSubject} to ${schoolClass}`,
-              severity: "error",
-            });
-          }
-        }
-        
-        // Validate slash pair teacher availability
-        const slashUnavailable = slashPairTeacher.unavailable[day] || [];
-        if (slashUnavailable.includes(period)) {
-          errors.push({
-            code: "SLASH_TEACHER_UNAVAILABLE",
-            message: `${slashPairTeacher.name} is unavailable during period ${period} on ${day}`,
-            severity: "error",
-          });
-        }
-        
-        // Validate slash pair teacher is not clashing
-        if (!isTeacherAvailable(timetable, slashPairTeacher, day, period)) {
-          errors.push({
-            code: "SLASH_TEACHER_CLASH",
-            message: `${slashPairTeacher.name} is already teaching another class during period ${period}`,
-            severity: "error",
-          });
-        }
-        
-        // Check fatigue for slash pair teacher (per-teacher override wins)
-        const slashPeriodsToAdd = [period];
-        const slashConsecutive = getConsecutiveTeachingCount(timetable, slashPairTeacherId, day, slashPeriodsToAdd);
-        const slashLimit = effectiveFatigueLimit(slashPairTeacher, fatigueLimit);
-        if (slashConsecutive > slashLimit) {
-          errors.push({
-            code: "SLASH_TEACHER_FATIGUE",
-            message: `${slashPairTeacher.name} would exceed ${slashLimit} consecutive teaching periods`,
-            severity: "error",
-          });
-        }
+        continue;
+      }
+      if (extra.teacherId === teacherId || extras.some((other) => other !== extra && other.teacherId === extra.teacherId)) {
+        errors.push({
+          code: "SLASH_TEACHER_DUPLICATE",
+          message: "Each slash subject must have a different teacher",
+          severity: "error",
+        });
+        continue;
+      }
+      const slashTeacher = teachers.find((t) => t.id === extra.teacherId);
+      if (!slashTeacher) {
+        errors.push({
+          code: "SLASH_TEACHER_NOT_FOUND",
+          message: `Teacher for ${extra.subject} was not found`,
+          severity: "error",
+        });
+        continue;
+      }
+      if (!slashTeacher.subjects.includes(extra.subject!)) {
+        errors.push({
+          code: "SLASH_TEACHER_SUBJECT_MISMATCH",
+          message: `${slashTeacher.name} is not assigned to teach ${extra.subject}`,
+          severity: "error",
+        });
+      }
+      if (!slashTeacher.classes.includes(schoolClass) || !getTeacherSubjectClasses(slashTeacher, extra.subject!).includes(schoolClass)) {
+        errors.push({
+          code: "SLASH_TEACHER_CLASS_MISMATCH",
+          message: `${slashTeacher.name} is not assigned to teach ${extra.subject} to ${schoolClass}`,
+          severity: "error",
+        });
+      }
+      if ((slashTeacher.unavailable[day] || []).includes(period)) {
+        errors.push({
+          code: "SLASH_TEACHER_UNAVAILABLE",
+          message: `${slashTeacher.name} is unavailable during period ${period} on ${day}`,
+          severity: "error",
+        });
+      }
+      if (!isTeacherAvailable(timetable, slashTeacher, day, period)) {
+        errors.push({
+          code: "SLASH_TEACHER_CLASH",
+          message: `${slashTeacher.name} is already teaching another class during period ${period}`,
+          severity: "error",
+        });
+      }
+      const slashConsecutive = getConsecutiveTeachingCount(timetable, extra.teacherId, day, [period]);
+      const slashLimit = effectiveFatigueLimit(slashTeacher, fatigueLimit);
+      if (slashConsecutive > slashLimit) {
+        errors.push({
+          code: "SLASH_TEACHER_FATIGUE",
+          message: `${slashTeacher.name} would exceed ${slashLimit} consecutive teaching periods`,
+          severity: "error",
+        });
       }
     }
   }
@@ -470,13 +469,13 @@ async function validatePlacement(
     });
   }
   
-  // For slash subjects, also check the paired subject
-  if (slashPairSubject) {
-    const dailyPairCount = getTotalSubjectCountForDay(timetable, day, schoolClass, slashPairSubject, []);
+  // For slash subjects, also check every partner subject.
+  for (const partnerSubject of [slashPairSubject, slashThirdSubject].filter((s): s is string => !!s)) {
+    const dailyPairCount = getTotalSubjectCountForDay(timetable, day, schoolClass, partnerSubject, []);
     if (dailyPairCount >= 1) {
       errors.push({
         code: "SUBJECT_ALREADY_SCHEDULED",
-        message: `${slashPairSubject} is already scheduled for ${schoolClass} on ${day}`,
+        message: `${partnerSubject} is already scheduled for ${schoolClass} on ${day}`,
         severity: "error",
       });
     }
@@ -574,6 +573,8 @@ export async function registerRoutes(
         data.slotType,
         data.slashPairSubject,
         data.slashPairTeacherId,
+        data.slashThirdSubject,
+        data.slashThirdTeacherId,
         isActivity,
       );
       res.json(result);
@@ -631,6 +632,8 @@ export async function registerRoutes(
           data.slotType,
           data.slashPairSubject,
           data.slashPairTeacherId,
+          data.slashThirdSubject,
+          data.slashThirdTeacherId,
           isActivity,
         );
         perClassResults.push({ schoolClass: cls, validation });
@@ -661,6 +664,8 @@ export async function registerRoutes(
           slotType: data.slotType,
           slashPairSubject: data.slashPairSubject || null,
           slashPairTeacherId: data.slashPairTeacherId || null,
+          slashThirdSubject: data.slashThirdSubject || null,
+          slashThirdTeacherId: data.slashThirdTeacherId || null,
           isLocked,
         };
         placedSlots.push(slot);
@@ -771,6 +776,35 @@ export async function registerRoutes(
     await storage.initializeUserData(userId);
     const quotas = await storage.getSubjectQuotas(userId);
     res.json(quotas);
+  });
+
+  // Atomically update all members of a 2- or 3-subject slash group.
+  app.patch("/api/quotas/slash-group", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const schema = z.object({
+        subjects: z.array(z.string().min(1)).min(2).max(3),
+        field: z.enum(["jssQuota", "jss1Quota", "jss2Quota", "jss3Quota", "ss1Quota", "ss2ss3Quota"]),
+        value: z.number().int().min(0).max(10),
+      });
+      const { subjects: names, field, value } = schema.parse(req.body);
+      if (new Set(names).size !== names.length) {
+        res.status(400).json({ error: "Slash group subjects must differ" });
+        return;
+      }
+      const result = await storage.updateSlashGroupQuota(userId, names, field, value);
+      if (!result) {
+        res.status(404).json({ error: "Slash group subject not found" });
+        return;
+      }
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid slash-group quota data", details: error.errors });
+      } else {
+        res.status(500).json({ error: "Failed to update slash-group quota" });
+      }
+    }
   });
 
   // Atomically update both partners of a slash pair to the same quota value.
@@ -930,6 +964,7 @@ export async function registerRoutes(
         ss2ss3Quota: z.number().min(0).max(10).optional(),
         isSlashSubject: z.boolean().optional(),
         slashPairName: z.string().nullable().optional(),
+        slashThirdName: z.string().nullable().optional(),
         singleOnly: z.boolean().optional(),
         preferredPeriods: preferredPeriodsSchema.optional(),
         requiredDoubles: requiredDoublesSchema.optional(),
@@ -1227,7 +1262,7 @@ function wouldExceedFatigue(
     for (const cls of CLASSES) {
       const slot = timetable.get(slotKey(day, cls, p));
       if (!slot || slot.status !== "occupied") continue;
-      if (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId) {
+      if (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId || slot.slashThirdTeacherId === teacherId) {
         teaching.add(p);
         break;
       }
@@ -1302,6 +1337,10 @@ function placeSlot(
   slot.slotType = slotType;
   slot.slashPairSubject = null;
   slot.slashPairTeacherId = null;
+  slot.slashThirdSubject = null;
+  slot.slashThirdTeacherId = null;
+  slot.slashThirdSubject = null;
+  slot.slashThirdTeacherId = null;
   if (slotType === "double" && extraPeriod !== undefined) {
     const slot2 = timetable.get(slotKey(day, cls, extraPeriod))!;
     slot2.status = "occupied";
@@ -1310,6 +1349,8 @@ function placeSlot(
     slot2.slotType = "double";
     slot2.slashPairSubject = null;
     slot2.slashPairTeacherId = null;
+    slot2.slashThirdSubject = null;
+    slot2.slashThirdTeacherId = null;
   }
 }
 
@@ -1395,53 +1436,64 @@ function scheduleSubject(
   return placed;
 }
 
-function scheduleSlashPair(
+function scheduleSlashGroup(
   timetable: Timetable,
   cls: SchoolClass,
-  subject1: string,
-  subject2: string,
+  groupSubjects: string[],
   needed: number,
   teachers: Teacher[],
   fatigueLimit: number,
   warnings: string[]
 ): number {
-  const t1List = teachers.filter(t => teacherCanTeachSubjectToClass(t, subject1, cls));
-  const t2List = teachers.filter(t => teacherCanTeachSubjectToClass(t, subject2, cls));
-  if (t1List.length === 0) { warnings.push(`No teacher for slash subject ${subject1} → ${cls}`); return 0; }
-  if (t2List.length === 0) { warnings.push(`No teacher for slash subject ${subject2} → ${cls}`); return 0; }
+  if (groupSubjects.length < 2 || groupSubjects.length > 3) return 0;
+  const teacherLists = groupSubjects.map((subject) =>
+    teachers.filter((t) => teacherCanTeachSubjectToClass(t, subject, cls))
+  );
+  for (let i = 0; i < groupSubjects.length; i++) {
+    if (teacherLists[i].length === 0) {
+      warnings.push(`No teacher for slash subject ${groupSubjects[i]} → ${cls}`);
+      return 0;
+    }
+  }
+
   let placed = 0;
-  const days = shuffle([...DAYS] as Day[]);
-  for (const day of days) {
+  const pickTeachers = (
+    index: number,
+    day: Day,
+    period: number,
+    chosen: Teacher[],
+  ): Teacher[] | null => {
+    if (index >= teacherLists.length) return chosen;
+    for (const teacher of shuffle(teacherLists[index])) {
+      if (chosen.some((t) => t.id === teacher.id)) continue;
+      if (isTeacherUnavailable(teacher, day, period)) continue;
+      if (!isTeacherFreeAt(timetable, teacher.id, day, period)) continue;
+      if (wouldExceedFatigue(timetable, teacher.id, day, [period], fatigueLimit, teacher.maxConsecutivePeriods ?? null)) continue;
+      const result = pickTeachers(index + 1, day, period, [...chosen, teacher]);
+      if (result) return result;
+    }
+    return null;
+  };
+
+  for (const day of shuffle([...DAYS] as Day[])) {
     if (placed >= needed) break;
+    if (groupSubjects.some((subject) => subjectAlreadyTodayForClass(timetable, cls, day, subject))) continue;
     const periods = shuffle(Array.from({ length: PERIODS_PER_DAY[day] }, (_, i) => i + 1));
     for (const period of periods) {
       if (placed >= needed) break;
-      if (subjectAlreadyTodayForClass(timetable, cls, day, subject1)) continue;
-      if (subjectAlreadyTodayForClass(timetable, cls, day, subject2)) continue;
       const slot = timetable.get(slotKey(day, cls, period));
       if (!slot || slot.status !== "empty") continue;
-      let found = false;
-      for (const t1 of shuffle(t1List)) {
-        if (isTeacherUnavailable(t1, day, period)) continue;
-        if (!isTeacherFreeAt(timetable, t1.id, day, period)) continue;
-        if (wouldExceedFatigue(timetable, t1.id, day, [period], fatigueLimit, t1.maxConsecutivePeriods ?? null)) continue;
-        for (const t2 of shuffle(t2List)) {
-          if (t2.id === t1.id) continue;
-          if (isTeacherUnavailable(t2, day, period)) continue;
-          if (!isTeacherFreeAt(timetable, t2.id, day, period)) continue;
-          if (wouldExceedFatigue(timetable, t2.id, day, [period], fatigueLimit, t2.maxConsecutivePeriods ?? null)) continue;
-          slot.status = "occupied";
-          slot.subject = subject1;
-          slot.teacherId = t1.id;
-          slot.slotType = "slash";
-          slot.slashPairSubject = subject2;
-          slot.slashPairTeacherId = t2.id;
-          placed++;
-          found = true;
-          break;
-        }
-        if (found) break;
-      }
+      const chosen = pickTeachers(0, day, period, []);
+      if (!chosen) continue;
+      slot.status = "occupied";
+      slot.subject = groupSubjects[0];
+      slot.teacherId = chosen[0].id;
+      slot.slotType = "slash";
+      slot.slashPairSubject = groupSubjects[1] ?? null;
+      slot.slashPairTeacherId = chosen[1]?.id ?? null;
+      slot.slashThirdSubject = groupSubjects[2] ?? null;
+      slot.slashThirdTeacherId = chosen[2]?.id ?? null;
+      placed++;
     }
   }
   return placed;
@@ -1461,6 +1513,7 @@ function countPlacements(timetable: Timetable, cls: SchoolClass, subject: string
     if (slot.schoolClass !== cls || slot.status !== "occupied") continue;
     if (slot.subject === subject) count++;
     if (slot.slashPairSubject === subject) count++;
+    if (slot.slashThirdSubject === subject) count++;
   }
   return count;
 }
@@ -1468,7 +1521,7 @@ function countPlacements(timetable: Timetable, cls: SchoolClass, subject: string
 function countTeacherLoad(timetable: Timetable, teacherId: string): number {
   let count = 0;
   for (const slot of Array.from(timetable.values())) {
-    if (slot.status === "occupied" && (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId)) {
+    if (slot.status === "occupied" && (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId || slot.slashThirdTeacherId === teacherId)) {
       count++;
     }
   }
@@ -1497,7 +1550,7 @@ function teacherTeachesOnDay(timetable: Timetable, teacherId: string, day: Day):
     for (let p = 1; p <= PERIODS_PER_DAY[day]; p++) {
       const slot = timetable.get(slotKey(day, cls, p));
       if (!slot || slot.status !== "occupied") continue;
-      if (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId) return true;
+      if (slot.teacherId === teacherId || slot.slashPairTeacherId === teacherId || slot.slashThirdTeacherId === teacherId) return true;
     }
   }
   return false;
@@ -1561,7 +1614,7 @@ function removeExcess(timetable: Timetable, cls: SchoolClass, subject: string, e
       const slot = timetable.get(key);
       if (!slot || slot.status !== "occupied") continue;
       if (slot.slotType === "slash") continue; // do not break slash pairings
-      if (slot.subject === subject || slot.slashPairSubject === subject) toRemove.push(key);
+      if (slot.subject === subject || slot.slashPairSubject === subject || slot.slashThirdSubject === subject) toRemove.push(key);
     }
   }
   let removed = 0;
@@ -1574,6 +1627,10 @@ function removeExcess(timetable: Timetable, cls: SchoolClass, subject: string, e
     slot.slotType = null;
     slot.slashPairSubject = null;
     slot.slashPairTeacherId = null;
+    slot.slashThirdSubject = null;
+    slot.slashThirdTeacherId = null;
+    slot.slashThirdSubject = null;
+    slot.slashThirdTeacherId = null;
     removed++;
   }
 }
@@ -1630,12 +1687,16 @@ function swapRepairPass(
             altSlot.slotType = "single";
             altSlot.slashPairSubject = null;
             altSlot.slashPairTeacherId = null;
+            altSlot.slashThirdSubject = null;
+            altSlot.slashThirdTeacherId = null;
             targetSlot.status = "occupied";
             targetSlot.subject = subject;
             targetSlot.teacherId = teacher.id;
             targetSlot.slotType = "single";
             targetSlot.slashPairSubject = null;
             targetSlot.slashPairTeacherId = null;
+            targetSlot.slashThirdSubject = null;
+            targetSlot.slashThirdTeacherId = null;
             return 1;
           } else {
             targetSlot.status = savedStatus;
@@ -1691,6 +1752,7 @@ function initTimetable(lockedSlots: Timetable): Timetable {
             subject: null, teacherId: null,
             slotType: null,
             slashPairSubject: null, slashPairTeacherId: null,
+            slashThirdSubject: null, slashThirdTeacherId: null,
             isLocked: false,
           });
         }
@@ -1990,6 +2052,8 @@ function relocatePlacementToEmpty(
         altSlot.slotType = "single";
         altSlot.slashPairSubject = null;
         altSlot.slashPairTeacherId = null;
+        altSlot.slashThirdSubject = null;
+        altSlot.slashThirdTeacherId = null;
         return altKey;
       }
     }
@@ -2020,6 +2084,8 @@ function undoRelocate(
     altSlot.slotType = null;
     altSlot.slashPairSubject = null;
     altSlot.slashPairTeacherId = null;
+    altSlot.slashThirdSubject = null;
+    altSlot.slashThirdTeacherId = null;
   }
   const sourceSlot = timetable.get(sourceKey);
   if (sourceSlot) {
@@ -2342,28 +2408,31 @@ function runAttempt(
   const timetable = initTimetable(lockedSlots);
   const warnings: string[] = [];
 
-  // PHASE 1: User-defined slash subject pairs.
-  const seenSlashPairs = new Set<string>();
+  // PHASE 1: User-defined 2- or 3-subject slash groups (SS2/SS3).
+  const seenSlashGroups = new Set<string>();
   for (const subj of subjects) {
     if (!subj.isSlashSubject) continue;
-    const partner = findSlashPair(subjects, subj.name);
-    if (!partner) continue;
-    const pairKey = [subj.name, partner.name].sort().join("|");
-    if (seenSlashPairs.has(pairKey)) continue;
-    seenSlashPairs.add(pairKey);
+    const group = findSlashGroup(subjects, subj.name);
+    if (group.length < 2) continue;
+    const names = group.map((s) => s.name).sort();
+    const groupKey = names.join("|");
+    if (seenSlashGroups.has(groupKey)) continue;
+    seenSlashGroups.add(groupKey);
 
-    const periods = subj.ss2ss3Quota;
+    const groupQuotas = names
+      .map((name) => quotas.find((q) => q.subject === name)?.ss2ss3Quota ?? 0);
+    const periods = Math.max(...groupQuotas);
     if (periods <= 0) continue;
+    if (groupQuotas.some((q) => q !== periods)) {
+      warnings.push(`Slash group ${names.join("/")} has mismatched SS2/SS3 quotas; using ${periods}`);
+    }
 
     for (const cls of ["SS2", "SS3"] as SchoolClass[]) {
-      const placed = scheduleSlashPair(
-        timetable, cls,
-        subj.name, partner.name,
-        periods,
-        teachers, fatigueLimit, warnings,
+      const placed = scheduleSlashGroup(
+        timetable, cls, names, periods, teachers, fatigueLimit, warnings,
       );
       if (placed < periods) {
-        warnings.push(`Attempt ${attemptNumber}: Slash ${subj.name}/${partner.name} → ${cls}: placed ${placed}/${periods}`);
+        warnings.push(`Attempt ${attemptNumber}: Slash ${names.join("/")} → ${cls}: placed ${placed}/${periods}`);
       }
     }
   }

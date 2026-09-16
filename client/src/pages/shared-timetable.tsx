@@ -128,6 +128,8 @@ export default function SharedTimetablePage() {
       slotType: null,
       slashPairSubject: null,
       slashPairTeacherId: null,
+      slashThirdSubject: null,
+      slashThirdTeacherId: null,
       isLocked: false,
     };
   };
@@ -222,6 +224,7 @@ export default function SharedTimetablePage() {
                                 const slot = getSlotForCell(day, schoolClass, period);
                                 const teacher = getTeacher(slot.teacherId);
                                 const slashPairTeacher = getTeacher(slot.slashPairTeacherId);
+                                const slashThirdTeacher = getTeacher(slot.slashThirdTeacherId);
                                 
                                 const prevKey = `${day}-${schoolClass}-${period - 1}`;
                                 if (skipDoubleCheck.has(prevKey)) {
@@ -272,10 +275,10 @@ export default function SharedTimetablePage() {
                                         {isSlash ? (
                                           <>
                                             <span className="text-xs font-medium truncate max-w-full">
-                                              {slot.subject}/{slot.slashPairSubject}
+                                              {[slot.subject, slot.slashPairSubject, slot.slashThirdSubject].filter(Boolean).join("/")}
                                             </span>
                                             <span className="text-xs text-muted-foreground truncate max-w-full">
-                                              {teacher?.name?.split(" ")[0]}/{slashPairTeacher?.name?.split(" ")[0]}
+                                              {[teacher?.name?.split(" ")[0], slashPairTeacher?.name?.split(" ")[0], slashThirdTeacher?.name?.split(" ")[0]].filter(Boolean).join("/")}
                                             </span>
                                           </>
                                         ) : (

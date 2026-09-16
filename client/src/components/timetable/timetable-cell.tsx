@@ -7,6 +7,7 @@ interface TimetableCellProps {
   slot: TimetableSlot;
   teacher?: Teacher;
   slashPairTeacher?: Teacher;
+  slashThirdTeacher?: Teacher;
   onCellClick: () => void;
   isDouble?: boolean;
   isSecondOfDouble?: boolean;
@@ -16,6 +17,7 @@ export function TimetableCell({
   slot,
   teacher,
   slashPairTeacher,
+  slashThirdTeacher,
   onCellClick,
   isDouble,
   isSecondOfDouble,
@@ -116,8 +118,14 @@ export function TimetableCell({
             />
             <span className="text-xs font-medium truncate">{slot.slashPairSubject}</span>
           </div>
+          {slot.slashThirdSubject && (
+            <div className="flex items-center gap-1 w-full">
+              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: slashThirdTeacher?.color }} />
+              <span className="text-xs font-medium truncate">{slot.slashThirdSubject}</span>
+            </div>
+          )}
           <div className="text-[10px] text-muted-foreground truncate w-full mt-0.5">
-            {teacher?.name?.split(" ")[1]} / {slashPairTeacher?.name?.split(" ")[1]}
+            {[teacher?.name?.split(" ")[1], slashPairTeacher?.name?.split(" ")[1], slashThirdTeacher?.name?.split(" ")[1]].filter(Boolean).join(" / ")}
           </div>
         </>
       ) : (
@@ -153,6 +161,12 @@ export function TimetableCell({
             <>
               <p className="font-medium mt-1">{slot.slashPairSubject}</p>
               <p className="text-xs text-muted-foreground">{slashPairTeacher?.name}</p>
+              {slot.slashThirdSubject && (
+                <>
+                  <p className="font-medium mt-1">{slot.slashThirdSubject}</p>
+                  <p className="text-xs text-muted-foreground">{slashThirdTeacher?.name}</p>
+                </>
+              )}
             </>
           )}
           {slot.slotType === "double" && (

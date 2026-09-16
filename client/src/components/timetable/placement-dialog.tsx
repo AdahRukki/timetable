@@ -7,6 +7,8 @@ import {
   type ValidationResult,
   type Subject,
   findSlashPair,
+  findSlashGroup,
+  getQuotaForClass,
   PERIODS_PER_DAY,
 } from "@shared/schema";
 import {
@@ -70,6 +72,8 @@ interface PlacementDialogProps {
     slotType: SlotType,
     slashPairSubject: string | undefined,
     slashPairTeacherId: string | undefined,
+    slashThirdSubject: string | undefined,
+    slashThirdTeacherId: string | undefined,
     options: PlacementSubmitOptions,
   ) => void;
   onRemove: () => void;
@@ -80,6 +84,8 @@ interface PlacementDialogProps {
     slotType: SlotType,
     slashPairSubject?: string,
     slashPairTeacherId?: string,
+    slashThirdSubject?: string,
+    slashThirdTeacherId?: string,
   ) => void;
 }
 
@@ -99,6 +105,8 @@ export function PlacementDialog({
   const [slotType, setSlotType] = useState<SlotType>("single");
   const [slashPairSubject, setSlashPairSubject] = useState<string>("");
   const [slashPairTeacherId, setSlashPairTeacherId] = useState<string>("");
+  const [slashThirdSubject, setSlashThirdSubject] = useState<string>("");
+  const [slashThirdTeacherId, setSlashThirdTeacherId] = useState<string>("");
   const [isActivity, setIsActivity] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [applyToAllClasses, setApplyToAllClasses] = useState(false);
@@ -108,7 +116,7 @@ export function PlacementDialog({
   const editingLocked = isOccupied && !!slot?.isLocked;
   const schoolClass = slot?.schoolClass as SchoolClass;
   const selectedSubjectIsSlash = useMemo(
-    () => !!subject && !isActivity && !!findSlashPair(customSubjects, subject),
+    () => !!subject && !isActivity && findSlashGroup(customSubjects, subject).length >= 2,
     [subject, customSubjects, isActivity],
   );
   const maxPeriods = slot ? PERIODS_PER_DAY[slot.day] : 9;
@@ -117,13 +125,11 @@ export function PlacementDialog({
     if (!schoolClass) return [];
     return customSubjects
       .filter((s) => {
-        if (schoolClass.startsWith("JSS")) {
-          return s.jssQuota > 0;
-        } else if (schoolClass === "SS1") {
-          return s.ss1Quota > 0;
-        } else {
-          return s.ss2ss3Quota > 0;
-        }
+        if (schoolClass === "JSS1") return (s.jss1Quota ?? s.jssQuota) > 0;
+        if (schoolClass === "JSS2") return (s.jss2Quota ?? s.jssQuota) > 0;
+        if (schoolClass === "JSS3") return (s.jss3Quota ?? s.jssQuota) > 0;
+        if (schoolClass === "SS1") return s.ss1Quota > 0;
+        return s.ss2ss3Quota > 0;
       })
       .map((s) => s.name)
       .sort();
@@ -140,9 +146,10 @@ export function PlacementDialog({
 
   const slashPairInfo = useMemo(() => {
     if (slotType !== "slash" || !subject || isActivity) return null;
-    const partner = findSlashPair(customSubjects, subject);
-    if (!partner) return null;
-    return { pairSubject: partner.name };
+    const group = findSlashGroup(customSubjects, subject);
+    if (group.length < 2) return null;
+    const partners = group.filter((s) => s.name !== subject).map((s) => s.name);
+    return { pairSubject: partners[0], thirdSubject: partners[1] || "" };
   }, [slotType, subject, customSubjects, isActivity]);
 
   const slashPairTeachers = useMemo(() => {
@@ -150,6 +157,15 @@ export function PlacementDialog({
     return teachers.filter(
       (t) =>
         t.subjects.includes(slashPairInfo.pairSubject!) &&
+        t.classes.includes(schoolClass)
+    );
+  }, [slashPairInfo, teachers, schoolClass]);
+
+  const slashThirdTeachers = useMemo(() => {
+    if (!slashPairInfo?.thirdSubject) return [];
+    return teachers.filter(
+      (t) =>
+        t.subjects.includes(slashPairInfo.thirdSubject) &&
         t.classes.includes(schoolClass)
     );
   }, [slashPairInfo, teachers, schoolClass]);
@@ -165,6 +181,8 @@ export function PlacementDialog({
       setSlotType(slot.slotType || "single");
       setSlashPairSubject(slot.slashPairSubject || "");
       setSlashPairTeacherId(slot.slashPairTeacherId || "");
+      setSlashThirdSubject(slot.slashThirdSubject || "");
+      setSlashThirdTeacherId(slot.slashThirdTeacherId || "");
       setApplyToAllClasses(false);
     } else {
       setIsActivity(false);
@@ -175,6 +193,8 @@ export function PlacementDialog({
       setSlotType("single");
       setSlashPairSubject("");
       setSlashPairTeacherId("");
+      setSlashThirdSubject("");
+      setSlashThirdTeacherId("");
     }
   }, [slot, isOccupied]);
 
@@ -186,6 +206,8 @@ export function PlacementDialog({
       setTeacherId("");
       setSlashPairSubject("");
       setSlashPairTeacherId("");
+      setSlashThirdSubject("");
+      setSlashThirdTeacherId("");
     } else if (slotType === "activity") {
       setSlotType("single");
     }
@@ -201,6 +223,7 @@ export function PlacementDialog({
   useEffect(() => {
     if (slashPairInfo?.pairSubject) {
       setSlashPairSubject(slashPairInfo.pairSubject);
+      setSlashThirdSubject(slashPairInfo.thirdSubject || "");
     }
   }, [slashPairInfo]);
 
@@ -212,10 +235,12 @@ export function PlacementDialog({
         teacherId,
         slotType,
         slotType === "slash" ? slashPairSubject : undefined,
-        slotType === "slash" ? slashPairTeacherId : undefined
+        slotType === "slash" ? slashPairTeacherId : undefined,
+        slotType === "slash" && slashThirdSubject ? slashThirdSubject : undefined,
+        slotType === "slash" && slashThirdTeacherId ? slashThirdTeacherId : undefined
       );
     }
-  }, [subject, teacherId, slotType, slashPairSubject, slashPairTeacherId, isOccupied, isActivity, onValidate]);
+  }, [subject, teacherId, slotType, slashPairSubject, slashPairTeacherId, slashThirdSubject, slashThirdTeacherId, isOccupied, isActivity, onValidate]);
 
   const handlePlace = () => {
     if (isActivity) {
@@ -224,6 +249,8 @@ export function PlacementDialog({
         subject.trim(),
         "",
         "activity",
+        undefined,
+        undefined,
         undefined,
         undefined,
         { isActivity: true, isLocked: true, applyToAllClasses },
@@ -237,6 +264,8 @@ export function PlacementDialog({
       slotType,
       slotType === "slash" ? slashPairSubject : undefined,
       slotType === "slash" ? slashPairTeacherId : undefined,
+      slotType === "slash" && slashThirdSubject ? slashThirdSubject : undefined,
+      slotType === "slash" && slashThirdTeacherId ? slashThirdTeacherId : undefined,
       { isActivity: false, isLocked, applyToAllClasses: false },
     );
   };
@@ -473,6 +502,32 @@ export function PlacementDialog({
                       ))}
                     </SelectContent>
                   </Select>
+                  {slashPairInfo.thirdSubject && (
+                    <>
+                      <Label className="text-sm text-muted-foreground pt-2">
+                        Third Slash Subject: {slashPairInfo.thirdSubject}
+                      </Label>
+                      <Select
+                        value={slashThirdTeacherId}
+                        onValueChange={setSlashThirdTeacherId}
+                        disabled={isOccupied}
+                      >
+                        <SelectTrigger data-testid="select-slash-third-teacher">
+                          <SelectValue placeholder="Select teacher for third subject" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {slashThirdTeachers.map((t) => (
+                            <SelectItem key={t.id} value={t.id}>
+                              <div className="flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: t.color }} />
+                                {t.name}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -550,7 +605,7 @@ export function PlacementDialog({
                   : !subject ||
                     !teacherId ||
                     (validation && !validation.isValid) ||
-                    (slotType === "slash" && (!slashPairSubject || !slashPairTeacherId))
+                    (slotType === "slash" && (!slashPairSubject || !slashPairTeacherId || (!!slashThirdSubject && !slashThirdTeacherId)))
               }
               data-testid="button-place"
             >

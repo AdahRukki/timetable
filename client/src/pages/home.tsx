@@ -138,7 +138,9 @@ export default function Home() {
       teacherId: string,
       slotType: SlotType,
       slashPairSubject?: string,
-      slashPairTeacherId?: string
+      slashPairTeacherId?: string,
+      slashThirdSubject?: string,
+      slashThirdTeacherId?: string
     ) => {
       if (!selectedSlot) return;
 
@@ -151,6 +153,8 @@ export default function Home() {
         slotType,
         slashPairSubject,
         slashPairTeacherId,
+        slashThirdSubject,
+        slashThirdTeacherId,
       }, fatigueLimit, customSubjects);
 
       setValidation(result);
@@ -165,6 +169,8 @@ export default function Home() {
       slotType: SlotType,
       slashPairSubject: string | undefined,
       slashPairTeacherId: string | undefined,
+      slashThirdSubject: string | undefined,
+      slashThirdTeacherId: string | undefined,
       options: { isActivity: boolean; isLocked: boolean; applyToAllClasses: boolean },
     ) => {
       if (!selectedSlot) return;
@@ -183,6 +189,8 @@ export default function Home() {
             slotType,
             slashPairSubject: slashPairSubject || null,
             slashPairTeacherId: slashPairTeacherId || null,
+            slashThirdSubject: slashThirdSubject || null,
+            slashThirdTeacherId: slashThirdTeacherId || null,
             isActivity: options.isActivity,
             isLocked: options.isLocked,
             applyToAllClasses: options.applyToAllClasses,
@@ -217,6 +225,8 @@ export default function Home() {
         slotType,
         slashPairSubject,
         slashPairTeacherId,
+        slashThirdSubject,
+        slashThirdTeacherId,
       }, fatigueLimit, customSubjects);
 
       if (!validationResult.isValid) {
@@ -246,6 +256,8 @@ export default function Home() {
           slotType,
           slashPairSubject: slashPairSubject || null,
           slashPairTeacherId: slashPairTeacherId || null,
+          slashThirdSubject: slashThirdSubject || null,
+          slashThirdTeacherId: slashThirdTeacherId || null,
           isLocked: false,
         };
 
@@ -267,6 +279,8 @@ export default function Home() {
               slotType: "double",
               slashPairSubject: slashPairSubject || null,
               slashPairTeacherId: slashPairTeacherId || null,
+              slashThirdSubject: slashThirdSubject || null,
+              slashThirdTeacherId: slashThirdTeacherId || null,
               isLocked: false,
             });
           }
@@ -352,6 +366,8 @@ export default function Home() {
         slotType: null,
         slashPairSubject: null,
         slashPairTeacherId: null,
+        slashThirdSubject: null,
+        slashThirdTeacherId: null,
       };
 
       newTimetable.set(key, emptySlot);
@@ -372,6 +388,8 @@ export default function Home() {
             slotType: null,
             slashPairSubject: null,
             slashPairTeacherId: null,
+            slashThirdSubject: null,
+            slashThirdTeacherId: null,
           });
         }
       }
@@ -435,6 +453,8 @@ export default function Home() {
                 slotType: null,
                 slashPairSubject: null,
                 slashPairTeacherId: null,
+                slashThirdSubject: null,
+                slashThirdTeacherId: null,
                 isLocked: false,
               });
             }
@@ -449,6 +469,8 @@ export default function Home() {
           slotType: null,
           slashPairSubject: null,
           slashPairTeacherId: null,
+          slashThirdSubject: null,
+          slashThirdTeacherId: null,
           isLocked: false,
         });
       }

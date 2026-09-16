@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { SubjectQuota, Subject, UserSettings } from "@shared/schema";
-import { findSlashPair, CLASSES } from "@shared/schema";
+import { findSlashPair, findSlashGroup, CLASSES } from "@shared/schema";
 import {
   Select,
   SelectContent,
@@ -35,6 +35,7 @@ export default function SettingsPage() {
   const [newSubjectSs2ss3Quota, setNewSubjectSs2ss3Quota] = useState(4);
   const [newSubjectIsSlash, setNewSubjectIsSlash] = useState(false);
   const [newSubjectSlashPair, setNewSubjectSlashPair] = useState<string>("");
+  const [newSubjectSlashThird, setNewSubjectSlashThird] = useState<string>("");
   const [newSubjectPreferredJss1, setNewSubjectPreferredJss1] = useState<number[]>([]);
   const [newSubjectPreferredJss2, setNewSubjectPreferredJss2] = useState<number[]>([]);
   const [newSubjectPreferredJss3, setNewSubjectPreferredJss3] = useState<number[]>([]);
@@ -111,21 +112,19 @@ export default function SettingsPage() {
     },
   });
 
-  const updateSlashPairQuotaMutation = useMutation({
+  const updateSlashGroupQuotaMutation = useMutation({
     mutationFn: async (payload: {
-      subjectA: string;
-      subjectB: string;
+      subjects: string[];
       field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2ss3Quota";
       value: number;
-    }) => {
-      return apiRequest("PATCH", "/api/quotas/slash-pair", payload);
-    },
+    }) => apiRequest("PATCH", "/api/quotas/slash-group", payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/subjects"] });
     },
     onError: (error) => {
       toast({
-        title: "Failed to update slash pair",
+        title: "Failed to update slash group",
         description: error instanceof Error ? error.message : "Invalid quota value",
         variant: "destructive",
       });
@@ -144,6 +143,7 @@ export default function SettingsPage() {
       ss2ss3Quota: number;
       isSlashSubject: boolean;
       slashPairName: string | null;
+      slashThirdName: string | null;
       preferredPeriods?: { jss: number[]; jss1: number[]; jss2: number[]; jss3: number[]; ss1: number[]; ss2ss3: number[] };
       requiredDoubles?: { jss: number; jss1: number; jss2: number; jss3: number; ss1: number; ss2ss3: number };
       singleOnly?: boolean;
@@ -218,6 +218,7 @@ export default function SettingsPage() {
     setNewSubjectSs2ss3Quota(4);
     setNewSubjectIsSlash(false);
     setNewSubjectSlashPair("");
+    setNewSubjectSlashThird("");
     setNewSubjectPreferredJss1([]);
     setNewSubjectPreferredJss2([]);
     setNewSubjectPreferredJss3([]);
@@ -247,6 +248,7 @@ export default function SettingsPage() {
     setNewSubjectSs2ss3Quota(subject.ss2ss3Quota);
     setNewSubjectIsSlash(subject.isSlashSubject);
     setNewSubjectSlashPair(subject.slashPairName || "");
+    setNewSubjectSlashThird(subject.slashThirdName || "");
     setNewSubjectPreferredJss1(subject.preferredPeriods?.jss1 ?? subject.preferredPeriods?.jss ?? []);
     setNewSubjectPreferredJss2(subject.preferredPeriods?.jss2 ?? subject.preferredPeriods?.jss ?? []);
     setNewSubjectPreferredJss3(subject.preferredPeriods?.jss3 ?? subject.preferredPeriods?.jss ?? []);
@@ -274,6 +276,7 @@ export default function SettingsPage() {
   const handleSubjectSubmit = () => {
     const isSlash = newSubjectIsSlash;
     const pairName = isSlash && newSubjectSlashPair ? newSubjectSlashPair : null;
+    const thirdName = isSlash && newSubjectSlashThird ? newSubjectSlashThird : null;
     const preferredPeriods = {
       jss: [...newSubjectPreferredJss1].sort((a, b) => a - b),
       jss1: [...newSubjectPreferredJss1].sort((a, b) => a - b),
@@ -305,6 +308,7 @@ export default function SettingsPage() {
           ss2ss3Quota: newSubjectSs2ss3Quota,
           isSlashSubject: isSlash,
           slashPairName: pairName,
+        slashThirdName: thirdName,
           preferredPeriods,
           requiredDoubles,
           singleOnly: newSubjectSingleOnly,
@@ -321,6 +325,7 @@ export default function SettingsPage() {
         ss2ss3Quota: newSubjectSs2ss3Quota,
         isSlashSubject: isSlash,
         slashPairName: pairName,
+        slashThirdName: thirdName,
         preferredPeriods,
         requiredDoubles,
         singleOnly: newSubjectSingleOnly,
@@ -597,36 +602,47 @@ export default function SettingsPage() {
                   />
                 </div>
                 {newSubjectIsSlash && (
-                  <div className="space-y-2">
-                    <Label htmlFor="subject-slash-pair">Pairs with</Label>
-                    <Select
-                      value={newSubjectSlashPair}
-                      onValueChange={setNewSubjectSlashPair}
-                    >
-                      <SelectTrigger id="subject-slash-pair" data-testid="select-subject-slash-pair">
-                        <SelectValue placeholder="Choose the partner subject" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {slashPairCandidates.length === 0 ? (
-                          <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                            No other subjects available — create one first.
-                          </div>
-                        ) : (
-                          slashPairCandidates.map((s) => (
-                            <SelectItem key={s.id} value={s.name}>
-                              {s.name}
-                              {s.isSlashSubject && s.slashPairName && s.slashPairName !== newSubjectName && (
-                                <span className="text-xs text-muted-foreground ml-2">
-                                  (currently paired with {s.slashPairName})
-                                </span>
-                              )}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="subject-slash-pair">Slash partner 1</Label>
+                      <Select
+                        value={newSubjectSlashPair}
+                        onValueChange={(v) => {
+                          setNewSubjectSlashPair(v);
+                          if (newSubjectSlashThird === v) setNewSubjectSlashThird("");
+                        }}
+                      >
+                        <SelectTrigger id="subject-slash-pair" data-testid="select-subject-slash-pair">
+                          <SelectValue placeholder="Choose the second subject" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {slashPairCandidates.map((s) => (
+                            <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="subject-slash-third">Slash partner 2 (optional)</Label>
+                      <Select
+                        value={newSubjectSlashThird || "none"}
+                        onValueChange={(v) => setNewSubjectSlashThird(v === "none" ? "" : v)}
+                      >
+                        <SelectTrigger id="subject-slash-third" data-testid="select-subject-slash-third">
+                          <SelectValue placeholder="Add a third subject" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No third subject</SelectItem>
+                          {slashPairCandidates
+                            .filter((s) => s.name !== newSubjectSlashPair)
+                            .map((s) => (
+                              <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <p className="text-xs text-muted-foreground">
-                      Saving will mirror this pairing on the partner. Any prior pairing the partner had will be cleared.
+                      A slash group can contain 2 or 3 subjects. All members are scheduled in the same period with different teachers.
                     </p>
                   </div>
                 )}
@@ -811,32 +827,27 @@ export default function SettingsPage() {
 
                 <div>
                   {(() => {
-                    // Derive slash pairs from the user's own subjects.
-                    const seenPairs = new Set<string>();
-                    const allPairs: Array<{ a: string; b: string }> = [];
+                    // Derive 2- or 3-subject slash groups from the user's subjects.
+                    const seenGroups = new Set<string>();
+                    const allGroups: string[][] = [];
                     const slashNamesForBadge = new Set<string>();
                     for (const s of subjects) {
                       if (!s.isSlashSubject) continue;
-                      const partner = findSlashPair(subjects, s.name);
-                      if (!partner) continue;
-                      slashNamesForBadge.add(s.name);
-                      const key = [s.name, partner.name].sort().join("|");
-                      if (seenPairs.has(key)) continue;
-                      seenPairs.add(key);
-                      const [a, b] = [s.name, partner.name].sort();
-                      allPairs.push({ a, b });
+                      const group = findSlashGroup(subjects, s.name);
+                      if (group.length < 2) continue;
+                      const names = group.map((x) => x.name).sort();
+                      const key = names.join("|");
+                      if (seenGroups.has(key)) continue;
+                      seenGroups.add(key);
+                      names.forEach((name) => slashNamesForBadge.add(name));
+                      allGroups.push(names);
                     }
-                    // Only render pairs that are actually assigned to SS2/SS3.
-                    const pairs = allPairs.filter(({ a, b }) => {
-                      const qa = quotas.find((q) => q.subject === a);
-                      const qb = quotas.find((q) => q.subject === b);
-                      return Math.max(qa?.ss2ss3Quota ?? 0, qb?.ss2ss3Quota ?? 0) > 0;
-                    });
-                    const slashTotal = pairs.reduce((sum, p) => {
-                      const qa = quotas.find((q) => q.subject === p.a);
-                      const qb = quotas.find((q) => q.subject === p.b);
-                      return sum + Math.max(qa?.ss2ss3Quota ?? 0, qb?.ss2ss3Quota ?? 0);
-                    }, 0);
+                    const groups = allGroups.filter((names) =>
+                      Math.max(...names.map((name) => quotas.find((q) => q.subject === name)?.ss2ss3Quota ?? 0)) > 0
+                    );
+                    const slashTotal = groups.reduce((sum, names) =>
+                      sum + Math.max(...names.map((name) => quotas.find((q) => q.subject === name)?.ss2ss3Quota ?? 0)), 0
+                    );
                     const regularSubjects = [...quotas]
                       .filter((q) => q.ss2ss3Quota > 0 && !slashNamesForBadge.has(q.subject))
                       .sort((a, b) => a.subject.localeCompare(b.subject));
@@ -852,24 +863,19 @@ export default function SettingsPage() {
                           </Badge>
                         </div>
 
-                        {pairs.length > 0 && (
+                        {groups.length > 0 && (
                           <div className="mb-4">
-                            <p className="text-sm text-muted-foreground mb-3">Slash Subject Pairs (scheduled simultaneously)</p>
+                            <p className="text-sm text-muted-foreground mb-3">Slash Subject Groups (scheduled simultaneously)</p>
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                              {pairs.map(({ a, b }) => {
-                                const qa = quotas.find((q) => q.subject === a);
-                                const qb = quotas.find((q) => q.subject === b);
-                                // If the two halves disagree (legacy data), show
-                                // the larger value so the user can see something
-                                // sensible; the next save syncs both atomically.
-                                const quota = Math.max(qa?.ss2ss3Quota ?? 0, qb?.ss2ss3Quota ?? 0);
+                              {groups.map((names) => {
+                                const quota = Math.max(...names.map((name) => quotas.find((q) => q.subject === name)?.ss2ss3Quota ?? 0));
                                 return (
-                                  <div key={`${a}-${b}`} className="flex items-center gap-2">
+                                  <div key={names.join("-")} className="flex items-center gap-2">
                                     <div className="flex-1">
                                       <Label className="text-sm flex items-center gap-1">
-                                        {a} / {b}
+                                        {names.join(" / ")}
                                         <Badge variant="outline" className="text-xs ml-1">Slash</Badge>
-                                        <span className="text-xs text-muted-foreground ml-1">({quota * 2} total)</span>
+                                        <span className="text-xs text-muted-foreground ml-1">({quota * 2} total slots)</span>
                                       </Label>
                                     </div>
                                     <NumberInput
@@ -877,15 +883,14 @@ export default function SettingsPage() {
                                       max={10}
                                       value={quota}
                                       onChange={(v) => {
-                                        updateSlashPairQuotaMutation.mutate({
-                                          subjectA: a,
-                                          subjectB: b,
+                                        updateSlashGroupQuotaMutation.mutate({
+                                          subjects: names,
                                           field: "ss2ss3Quota",
                                           value: v,
                                         });
                                       }}
                                       className="w-16"
-                                      data-testid={`input-quota-slash-${a.toLowerCase()}-${b.toLowerCase()}`}
+                                      data-testid={`input-quota-slash-${names.join("-").toLowerCase()}`}
                                     />
                                     <span className="text-sm text-muted-foreground">per week</span>
                                   </div>

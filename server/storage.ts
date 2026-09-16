@@ -31,53 +31,95 @@ function getSlotKey(day: Day, schoolClass: SchoolClass, period: number): string 
   return `${day}-${schoolClass}-${period}`;
 }
 
-// Slash-pair helpers — keep slash pairings bidirectional and exclusive.
-// Both helpers operate inside an active transaction so reconciliation is atomic
-// with the primary subject mutation.
-
+// Slash-group helpers — groups may contain two or three subjects and are kept
+// bidirectional/exclusive. Existing two-way pairs remain fully compatible.
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-async function clearSlashPartnerIfPointingAt(
-  tx: Tx,
-  userId: string,
-  partnerName: string,
-  expectedBackpointer: string,
-): Promise<void> {
-  const [partner] = await tx.select().from(subjects).where(
-    and(eq(subjects.userId, userId), eq(subjects.name, partnerName))
-  );
-  if (!partner) return;
-  if (partner.slashPairName !== expectedBackpointer) return;
-  await tx.update(subjects)
-    .set({ isSlashSubject: 0, slashPairName: null })
-    .where(and(eq(subjects.userId, userId), eq(subjects.id, partner.id)));
-  await tx.update(subjectQuotas)
-    .set({ isSlashSubject: 0 })
-    .where(and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, partner.name)));
+type SlashRow = {
+  id: number;
+  name: string;
+  isSlashSubject: number;
+  slashPairName: string | null;
+  slashThirdName: string | null;
+};
+
+function declaredSlashMembers(row: SlashRow): string[] {
+  return [row.name, row.slashPairName, row.slashThirdName]
+    .filter((name): name is string => !!name);
 }
 
-async function mirrorSlashPair(
-  tx: Tx,
-  userId: string,
-  ownerName: string,
-  partnerName: string,
-): Promise<void> {
-  const [partner] = await tx.select().from(subjects).where(
-    and(eq(subjects.userId, userId), eq(subjects.name, partnerName))
-  );
-  if (!partner) return; // partner doesn't exist; pairing is one-sided until they create it
-
-  // If the partner was previously paired with someone else, break that pairing.
-  if (partner.isSlashSubject === 1 && partner.slashPairName && partner.slashPairName !== ownerName) {
-    await clearSlashPartnerIfPointingAt(tx, userId, partner.slashPairName, partner.name);
+async function clearSlashGroup(tx: Tx, userId: string, anchorName: string): Promise<void> {
+  const rows = await tx.select().from(subjects).where(eq(subjects.userId, userId));
+  const byName = new Map(rows.map((row) => [row.name, row]));
+  const affected = new Set<string>([anchorName]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const row of rows) {
+      const names = declaredSlashMembers(row as SlashRow);
+      if (!names.some((name) => affected.has(name))) continue;
+      for (const name of names) {
+        if (!affected.has(name)) {
+          affected.add(name);
+          changed = true;
+        }
+      }
+    }
   }
 
-  await tx.update(subjects)
-    .set({ isSlashSubject: 1, slashPairName: ownerName })
-    .where(and(eq(subjects.userId, userId), eq(subjects.id, partner.id)));
-  await tx.update(subjectQuotas)
-    .set({ isSlashSubject: 1 })
-    .where(and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, partner.name)));
+  for (const name of Array.from(affected)) {
+    const row = byName.get(name);
+    if (!row) continue;
+    await tx.update(subjects)
+      .set({ isSlashSubject: 0, slashPairName: null, slashThirdName: null })
+      .where(and(eq(subjects.userId, userId), eq(subjects.id, row.id)));
+    await tx.update(subjectQuotas)
+      .set({ isSlashSubject: 0 })
+      .where(and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, name)));
+  }
+}
+
+async function setSlashGroup(tx: Tx, userId: string, rawNames: string[]): Promise<void> {
+  const names = Array.from(new Set(rawNames.filter(Boolean)));
+  if (names.length < 2 || names.length > 3) return;
+
+  const rows = await tx.select().from(subjects).where(eq(subjects.userId, userId));
+  const byName = new Map(rows.map((row) => [row.name, row]));
+  if (names.some((name) => !byName.has(name))) return;
+
+  // Break any previous group touching any selected member before establishing
+  // the new group. This prevents one subject from belonging to two groups.
+  const touched = new Set<string>();
+  for (const name of names) {
+    const row = byName.get(name)!;
+    for (const oldName of declaredSlashMembers(row as SlashRow)) touched.add(oldName);
+  }
+  for (const name of Array.from(touched)) {
+    if (names.includes(name)) continue;
+    const row = byName.get(name);
+    if (!row) continue;
+    await tx.update(subjects)
+      .set({ isSlashSubject: 0, slashPairName: null, slashThirdName: null })
+      .where(and(eq(subjects.userId, userId), eq(subjects.id, row.id)));
+    await tx.update(subjectQuotas)
+      .set({ isSlashSubject: 0 })
+      .where(and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, name)));
+  }
+
+  for (const name of names) {
+    const row = byName.get(name)!;
+    const others = names.filter((n) => n !== name);
+    await tx.update(subjects)
+      .set({
+        isSlashSubject: 1,
+        slashPairName: others[0] ?? null,
+        slashThirdName: others[1] ?? null,
+      })
+      .where(and(eq(subjects.userId, userId), eq(subjects.id, row.id)));
+    await tx.update(subjectQuotas)
+      .set({ isSlashSubject: 1 })
+      .where(and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, name)));
+  }
 }
 
 export interface IStorage {
@@ -111,6 +153,12 @@ export interface IStorage {
   // Subject Quotas
   getSubjectQuotas(userId: string): Promise<SubjectQuota[]>;
   updateSubjectQuota(userId: string, subject: string, quota: Partial<SubjectQuota>): Promise<SubjectQuota | undefined>;
+  updateSlashGroupQuota(
+    userId: string,
+    subjectNames: string[],
+    field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2ss3Quota",
+    value: number,
+  ): Promise<SubjectQuota[] | undefined>;
   updateSlashPairQuota(
     userId: string,
     subjectA: string,
@@ -243,6 +291,8 @@ export class DatabaseStorage implements IStorage {
             slotType: null,
             slashPairSubject: null,
             slashPairTeacherId: null,
+            slashThirdSubject: null,
+            slashThirdTeacherId: null,
             isLocked: false,
           });
         }
@@ -263,6 +313,8 @@ export class DatabaseStorage implements IStorage {
         slotType: row.slotType as "single" | "double" | "slash" | "activity" | null,
         slashPairSubject: row.slashPairSubject,
         slashPairTeacherId: row.slashPairTeacherId,
+        slashThirdSubject: row.slashThirdSubject,
+        slashThirdTeacherId: row.slashThirdTeacherId,
         isLocked: row.isLocked === 1,
       });
     }
@@ -291,6 +343,8 @@ export class DatabaseStorage implements IStorage {
         slotType: null,
         slashPairSubject: null,
         slashPairTeacherId: null,
+        slashThirdSubject: null,
+        slashThirdTeacherId: null,
         isLocked: false,
       };
     }
@@ -305,6 +359,8 @@ export class DatabaseStorage implements IStorage {
       slotType: row.slotType as "single" | "double" | "slash" | "activity" | null,
       slashPairSubject: row.slashPairSubject,
       slashPairTeacherId: row.slashPairTeacherId,
+      slashThirdSubject: row.slashThirdSubject,
+      slashThirdTeacherId: row.slashThirdTeacherId,
       isLocked: row.isLocked === 1,
     };
   }
@@ -333,6 +389,8 @@ export class DatabaseStorage implements IStorage {
         slotType: slot.slotType,
         slashPairSubject: slot.slashPairSubject,
         slashPairTeacherId: slot.slashPairTeacherId,
+        slashThirdSubject: slot.slashThirdSubject,
+        slashThirdTeacherId: slot.slashThirdTeacherId,
         isLocked: slot.isLocked ? 1 : 0,
       });
     }
@@ -391,6 +449,8 @@ export class DatabaseStorage implements IStorage {
             slotType: slot.slotType,
             slashPairSubject: slot.slashPairSubject,
             slashPairTeacherId: slot.slashPairTeacherId,
+            slashThirdSubject: slot.slashThirdSubject,
+            slashThirdTeacherId: slot.slashThirdTeacherId,
             isLocked: slot.isLocked ? 1 : 0,
           });
         }
@@ -419,6 +479,8 @@ export class DatabaseStorage implements IStorage {
       slotType: null,
       slashPairSubject: null,
       slashPairTeacherId: null,
+      slashThirdSubject: null,
+      slashThirdTeacherId: null,
       isLocked: false,
     };
   }
@@ -517,34 +579,37 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async updateSlashPairQuota(
+  async updateSlashGroupQuota(
     userId: string,
-    subjectA: string,
-    subjectB: string,
+    subjectNames: string[],
     field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2ss3Quota",
     value: number,
-  ): Promise<{ a: SubjectQuota; b: SubjectQuota } | undefined> {
-    const setValues: Partial<Record<"jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2ss3Quota", number>> = {
-      [field]: value,
-    };
+  ): Promise<SubjectQuota[] | undefined> {
+    const names = Array.from(new Set(subjectNames.filter(Boolean)));
+    if (names.length < 2 || names.length > 3) return undefined;
+    const setValues: Record<string, number> = { [field]: value };
 
     return await db.transaction(async (tx) => {
-      const [a] = await tx.select().from(subjectQuotas).where(
-        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subjectA))
-      );
-      const [b] = await tx.select().from(subjectQuotas).where(
-        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subjectB))
-      );
-      if (!a || !b) return undefined;
+      const rows = [];
+      for (const name of names) {
+        const [row] = await tx.select().from(subjectQuotas).where(
+          and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, name))
+        );
+        if (!row) return undefined;
+        rows.push(row);
+      }
 
-      await tx.update(subjectQuotas).set(setValues).where(
-        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subjectA))
-      );
-      await tx.update(subjectQuotas).set(setValues).where(
-        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subjectB))
-      );
+      for (const name of names) {
+        await tx.update(subjectQuotas).set(setValues).where(
+          and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, name))
+        );
+        // Keep the editable subject record in sync with the quota table.
+        await tx.update(subjects).set(setValues).where(
+          and(eq(subjects.userId, userId), eq(subjects.name, name))
+        );
+      }
 
-      const toQuota = (row: typeof a): SubjectQuota => ({
+      return rows.map((row) => ({
         subject: row.subject,
         jssQuota: field === "jssQuota" ? value : row.jssQuota,
         jss1Quota: field === "jss1Quota" ? value : (row.jss1Quota ?? row.jssQuota),
@@ -556,10 +621,19 @@ export class DatabaseStorage implements IStorage {
         singleOnly: row.singleOnly === 1,
         preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
         requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
-      });
-
-      return { a: toQuota(a), b: toQuota(b) };
+      }));
     });
+  }
+
+  async updateSlashPairQuota(
+    userId: string,
+    subjectA: string,
+    subjectB: string,
+    field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2ss3Quota",
+    value: number,
+  ): Promise<{ a: SubjectQuota; b: SubjectQuota } | undefined> {
+    const result = await this.updateSlashGroupQuota(userId, [subjectA, subjectB], field, value);
+    return result ? { a: result[0], b: result[1] } : undefined;
   }
 
   // Subjects
@@ -576,6 +650,7 @@ export class DatabaseStorage implements IStorage {
       ss2ss3Quota: row.ss2ss3Quota,
       isSlashSubject: row.isSlashSubject === 1,
       slashPairName: row.slashPairName,
+      slashThirdName: row.slashThirdName,
       singleOnly: row.singleOnly === 1,
       preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
       requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
@@ -598,6 +673,7 @@ export class DatabaseStorage implements IStorage {
       ss2ss3Quota: row.ss2ss3Quota,
       isSlashSubject: row.isSlashSubject === 1,
       slashPairName: row.slashPairName,
+      slashThirdName: row.slashThirdName,
       singleOnly: row.singleOnly === 1,
       preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
       requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
@@ -625,6 +701,7 @@ export class DatabaseStorage implements IStorage {
         ss2ss3Quota: subject.ss2ss3Quota,
         isSlashSubject: subject.isSlashSubject ? 1 : 0,
         slashPairName: subject.isSlashSubject ? subject.slashPairName : null,
+        slashThirdName: subject.isSlashSubject ? subject.slashThirdName : null,
         singleOnly: singleOnly ? 1 : 0,
         preferredPeriods,
         requiredDoubles,
@@ -646,7 +723,7 @@ export class DatabaseStorage implements IStorage {
       }).onConflictDoNothing();
 
       if (subject.isSlashSubject && subject.slashPairName) {
-        await mirrorSlashPair(tx, userId, subject.name, subject.slashPairName);
+        await setSlashGroup(tx, userId, [subject.name, subject.slashPairName, subject.slashThirdName ?? ""]);
       }
 
       return {
@@ -660,6 +737,7 @@ export class DatabaseStorage implements IStorage {
         ss2ss3Quota: subject.ss2ss3Quota,
         isSlashSubject: subject.isSlashSubject,
         slashPairName: subject.isSlashSubject ? subject.slashPairName : null,
+        slashThirdName: subject.isSlashSubject ? subject.slashThirdName : null,
         singleOnly,
         preferredPeriods,
         requiredDoubles,
@@ -672,16 +750,24 @@ export class DatabaseStorage implements IStorage {
     if (!existing) return undefined;
 
     return await db.transaction(async (tx) => {
-      // Compute the desired post-update state.
       const newName = updates.name ?? existing.name;
       const newSlash = updates.isSlashSubject ?? existing.isSlashSubject;
       const newPair = newSlash
         ? (updates.slashPairName !== undefined ? updates.slashPairName : existing.slashPairName)
         : null;
+      const newThird = newSlash
+        ? (updates.slashThirdName !== undefined ? updates.slashThirdName : existing.slashThirdName)
+        : null;
       const newSingleOnly = updates.singleOnly ?? existing.singleOnly;
       const newRequiredDoubles = newSingleOnly
         ? { jss: 0, ss1: 0, ss2ss3: 0 }
         : (updates.requiredDoubles ?? existing.requiredDoubles);
+
+      // Break the prior slash group first, then establish the desired group
+      // after the subject row has been updated/renamed.
+      if (existing.isSlashSubject) {
+        await clearSlashGroup(tx, userId, existing.name);
+      }
 
       const updateValues: Record<string, unknown> = {};
       if (updates.name !== undefined) updateValues.name = newName;
@@ -691,21 +777,17 @@ export class DatabaseStorage implements IStorage {
       if (updates.jss3Quota !== undefined) updateValues.jss3Quota = updates.jss3Quota;
       if (updates.ss1Quota !== undefined) updateValues.ss1Quota = updates.ss1Quota;
       if (updates.ss2ss3Quota !== undefined) updateValues.ss2ss3Quota = updates.ss2ss3Quota;
-      if (updates.isSlashSubject !== undefined || updates.slashPairName !== undefined) {
-        updateValues.isSlashSubject = newSlash ? 1 : 0;
-        updateValues.slashPairName = newPair;
-      }
+      updateValues.isSlashSubject = newSlash ? 1 : 0;
+      updateValues.slashPairName = newPair;
+      updateValues.slashThirdName = newThird;
       if (updates.preferredPeriods !== undefined) updateValues.preferredPeriods = updates.preferredPeriods;
       if (updates.singleOnly !== undefined) updateValues.singleOnly = newSingleOnly ? 1 : 0;
       if (updates.requiredDoubles !== undefined || updates.singleOnly === true) updateValues.requiredDoubles = newRequiredDoubles;
 
-      if (Object.keys(updateValues).length > 0) {
-        await tx.update(subjects).set(updateValues).where(
-          and(eq(subjects.userId, userId), eq(subjects.id, id))
-        );
-      }
+      await tx.update(subjects).set(updateValues).where(
+        and(eq(subjects.userId, userId), eq(subjects.id, id))
+      );
 
-      // Mirror name/quotas/isSlashSubject/preferences into subject_quotas.
       const quotaUpdates: Record<string, unknown> = {};
       if (updates.jssQuota !== undefined) quotaUpdates.jssQuota = updates.jssQuota;
       if (updates.jss1Quota !== undefined) quotaUpdates.jss1Quota = updates.jss1Quota;
@@ -713,16 +795,14 @@ export class DatabaseStorage implements IStorage {
       if (updates.jss3Quota !== undefined) quotaUpdates.jss3Quota = updates.jss3Quota;
       if (updates.ss1Quota !== undefined) quotaUpdates.ss1Quota = updates.ss1Quota;
       if (updates.ss2ss3Quota !== undefined) quotaUpdates.ss2ss3Quota = updates.ss2ss3Quota;
-      if (updates.isSlashSubject !== undefined) quotaUpdates.isSlashSubject = newSlash ? 1 : 0;
+      quotaUpdates.isSlashSubject = newSlash ? 1 : 0;
       if (updates.preferredPeriods !== undefined) quotaUpdates.preferredPeriods = updates.preferredPeriods;
       if (updates.singleOnly !== undefined) quotaUpdates.singleOnly = newSingleOnly ? 1 : 0;
       if (updates.requiredDoubles !== undefined || updates.singleOnly === true) quotaUpdates.requiredDoubles = newRequiredDoubles;
 
-      if (Object.keys(quotaUpdates).length > 0) {
-        await tx.update(subjectQuotas).set(quotaUpdates).where(
-          and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
-        );
-      }
+      await tx.update(subjectQuotas).set(quotaUpdates).where(
+        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
+      );
 
       if (updates.name && updates.name !== existing.name) {
         await tx.update(subjectQuotas).set({ subject: newName }).where(
@@ -730,26 +810,8 @@ export class DatabaseStorage implements IStorage {
         );
       }
 
-      // Slash pairing reconciliation.
-      const oldPair = existing.isSlashSubject ? existing.slashPairName : null;
-      const pairingChanged =
-        oldPair !== newPair ||
-        (existing.name !== newName && oldPair); // renaming a paired subject also requires re-mirroring
-
-      if (pairingChanged) {
-        // Break the old partner's back-pointer if it still points at us.
-        if (oldPair) {
-          await clearSlashPartnerIfPointingAt(tx, userId, oldPair, existing.name);
-        }
-        // Establish the new pairing on the partner side.
-        if (newPair) {
-          await mirrorSlashPair(tx, userId, newName, newPair);
-        }
-      } else if (existing.name !== newName && newPair) {
-        // Same partner, but our name changed — update the partner's back-pointer.
-        await tx.update(subjects)
-          .set({ slashPairName: newName })
-          .where(and(eq(subjects.userId, userId), eq(subjects.name, newPair)));
+      if (newSlash && newPair) {
+        await setSlashGroup(tx, userId, [newName, newPair, newThird ?? ""]);
       }
 
       return {
@@ -763,6 +825,7 @@ export class DatabaseStorage implements IStorage {
         ss2ss3Quota: updates.ss2ss3Quota ?? existing.ss2ss3Quota,
         isSlashSubject: newSlash,
         slashPairName: newPair,
+        slashThirdName: newThird,
         singleOnly: newSingleOnly,
         preferredPeriods: updates.preferredPeriods ?? existing.preferredPeriods,
         requiredDoubles: newRequiredDoubles,
@@ -775,18 +838,15 @@ export class DatabaseStorage implements IStorage {
     if (!existing) return false;
 
     await db.transaction(async (tx) => {
+      if (existing.isSlashSubject) {
+        await clearSlashGroup(tx, userId, existing.name);
+      }
       await tx.delete(subjects).where(
         and(eq(subjects.userId, userId), eq(subjects.id, id))
       );
-
       await tx.delete(subjectQuotas).where(
         and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
       );
-
-      // Clear the partner's back-pointer if it still points at the deleted subject.
-      if (existing.isSlashSubject && existing.slashPairName) {
-        await clearSlashPartnerIfPointingAt(tx, userId, existing.slashPairName, existing.name);
-      }
     });
 
     return true;
@@ -984,6 +1044,8 @@ export class DatabaseStorage implements IStorage {
             slotType: slot.slotType,
             slashPairSubject: slot.slashPairSubject,
             slashPairTeacherId: slot.slashPairTeacherId,
+            slashThirdSubject: slot.slashThirdSubject,
+            slashThirdTeacherId: slot.slashThirdTeacherId,
           }))
         );
       }

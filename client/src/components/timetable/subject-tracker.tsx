@@ -1,4 +1,4 @@
-import { type TimetableSlot, type SchoolClass, type SubjectQuota, CLASSES, DAYS, PERIODS_PER_DAY } from "@shared/schema";
+import { type TimetableSlot, type SchoolClass, type SubjectQuota, CLASSES, DAYS, PERIODS_PER_DAY, getQuotaForClass } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -24,16 +24,6 @@ interface SubjectTrackerProps {
   quotas: SubjectQuota[];
 }
 
-function getQuotaForClass(quota: SubjectQuota, schoolClass: SchoolClass): number {
-  if (schoolClass.startsWith("JSS")) {
-    return quota.jssQuota;
-  } else if (schoolClass === "SS1") {
-    return quota.ss1Quota;
-  } else {
-    return quota.ss2ss3Quota;
-  }
-}
-
 export function SubjectTracker({ timetable, quotas }: SubjectTrackerProps) {
   const [selectedClass, setSelectedClass] = useState<SchoolClass>("JSS1");
 
@@ -52,6 +42,10 @@ export function SubjectTracker({ timetable, quotas }: SubjectTrackerProps) {
           if (slot.slashPairSubject) {
             const pairCurrent = counts.get(slot.slashPairSubject) || 0;
             counts.set(slot.slashPairSubject, pairCurrent + 1);
+          }
+          if (slot.slashThirdSubject) {
+            const thirdCurrent = counts.get(slot.slashThirdSubject) || 0;
+            counts.set(slot.slashThirdSubject, thirdCurrent + 1);
           }
         }
       }

@@ -119,6 +119,8 @@ export function TimetableGrid({
       slotType: null,
       slashPairSubject: null,
       slashPairTeacherId: null,
+      slashThirdSubject: null,
+      slashThirdTeacherId: null,
       isLocked: false,
     };
   };
@@ -127,6 +129,7 @@ export function TimetableGrid({
     const slot = getSlotForCell(day, schoolClass, period);
     const teacher = getTeacher(slot.teacherId);
     const slashPairTeacher = getTeacher(slot.slashPairTeacherId);
+    const slashThirdTeacher = getTeacher(slot.slashThirdTeacherId);
     
     const prevKey = `${day}-${schoolClass}-${period - 1}`;
     if (skipDoubleCheck.has(prevKey)) {
@@ -186,8 +189,14 @@ export function TimetableGrid({
                     />
                     <span className="text-xs font-medium truncate">{slot.slashPairSubject}</span>
                   </div>
+                  {slot.slashThirdSubject && (
+                    <div className="flex items-center gap-1 w-full">
+                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: slashThirdTeacher?.color }} />
+                      <span className="text-xs font-medium truncate">{slot.slashThirdSubject}</span>
+                    </div>
+                  )}
                   <div className="text-[10px] text-muted-foreground truncate w-full mt-0.5">
-                    {teacher?.name?.split(" ")[0]} / {slashPairTeacher?.name?.split(" ")[0]}
+                    {[teacher?.name?.split(" ")[0], slashPairTeacher?.name?.split(" ")[0], slashThirdTeacher?.name?.split(" ")[0]].filter(Boolean).join(" / ")}
                   </div>
                 </>
               ) : (
@@ -219,6 +228,12 @@ export function TimetableGrid({
                 <>
                   <p className="font-medium mt-1">{slot.slashPairSubject}</p>
                   <p className="text-xs text-muted-foreground">{slashPairTeacher?.name}</p>
+                  {slot.slashThirdSubject && (
+                    <>
+                      <p className="font-medium mt-1">{slot.slashThirdSubject}</p>
+                      <p className="text-xs text-muted-foreground">{slashThirdTeacher?.name}</p>
+                    </>
+                  )}
                 </>
               )}
               {isDouble && (
