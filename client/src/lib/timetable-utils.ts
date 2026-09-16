@@ -245,6 +245,7 @@ export function isTeacherAvailable(
     const slot = getSlot(timetable, day, schoolClass, period);
     if (slot && slot.teacherId === teacher.id) return false;
     if (slot && slot.slashPairTeacherId === teacher.id) return false;
+    if (slot && slot.slashThirdTeacherId === teacher.id) return false;
   }
   
   return true;
@@ -609,6 +610,56 @@ export function validatePlacement(
         message: "Each slash subject must have a different teacher",
         severity: "error",
       });
+    }
+
+    const extraAssignments = [
+      { subject: request.slashPairSubject, teacherId: request.slashPairTeacherId },
+      { subject: request.slashThirdSubject, teacherId: request.slashThirdTeacherId },
+    ].filter((item): item is { subject: string; teacherId: string | undefined } => !!item.subject);
+
+    for (const assignment of extraAssignments) {
+      if (!assignment.teacherId) continue; // missing-teacher error already added above
+      const extraTeacher = teachers.find((t) => t.id === assignment.teacherId);
+      if (!extraTeacher) {
+        errors.push({
+          code: "SLASH_TEACHER_NOT_FOUND",
+          message: `Teacher for ${assignment.subject} was not found`,
+          severity: "error",
+        });
+        continue;
+      }
+      if (!extraTeacher.subjects.includes(assignment.subject)) {
+        errors.push({
+          code: "SLASH_TEACHER_SUBJECT_MISMATCH",
+          message: `${extraTeacher.name} is not assigned to teach ${assignment.subject}`,
+          severity: "error",
+        });
+      }
+      const subjectClasses = extraTeacher.subjectClasses?.[assignment.subject];
+      const classAllowed = extraTeacher.classes.includes(schoolClass) &&
+        (!subjectClasses || subjectClasses.length === 0 || subjectClasses.includes(schoolClass));
+      if (!classAllowed) {
+        errors.push({
+          code: "SLASH_TEACHER_CLASS_MISMATCH",
+          message: `${extraTeacher.name} is not assigned to teach ${assignment.subject} to ${schoolClass}`,
+          severity: "error",
+        });
+      }
+      if (!isTeacherAvailable(timetable, extraTeacher, day, period)) {
+        errors.push({
+          code: "SLASH_TEACHER_CLASH",
+          message: `${extraTeacher.name} is unavailable or already teaching during period ${period}`,
+          severity: "error",
+        });
+      }
+      const extraLimit = getEffectiveFatigueLimit(extraTeacher, fatigueLimit);
+      if (wouldExceedFatigueLimit(timetable, assignment.teacherId, day, period, false, extraLimit)) {
+        errors.push({
+          code: "SLASH_TEACHER_FATIGUE",
+          message: `${extraTeacher.name} would exceed ${extraLimit} consecutive teaching periods`,
+          severity: "error",
+        });
+      }
     }
   }
   

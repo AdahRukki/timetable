@@ -2297,7 +2297,11 @@ function consolidateTeacherDays(
           const key = slotKey(day, cls, p);
           const slot = timetable.get(key);
           if (!slot || slot.status !== "occupied") continue;
-          if (slot.teacherId !== teacher.id && slot.slashPairTeacherId !== teacher.id) continue;
+          if (
+            slot.teacherId !== teacher.id &&
+            slot.slashPairTeacherId !== teacher.id &&
+            slot.slashThirdTeacherId !== teacher.id
+          ) continue;
           if (!byDay.has(day)) byDay.set(day, []);
           byDay.get(day)!.push({ key, day, cls, period: p, subject: slot.subject ?? "" });
         }
@@ -2557,7 +2561,26 @@ function runAttempt(
   const targetPlacedByClass = new Map<SchoolClass, number>();
   for (const cls of CLASSES) {
     let target = 0;
-    for (const quota of quotas) target += getQuotaForClass(quota, cls);
+    const countedSlashGroups = new Set<string>();
+    for (const quota of quotas) {
+      if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) {
+        const group = findSlashGroup(subjects, quota.subject);
+        if (group.length >= 2) {
+          const names = group.map((s) => s.name).sort();
+          const key = names.join("|");
+          if (countedSlashGroups.has(key)) continue;
+          countedSlashGroups.add(key);
+          target += Math.max(
+            ...names.map((name) => {
+              const groupQuota = quotas.find((q) => q.subject === name);
+              return groupQuota ? getQuotaForClass(groupQuota, cls) : 0;
+            }),
+          );
+          continue;
+        }
+      }
+      target += getQuotaForClass(quota, cls);
+    }
     targetPlacedByClass.set(cls, Math.min(target, totalPerClass));
   }
 

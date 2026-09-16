@@ -596,7 +596,10 @@ export default function SettingsPage() {
                     checked={newSubjectIsSlash}
                     onCheckedChange={(v) => {
                       setNewSubjectIsSlash(v);
-                      if (!v) setNewSubjectSlashPair("");
+                      if (!v) {
+                        setNewSubjectSlashPair("");
+                        setNewSubjectSlashThird("");
+                      }
                     }}
                     data-testid="switch-subject-slash"
                   />
@@ -654,7 +657,7 @@ export default function SettingsPage() {
               </Button>
               <Button
                 onClick={handleSubjectSubmit}
-                disabled={!newSubjectName.trim() || createSubjectMutation.isPending || updateSubjectMutation.isPending}
+                disabled={!newSubjectName.trim() || (newSubjectIsSlash && !newSubjectSlashPair) || createSubjectMutation.isPending || updateSubjectMutation.isPending}
                 data-testid="button-submit-subject"
               >
                 {createSubjectMutation.isPending || updateSubjectMutation.isPending ? (
@@ -697,30 +700,28 @@ export default function SettingsPage() {
                     </div>
                     <div className="text-right">
                       {(() => {
-                        // For SS2/SS3 totals, slash pairs share a single timetable
-                        // slot, so each pair counts once (not twice). We pick one
-                        // canonical side per pair (alphabetically first) to count.
-                        const seenPairs = new Set<string>();
-                        const countedSlashNames = new Set<string>();
+                        // For SS2/SS3 totals, each valid 2- or 3-subject slash
+                        // group occupies one timetable slot and must be counted once.
+                        const seenGroups = new Set<string>();
+                        const slashNames = new Set<string>();
+                        let ss2ss3SlashTotal = 0;
                         for (const s of subjects) {
                           if (!s.isSlashSubject) continue;
-                          const partner = findSlashPair(subjects, s.name);
-                          if (!partner) continue;
-                          const key = [s.name, partner.name].sort().join("|");
-                          if (seenPairs.has(key)) continue;
-                          seenPairs.add(key);
-                          countedSlashNames.add(s.name <= partner.name ? s.name : partner.name);
+                          const group = findSlashGroup(subjects, s.name);
+                          if (group.length < 2) continue;
+                          const names = group.map((item) => item.name).sort();
+                          const key = names.join("|");
+                          names.forEach((name) => slashNames.add(name));
+                          if (seenGroups.has(key)) continue;
+                          seenGroups.add(key);
+                          ss2ss3SlashTotal += Math.max(
+                            ...names.map((name) => quotas.find((q) => q.subject === name)?.ss2ss3Quota ?? 0),
+                          );
                         }
-                        const slashNames = new Set(
-                          subjects.filter((s) => s.isSlashSubject && findSlashPair(subjects, s.name)).map((s) => s.name),
-                        );
                         const jss1Total = quotas.reduce((sum, q) => sum + (q.jss1Quota ?? q.jssQuota), 0);
                         const jss2Total = quotas.reduce((sum, q) => sum + (q.jss2Quota ?? q.jssQuota), 0);
                         const jss3Total = quotas.reduce((sum, q) => sum + (q.jss3Quota ?? q.jssQuota), 0);
                         const ss1Total = quotas.reduce((sum, q) => sum + q.ss1Quota, 0);
-                        const ss2ss3SlashTotal = quotas
-                          .filter((q) => countedSlashNames.has(q.subject))
-                          .reduce((sum, q) => sum + q.ss2ss3Quota, 0);
                         const ss2ss3RegularTotal = quotas
                           .filter((q) => q.ss2ss3Quota > 0 && !slashNames.has(q.subject))
                           .reduce((sum, q) => sum + q.ss2ss3Quota, 0);
