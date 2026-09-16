@@ -45,33 +45,35 @@ for filename, items in replacements.items():
         text = text.replace(old, new)
     path.write_text(text)
 
-# Collapse duplicate generated third-slot properties in storage/home. The first
-# patch deliberately touches several similar persistence objects, so cleanup is
-# easier and safer here than weakening the source matchers.
+# Collapse duplicate generated third-slot properties regardless of indentation.
 for filename in ["server/storage.ts", "client/src/pages/home.tsx"]:
     path = Path(filename)
     text = path.read_text()
     patterns = [
-        (r'(?m)^(\s*)slashThirdSubject: slot\.slashThirdSubject,\n\1slashThirdTeacherId: slot\.slashThirdTeacherId,\n\1slashThirdSubject: slot\.slashThirdSubject,\n\1slashThirdTeacherId: slot\.slashThirdTeacherId,\n',
-         r'\1slashThirdSubject: slot.slashThirdSubject,\n\1slashThirdTeacherId: slot.slashThirdTeacherId,\n'),
-        (r'(?m)^(\s*)slashThirdSubject: slashThirdSubject \|\| null,\n\1slashThirdTeacherId: slashThirdTeacherId \|\| null,\n\1slashThirdSubject: slashThirdSubject \|\| null,\n\1slashThirdTeacherId: slashThirdTeacherId \|\| null,\n',
-         r'\1slashThirdSubject: slashThirdSubject || null,\n\1slashThirdTeacherId: slashThirdTeacherId || null,\n'),
-        (r'(?m)^(\s*)slashThirdSubject: null,\n\1slashThirdTeacherId: null,\n\1slashThirdSubject: null,\n\1slashThirdTeacherId: null,\n',
-         r'\1slashThirdSubject: null,\n\1slashThirdTeacherId: null,\n'),
+        (
+            r'(?m)^(\s*)slashThirdSubject: slot\.slashThirdSubject,\n\s*slashThirdTeacherId: slot\.slashThirdTeacherId,\n\s*slashThirdSubject: slot\.slashThirdSubject,\n\s*slashThirdTeacherId: slot\.slashThirdTeacherId,\n',
+            r'\1slashThirdSubject: slot.slashThirdSubject,\n\1slashThirdTeacherId: slot.slashThirdTeacherId,\n',
+        ),
+        (
+            r'(?m)^(\s*)slashThirdSubject: slashThirdSubject \|\| null,\n\s*slashThirdTeacherId: slashThirdTeacherId \|\| null,\n\s*slashThirdSubject: slashThirdSubject \|\| null,\n\s*slashThirdTeacherId: slashThirdTeacherId \|\| null,\n',
+            r'\1slashThirdSubject: slashThirdSubject || null,\n\1slashThirdTeacherId: slashThirdTeacherId || null,\n',
+        ),
+        (
+            r'(?m)^(\s*)slashThirdSubject: null,\n\s*slashThirdTeacherId: null,\n\s*slashThirdSubject: null,\n\s*slashThirdTeacherId: null,\n',
+            r'\1slashThirdSubject: null,\n\1slashThirdTeacherId: null,\n',
+        ),
     ]
     for pattern, replacement in patterns:
-        text = re.sub(pattern, replacement, text)
+        while re.search(pattern, text):
+            text = re.sub(pattern, replacement, text)
     path.write_text(text)
 
-# The settings payload can receive slashThirdName twice because the two legacy
-# indentation-specific substitutions overlap. Collapse any adjacent duplicate.
+# Collapse duplicate settings property even when generated indentation differs.
 path = Path("client/src/pages/settings.tsx")
 text = path.read_text()
-text = re.sub(
-    r'(?m)^(\s*)slashThirdName: thirdName,\n\1slashThirdName: thirdName,\n',
-    r'\1slashThirdName: thirdName,\n',
-    text,
-)
+pattern = r'(?m)^(\s*)slashThirdName: thirdName,\n\s*slashThirdName: thirdName,\n'
+while re.search(pattern, text):
+    text = re.sub(pattern, r'\1slashThirdName: thirdName,\n', text)
 path.write_text(text)
 
 print("Three-way slash patch cleanup applied")
