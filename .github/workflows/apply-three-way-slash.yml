@@ -1,19 +1,18 @@
-name: Apply three-way slash support
+name: Verify three-way slash support
 
 on:
   push:
     branches:
       - jss-class-split
     paths:
-      - scripts/apply-three-way-slash.py
-      - scripts/fix-three-way-slash-patch.py
+      - scripts/refine-three-way-slash.py
       - .github/workflows/apply-three-way-slash.yml
 
 permissions:
   contents: write
 
 jobs:
-  apply:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout branch
@@ -28,11 +27,8 @@ jobs:
           node-version: '20'
           cache: npm
 
-      - name: Apply three-way slash patch
-        run: python3 scripts/apply-three-way-slash.py
-
-      - name: Clean patch boundaries
-        run: python3 scripts/fix-three-way-slash-patch.py
+      - name: Apply three-way slash refinements
+        run: python3 scripts/refine-three-way-slash.py
 
       - name: Install dependencies
         run: npm ci
@@ -40,14 +36,17 @@ jobs:
       - name: TypeScript check
         run: npm run check
 
-      - name: Commit verified changes
+      - name: Production build
+        run: npm run build
+
+      - name: Commit verified refinements
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add shared/schema.ts server/storage.ts server/routes.ts client/src/lib/timetable-utils.ts client/src/pages/settings.tsx client/src/pages/home.tsx client/src/pages/shared-timetable.tsx client/src/components/timetable/placement-dialog.tsx client/src/components/timetable/subject-tracker.tsx client/src/components/timetable/timetable-grid.tsx client/src/components/timetable/timetable-cell.tsx client/src/components/timetable/stats-header.tsx scripts/migrate-three-way-slash.sql
+          git add server/routes.ts client/src/lib/timetable-utils.ts client/src/pages/settings.tsx
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
           fi
-          git commit -m "Support three-way slash subject groups"
+          git commit -m "Harden three-way slash scheduling"
           git push origin HEAD:jss-class-split
