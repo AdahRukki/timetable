@@ -112,8 +112,10 @@ ALTER TABLE shared_timetables ALTER COLUMN school_id SET NOT NULL;
 ALTER TABLE saved_timetables ALTER COLUMN school_id SET NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_schools_user_id ON schools(user_id);
-CREATE INDEX IF NOT EXISTS idx_schools_user_active ON schools(user_id, is_active);
-CREATE INDEX IF NOT EXISTS idx_school_settings_user_school ON school_settings(user_id, school_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_schools_one_active_per_user
+  ON schools(user_id) WHERE is_active = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_school_settings_user_school
+  ON school_settings(user_id, school_id);
 CREATE INDEX IF NOT EXISTS idx_teachers_user_school ON teachers(user_id, school_id);
 CREATE INDEX IF NOT EXISTS idx_timetable_slots_user_school ON timetable_slots(user_id, school_id);
 CREATE INDEX IF NOT EXISTS idx_timetable_actions_user_school ON timetable_actions(user_id, school_id);
