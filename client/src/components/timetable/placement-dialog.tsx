@@ -129,7 +129,8 @@ export function PlacementDialog({
         if (schoolClass === "JSS2") return (s.jss2Quota ?? s.jssQuota) > 0;
         if (schoolClass === "JSS3") return (s.jss3Quota ?? s.jssQuota) > 0;
         if (schoolClass === "SS1") return s.ss1Quota > 0;
-        return s.ss2ss3Quota > 0;
+        if (schoolClass === "SS2") return (s.ss2Quota ?? s.ss2ss3Quota) > 0;
+        return (s.ss3Quota ?? s.ss2ss3Quota) > 0;
       })
       .map((s) => s.name)
       .sort();
