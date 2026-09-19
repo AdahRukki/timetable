@@ -5,6 +5,7 @@ import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integra
 import {
   insertTeacherSchema,
   insertSubjectSchema,
+  insertSchoolSchema,
   preferredPeriodsSchema,
   requiredDoublesSchema,
   placementRequestSchema,
@@ -509,6 +510,69 @@ export async function registerRoutes(
   // Setup authentication
   await setupAuth(app);
   registerAuthRoutes(app);
+
+  // ===== School workspaces =====
+  app.get("/api/schools", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      await storage.initializeUserData(userId);
+      res.json(await storage.getSchools(userId));
+    } catch (error) {
+      console.error("List schools error:", error);
+      res.status(500).json({ error: "Failed to list schools" });
+    }
+  });
+
+  app.post("/api/schools", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const { name } = insertSchoolSchema.parse(req.body);
+      const school = await storage.createSchool(userId, name);
+      res.status(201).json(school);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid school data", details: error.errors });
+      } else {
+        console.error("Create school error:", error);
+        res.status(500).json({ error: "Failed to create school" });
+      }
+    }
+  });
+
+  app.patch("/api/schools/:id", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const { name } = insertSchoolSchema.parse(req.body);
+      const school = await storage.renameSchool(userId, req.params.id, name);
+      if (!school) {
+        res.status(404).json({ error: "School not found" });
+        return;
+      }
+      res.json(school);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid school data", details: error.errors });
+      } else {
+        console.error("Rename school error:", error);
+        res.status(500).json({ error: "Failed to rename school" });
+      }
+    }
+  });
+
+  app.post("/api/schools/:id/activate", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const school = await storage.activateSchool(userId, req.params.id);
+      if (!school) {
+        res.status(404).json({ error: "School not found" });
+        return;
+      }
+      res.json(school);
+    } catch (error) {
+      console.error("Activate school error:", error);
+      res.status(500).json({ error: "Failed to switch school" });
+    }
+  });
 
   // Get all teachers
   app.get("/api/teachers", isAuthenticated, async (req, res) => {
