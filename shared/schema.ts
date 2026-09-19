@@ -132,6 +132,9 @@ export type PreferredPeriods = {
   jss2?: number[];
   jss3?: number[];
   ss1: number[];
+  ss2?: number[];
+  ss3?: number[];
+  // Legacy combined fallback for data saved before SS2/SS3 were split.
   ss2ss3: number[];
 };
 export type RequiredDoubles = {
@@ -140,6 +143,9 @@ export type RequiredDoubles = {
   jss2?: number;
   jss3?: number;
   ss1: number;
+  ss2?: number;
+  ss3?: number;
+  // Legacy combined fallback for data saved before SS2/SS3 were split.
   ss2ss3: number;
 };
 
@@ -157,6 +163,9 @@ export const subjectQuotas = pgTable("subject_quotas", {
   jss2Quota: integer("jss2_quota"),
   jss3Quota: integer("jss3_quota"),
   ss1Quota: integer("ss1_quota").notNull(),
+  // Per-senior-class overrides. Null means fall back to the legacy shared SS2/SS3 quota.
+  ss2Quota: integer("ss2_quota"),
+  ss3Quota: integer("ss3_quota"),
   ss2ss3Quota: integer("ss2ss3_quota").notNull(),
   isSlashSubject: integer("is_slash_subject").notNull().default(0),
   singleOnly: integer("single_only").notNull().default(0),
@@ -181,6 +190,9 @@ export const subjects = pgTable("subjects", {
   jss2Quota: integer("jss2_quota"),
   jss3Quota: integer("jss3_quota"),
   ss1Quota: integer("ss1_quota").notNull().default(0),
+  // Per-senior-class overrides. Null means fall back to the legacy shared SS2/SS3 quota.
+  ss2Quota: integer("ss2_quota"),
+  ss3Quota: integer("ss3_quota"),
   ss2ss3Quota: integer("ss2ss3_quota").notNull().default(0),
   isSlashSubject: integer("is_slash_subject").notNull().default(0),
   slashPairName: text("slash_pair_name"),
@@ -423,6 +435,8 @@ export const preferredPeriodsSchema = z.object({
   jss2: z.array(z.number().int().min(1).max(9)).optional(),
   jss3: z.array(z.number().int().min(1).max(9)).optional(),
   ss1: z.array(z.number().int().min(1).max(9)).default([]),
+  ss2: z.array(z.number().int().min(1).max(9)).optional(),
+  ss3: z.array(z.number().int().min(1).max(9)).optional(),
   ss2ss3: z.array(z.number().int().min(1).max(9)).default([]),
 });
 
@@ -433,6 +447,8 @@ export const requiredDoublesSchema = z.object({
   jss2: z.number().int().min(0).max(4).optional(),
   jss3: z.number().int().min(0).max(4).optional(),
   ss1: z.number().int().min(0).max(4).default(0),
+  ss2: z.number().int().min(0).max(4).optional(),
+  ss3: z.number().int().min(0).max(4).optional(),
   ss2ss3: z.number().int().min(0).max(4).default(0),
 });
 
@@ -444,6 +460,8 @@ export const subjectQuotaSchema = z.object({
   jss2Quota: z.number().min(0).max(10).optional(),
   jss3Quota: z.number().min(0).max(10).optional(),
   ss1Quota: z.number().min(0).max(10),
+  ss2Quota: z.number().min(0).max(10).optional(),
+  ss3Quota: z.number().min(0).max(10).optional(),
   ss2ss3Quota: z.number().min(0).max(10),
   isSlashSubject: z.boolean().default(false),
   singleOnly: z.boolean().default(false),
@@ -465,6 +483,8 @@ export const subjectSchema = z.object({
   jss2Quota: z.number().min(0).max(10).optional(),
   jss3Quota: z.number().min(0).max(10).optional(),
   ss1Quota: z.number().min(0).max(10).default(0),
+  ss2Quota: z.number().min(0).max(10).optional(),
+  ss3Quota: z.number().min(0).max(10).optional(),
   ss2ss3Quota: z.number().min(0).max(10).default(0),
   isSlashSubject: z.boolean().default(false),
   slashPairName: z.string().nullable().default(null),
@@ -485,7 +505,8 @@ export function getQuotaForClass(quota: SubjectQuota, schoolClass: SchoolClass):
   if (schoolClass === "JSS2") return quota.jss2Quota ?? quota.jssQuota;
   if (schoolClass === "JSS3") return quota.jss3Quota ?? quota.jssQuota;
   if (schoolClass === "SS1") return quota.ss1Quota;
-  return quota.ss2ss3Quota;
+  if (schoolClass === "SS2") return quota.ss2Quota ?? quota.ss2ss3Quota;
+  return quota.ss3Quota ?? quota.ss2ss3Quota;
 }
 
 // Auto-generation result
