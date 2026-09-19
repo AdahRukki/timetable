@@ -39,8 +39,11 @@ export function SchoolSwitcher() {
     [schools],
   );
 
-  const refreshWorkspace = async () => {
-    await queryClient.invalidateQueries();
+  const reloadWorkspace = () => {
+    // A full reload intentionally clears component-local timetable state as
+    // well as React Query caches, preventing stale data from the previous
+    // school being edited after the server has switched workspaces.
+    window.location.reload();
   };
 
   const switchMutation = useMutation({
@@ -48,12 +51,8 @@ export function SchoolSwitcher() {
       const response = await apiRequest("POST", `/api/schools/${schoolId}/activate`);
       return response.json() as Promise<School>;
     },
-    onSuccess: async (school) => {
-      await refreshWorkspace();
-      toast({
-        title: "School switched",
-        description: `Now working on ${school.name}.`,
-      });
+    onSuccess: () => {
+      reloadWorkspace();
     },
     onError: (error) => {
       toast({
@@ -69,14 +68,10 @@ export function SchoolSwitcher() {
       const response = await apiRequest("POST", "/api/schools", { name });
       return response.json() as Promise<School>;
     },
-    onSuccess: async (school) => {
+    onSuccess: () => {
       setCreateOpen(false);
       setNewSchoolName("");
-      await refreshWorkspace();
-      toast({
-        title: "School created",
-        description: `${school.name} is now the active workspace.`,
-      });
+      reloadWorkspace();
     },
     onError: (error) => {
       toast({
@@ -95,7 +90,7 @@ export function SchoolSwitcher() {
     onSuccess: async (school) => {
       setRenameOpen(false);
       setRenameValue("");
-      await refreshWorkspace();
+      await queryClient.invalidateQueries({ queryKey: ["/api/schools"] });
       toast({
         title: "School renamed",
         description: `School name changed to ${school.name}.`,
