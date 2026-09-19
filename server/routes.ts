@@ -799,7 +799,7 @@ export async function registerRoutes(
       const userId = getUserId(req);
       const schema = z.object({
         subjects: z.array(z.string().min(1)).min(2).max(3),
-        field: z.enum(["jssQuota", "jss1Quota", "jss2Quota", "jss3Quota", "ss1Quota", "ss2ss3Quota"]),
+        field: z.enum(["jssQuota", "jss1Quota", "jss2Quota", "jss3Quota", "ss1Quota", "ss2Quota", "ss3Quota", "ss2ss3Quota"]),
         value: z.number().int().min(0).max(10),
       });
       const { subjects: names, field, value } = schema.parse(req.body);
@@ -832,7 +832,7 @@ export async function registerRoutes(
       const slashPairSchema = z.object({
         subjectA: z.string().min(1),
         subjectB: z.string().min(1),
-        field: z.enum(["jssQuota", "jss1Quota", "jss2Quota", "jss3Quota", "ss1Quota", "ss2ss3Quota"]),
+        field: z.enum(["jssQuota", "jss1Quota", "jss2Quota", "jss3Quota", "ss1Quota", "ss2Quota", "ss3Quota", "ss2ss3Quota"]),
         value: z.number().int().min(0).max(10),
       });
       const { subjectA, subjectB, field, value } = slashPairSchema.parse(req.body);
@@ -867,6 +867,8 @@ export async function registerRoutes(
         jss2Quota: z.number().min(0).max(10).optional(),
         jss3Quota: z.number().min(0).max(10).optional(),
         ss1Quota: z.number().min(0).max(10).optional(),
+        ss2Quota: z.number().min(0).max(10).optional(),
+        ss3Quota: z.number().min(0).max(10).optional(),
         ss2ss3Quota: z.number().min(0).max(10).optional(),
         isSlashSubject: z.boolean().optional(),
       });
@@ -976,6 +978,8 @@ export async function registerRoutes(
         jss2Quota: z.number().min(0).max(10).optional(),
         jss3Quota: z.number().min(0).max(10).optional(),
         ss1Quota: z.number().min(0).max(10).optional(),
+        ss2Quota: z.number().min(0).max(10).optional(),
+        ss3Quota: z.number().min(0).max(10).optional(),
         ss2ss3Quota: z.number().min(0).max(10).optional(),
         isSlashSubject: z.boolean().optional(),
         slashPairName: z.string().nullable().optional(),
@@ -1955,19 +1959,21 @@ function maxClassEmpty(timetable: Timetable): number {
 // Try to place ONE period of `subject` in `cls` somewhere it fits.
 // Returns periods placed (0, 1, or 2 if a double was placed).
 // ===== Per-class-level scheduling preferences =====
-type ClassLevel = "jss1" | "jss2" | "jss3" | "ss1" | "ss2ss3";
+type ClassLevel = "jss1" | "jss2" | "jss3" | "ss1" | "ss2" | "ss3";
 function classLevel(cls: SchoolClass): ClassLevel {
   if (cls === "JSS1") return "jss1";
   if (cls === "JSS2") return "jss2";
   if (cls === "JSS3") return "jss3";
   if (cls === "SS1") return "ss1";
-  return "ss2ss3";
+  if (cls === "SS2") return "ss2";
+  return "ss3";
 }
 function getPreferredPeriods(quota: SubjectQuota, cls: SchoolClass): number[] {
   const level = classLevel(cls);
   const specific = quota.preferredPeriods?.[level];
   if (specific !== undefined) return specific;
   if (cls.startsWith("JSS")) return quota.preferredPeriods?.jss ?? [];
+  if (cls === "SS2" || cls === "SS3") return quota.preferredPeriods?.ss2ss3 ?? [];
   return [];
 }
 function getRequiredDoubles(quota: SubjectQuota, cls: SchoolClass): number {
@@ -1975,6 +1981,7 @@ function getRequiredDoubles(quota: SubjectQuota, cls: SchoolClass): number {
   const specific = quota.requiredDoubles?.[level];
   if (specific !== undefined) return specific;
   if (cls.startsWith("JSS")) return quota.requiredDoubles?.jss ?? 0;
+  if (cls === "SS2" || cls === "SS3") return quota.requiredDoubles?.ss2ss3 ?? 0;
   return 0;
 }
 // Returns periods sorted so preferred ones come first (each group internally
@@ -2604,15 +2611,16 @@ function runAttempt(
     if (seenSlashGroups.has(groupKey)) continue;
     seenSlashGroups.add(groupKey);
 
-    const groupQuotas = names
-      .map((name) => quotas.find((q) => q.subject === name)?.ss2ss3Quota ?? 0);
-    const periods = Math.max(...groupQuotas);
-    if (periods <= 0) continue;
-    if (groupQuotas.some((q) => q !== periods)) {
-      warnings.push(`Slash group ${names.join("/")} has mismatched SS2/SS3 quotas; using ${periods}`);
-    }
-
     for (const cls of ["SS2", "SS3"] as SchoolClass[]) {
+      const groupQuotas = names.map((name) => {
+        const quota = quotas.find((q) => q.subject === name);
+        return quota ? getQuotaForClass(quota, cls) : 0;
+      });
+      const periods = Math.max(...groupQuotas);
+      if (periods <= 0) continue;
+      if (groupQuotas.some((q) => q !== periods)) {
+        warnings.push(`Slash group ${names.join("/")} has mismatched ${cls} quotas; using ${periods}`);
+      }
       const placed = scheduleSlashGroup(
         timetable, cls, names, periods, teachers, fatigueLimit, warnings,
       );
