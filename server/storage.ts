@@ -20,7 +20,6 @@ import {
   timetableActions,
   subjectQuotas,
   subjects,
-  userSettings,
   sharedTimetables,
   savedTimetables,
   schools,
@@ -1079,61 +1078,47 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserSettings(userId: string): Promise<UserSettings> {
-    const results = await db.select().from(userSettings).where(eq(userSettings.userId, userId));
-    if (results.length > 0) {
-      const row = results[0];
-      return {
-        fatigueLimit: row.fatigueLimit,
-        maxFreePeriodsPerWeek: row.maxFreePeriodsPerWeek,
-        maxFreePeriodsPerDay: row.maxFreePeriodsPerDay,
-        freePeriodsPerClass: (row.freePeriodsPerClass ?? {}) as Record<string, number>,
-        allowDoublePeriods: row.allowDoublePeriods === 1,
-        allowDoubleInP8P9: row.allowDoubleInP8P9 === 1,
-      };
-    }
-    // Create default settings if none exist
-    await db.insert(userSettings).values({
-      userId,
-      fatigueLimit: 5,
-      maxFreePeriodsPerWeek: 3,
-      maxFreePeriodsPerDay: 2,
-      freePeriodsPerClass: {},
-      allowDoublePeriods: 1,
-      allowDoubleInP8P9: 1,
-    });
+    const schoolId = await this.ensureActiveSchoolId(userId);
+    await this.ensureSchoolSettings(userId, schoolId);
+    const [row] = await db.select().from(schoolSettings).where(
+      and(eq(schoolSettings.userId, userId), eq(schoolSettings.schoolId, schoolId))
+    );
     return {
-      fatigueLimit: 5,
-      maxFreePeriodsPerWeek: 3,
-      maxFreePeriodsPerDay: 2,
-      freePeriodsPerClass: {},
-      allowDoublePeriods: true,
-      allowDoubleInP8P9: true,
+      fatigueLimit: row.fatigueLimit,
+      maxFreePeriodsPerWeek: row.maxFreePeriodsPerWeek,
+      maxFreePeriodsPerDay: row.maxFreePeriodsPerDay,
+      freePeriodsPerClass: (row.freePeriodsPerClass ?? {}) as Record<string, number>,
+      allowDoublePeriods: row.allowDoublePeriods === 1,
+      allowDoubleInP8P9: row.allowDoubleInP8P9 === 1,
     };
   }
 
   async updateUserSettings(userId: string, settings: Partial<UserSettings>): Promise<UserSettings> {
-    // Ensure settings exist first
+    const schoolId = await this.ensureActiveSchoolId(userId);
     const existing = await this.getUserSettings(userId);
-
     const newSettings = { ...existing, ...settings };
-    await db.update(userSettings).set({
+    await db.update(schoolSettings).set({
       fatigueLimit: newSettings.fatigueLimit,
       maxFreePeriodsPerWeek: newSettings.maxFreePeriodsPerWeek,
       maxFreePeriodsPerDay: newSettings.maxFreePeriodsPerDay,
       freePeriodsPerClass: newSettings.freePeriodsPerClass ?? {},
       allowDoublePeriods: newSettings.allowDoublePeriods ? 1 : 0,
       allowDoubleInP8P9: newSettings.allowDoubleInP8P9 ? 1 : 0,
-    }).where(eq(userSettings.userId, userId));
+    }).where(
+      and(eq(schoolSettings.userId, userId), eq(schoolSettings.schoolId, schoolId))
+    );
     return newSettings;
   }
 
   async createSharedTimetable(userId: string, timetableData: TimetableSlot[], teacherData: Teacher[], title?: string): Promise<SharedTimetable> {
+    const schoolId = await this.ensureActiveSchoolId(userId);
     const id = randomUUID().substring(0, 8);
     const createdAt = Date.now();
     
     await db.insert(sharedTimetables).values({
       id,
       userId,
+      schoolId,
       createdAt,
       expiresAt: null,
       timetableData: timetableData as any,
@@ -1169,14 +1154,22 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteSharedTimetable(userId: string, shareId: string): Promise<boolean> {
+    const schoolId = await this.ensureActiveSchoolId(userId);
     const result = await db.delete(sharedTimetables).where(
-      and(eq(sharedTimetables.id, shareId), eq(sharedTimetables.userId, userId))
+      and(
+        eq(sharedTimetables.id, shareId),
+        eq(sharedTimetables.userId, userId),
+        eq(sharedTimetables.schoolId, schoolId)
+      )
     );
     return true;
   }
 
   async getUserSharedTimetables(userId: string): Promise<SharedTimetable[]> {
-    const results = await db.select().from(sharedTimetables).where(eq(sharedTimetables.userId, userId));
+    const schoolId = await this.ensureActiveSchoolId(userId);
+    const results = await db.select().from(sharedTimetables).where(
+      and(eq(sharedTimetables.userId, userId), eq(sharedTimetables.schoolId, schoolId))
+    );
     return results.map(row => ({
       id: row.id,
       userId: row.userId,
@@ -1190,7 +1183,10 @@ export class DatabaseStorage implements IStorage {
 
   // ===== Saved timetables =====
   async listSavedTimetables(userId: string): Promise<SavedTimetable[]> {
-    const rows = await db.select().from(savedTimetables).where(eq(savedTimetables.userId, userId));
+    const schoolId = await this.ensureActiveSchoolId(userId);
+    const rows = await db.select().from(savedTimetables).where(
+      and(eq(savedTimetables.userId, userId), eq(savedTimetables.schoolId, schoolId))
+    );
     return rows
       .map((row) => ({
         id: row.id,
@@ -1203,8 +1199,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getSavedTimetable(userId: string, id: string): Promise<SavedTimetable | undefined> {
+    const schoolId = await this.ensureActiveSchoolId(userId);
     const rows = await db.select().from(savedTimetables).where(
-      and(eq(savedTimetables.id, id), eq(savedTimetables.userId, userId))
+      and(
+        eq(savedTimetables.id, id),
+        eq(savedTimetables.userId, userId),
+        eq(savedTimetables.schoolId, schoolId)
+      )
     );
     if (rows.length === 0) return undefined;
     const row = rows[0];
@@ -1218,11 +1219,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createSavedTimetable(userId: string, name: string, slots: TimetableSlot[]): Promise<SavedTimetable> {
+    const schoolId = await this.ensureActiveSchoolId(userId);
     const id = randomUUID();
     const createdAt = Date.now();
     await db.insert(savedTimetables).values({
       id,
       userId,
+      schoolId,
       name,
       createdAt,
       timetableData: slots,
@@ -1231,20 +1234,31 @@ export class DatabaseStorage implements IStorage {
   }
 
   async renameSavedTimetable(userId: string, id: string, name: string): Promise<SavedTimetable | undefined> {
+    const schoolId = await this.ensureActiveSchoolId(userId);
     await db.update(savedTimetables)
       .set({ name })
-      .where(and(eq(savedTimetables.id, id), eq(savedTimetables.userId, userId)));
+      .where(and(
+        eq(savedTimetables.id, id),
+        eq(savedTimetables.userId, userId),
+        eq(savedTimetables.schoolId, schoolId)
+      ));
     return this.getSavedTimetable(userId, id);
   }
 
   async deleteSavedTimetable(userId: string, id: string): Promise<boolean> {
+    const schoolId = await this.ensureActiveSchoolId(userId);
     const result = await db.delete(savedTimetables).where(
-      and(eq(savedTimetables.id, id), eq(savedTimetables.userId, userId))
+      and(
+        eq(savedTimetables.id, id),
+        eq(savedTimetables.userId, userId),
+        eq(savedTimetables.schoolId, schoolId)
+      )
     );
     return (result.rowCount ?? 0) > 0;
   }
 
   async loadSavedTimetable(userId: string, id: string): Promise<boolean> {
+    const schoolId = await this.ensureActiveSchoolId(userId);
     const saved = await this.getSavedTimetable(userId, id);
     if (!saved) return false;
     // The snapshot stores every slot (full grid). The live timetable_slots
@@ -1255,12 +1269,17 @@ export class DatabaseStorage implements IStorage {
     // Atomic replace: clear current slots + audit history, then insert snapshot.
     // If any step fails the transaction rolls back, leaving the prior grid intact.
     await db.transaction(async (tx) => {
-      await tx.delete(timetableSlots).where(eq(timetableSlots.userId, userId));
-      await tx.delete(timetableActions).where(eq(timetableActions.userId, userId));
+      await tx.delete(timetableSlots).where(
+        and(eq(timetableSlots.userId, userId), eq(timetableSlots.schoolId, schoolId))
+      );
+      await tx.delete(timetableActions).where(
+        and(eq(timetableActions.userId, userId), eq(timetableActions.schoolId, schoolId))
+      );
       if (occupied.length > 0) {
         await tx.insert(timetableSlots).values(
           occupied.map((slot) => ({
             userId,
+            schoolId,
             day: slot.day,
             period: slot.period,
             schoolClass: slot.schoolClass,
