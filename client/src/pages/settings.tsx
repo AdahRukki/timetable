@@ -724,11 +724,11 @@ export default function SettingsPage() {
                     </div>
                     <div className="text-right">
                       {(() => {
-                        // For SS2/SS3 totals, each valid 2- or 3-subject slash
-                        // group occupies one timetable slot and must be counted once.
+                        // Slash groups occupy one timetable slot within each senior class.
+                        // SS2 and SS3 now have independent quotas, so calculate them separately.
                         const seenGroups = new Set<string>();
                         const slashNames = new Set<string>();
-                        let ss2ss3SlashTotal = 0;
+                        const seniorSlashGroups: string[][] = [];
                         for (const s of subjects) {
                           if (!s.isSlashSubject) continue;
                           const group = findSlashGroup(subjects, s.name);
@@ -738,24 +738,37 @@ export default function SettingsPage() {
                           names.forEach((name) => slashNames.add(name));
                           if (seenGroups.has(key)) continue;
                           seenGroups.add(key);
-                          ss2ss3SlashTotal += Math.max(
-                            ...names.map((name) => quotas.find((q) => q.subject === name)?.ss2ss3Quota ?? 0),
-                          );
+                          seniorSlashGroups.push(names);
                         }
+                        const seniorTotal = (field: "ss2Quota" | "ss3Quota") => {
+                          const valueFor = (q: SubjectQuota) => q[field] ?? q.ss2ss3Quota;
+                          const slashTotal = seniorSlashGroups.reduce((sum, names) => {
+                            const groupQuota = Math.max(
+                              ...names.map((name) => {
+                                const q = quotas.find((item) => item.subject === name);
+                                return q ? valueFor(q) : 0;
+                              }),
+                            );
+                            return sum + groupQuota;
+                          }, 0);
+                          const regularTotal = quotas
+                            .filter((q) => valueFor(q) > 0 && !slashNames.has(q.subject))
+                            .reduce((sum, q) => sum + valueFor(q), 0);
+                          return slashTotal + regularTotal;
+                        };
                         const jss1Total = quotas.reduce((sum, q) => sum + (q.jss1Quota ?? q.jssQuota), 0);
                         const jss2Total = quotas.reduce((sum, q) => sum + (q.jss2Quota ?? q.jssQuota), 0);
                         const jss3Total = quotas.reduce((sum, q) => sum + (q.jss3Quota ?? q.jssQuota), 0);
                         const ss1Total = quotas.reduce((sum, q) => sum + q.ss1Quota, 0);
-                        const ss2ss3RegularTotal = quotas
-                          .filter((q) => q.ss2ss3Quota > 0 && !slashNames.has(q.subject))
-                          .reduce((sum, q) => sum + q.ss2ss3Quota, 0);
-                        const ss2ss3Total = ss2ss3SlashTotal + ss2ss3RegularTotal;
+                        const ss2Total = seniorTotal("ss2Quota");
+                        const ss3Total = seniorTotal("ss3Quota");
                         
                         const jss1InRange = jss1Total >= 37 && jss1Total <= 40;
                         const jss2InRange = jss2Total >= 37 && jss2Total <= 40;
                         const jss3InRange = jss3Total >= 37 && jss3Total <= 40;
                         const ss1InRange = ss1Total >= 37 && ss1Total <= 40;
-                        const ss2ss3InRange = ss2ss3Total >= 37 && ss2ss3Total <= 40;
+                        const ss2InRange = ss2Total >= 37 && ss2Total <= 40;
+                        const ss3InRange = ss3Total >= 37 && ss3Total <= 40;
                         
                         return (
                           <div className="space-y-1">
@@ -772,8 +785,11 @@ export default function SettingsPage() {
                               <span className={`text-sm ${ss1InRange ? 'text-green-600' : ss1Total > 40 ? 'text-destructive' : 'text-amber-600'}`}>
                                 SS1: {ss1Total}/40
                               </span>
-                              <span className={`text-sm ${ss2ss3InRange ? 'text-green-600' : ss2ss3Total > 40 ? 'text-destructive' : 'text-amber-600'}`}>
-                                SS2/SS3: {ss2ss3Total}/40
+                              <span className={`text-sm ${ss2InRange ? 'text-green-600' : ss2Total > 40 ? 'text-destructive' : 'text-amber-600'}`}>
+                                SS2: {ss2Total}/40
+                              </span>
+                              <span className={`text-sm ${ss3InRange ? 'text-green-600' : ss3Total > 40 ? 'text-destructive' : 'text-amber-600'}`}>
+                                SS3: {ss3Total}/40
                               </span>
                             </div>
                             <p className="text-xs text-muted-foreground">
@@ -850,102 +866,111 @@ export default function SettingsPage() {
 
                 <Separator />
 
-                <div>
-                  {(() => {
-                    // Derive 2- or 3-subject slash groups from the user's subjects.
-                    const seenGroups = new Set<string>();
-                    const allGroups: string[][] = [];
-                    const slashNamesForBadge = new Set<string>();
-                    for (const s of subjects) {
-                      if (!s.isSlashSubject) continue;
-                      const group = findSlashGroup(subjects, s.name);
-                      if (group.length < 2) continue;
-                      const names = group.map((x) => x.name).sort();
-                      const key = names.join("|");
-                      if (seenGroups.has(key)) continue;
-                      seenGroups.add(key);
-                      names.forEach((name) => slashNamesForBadge.add(name));
-                      allGroups.push(names);
-                    }
-                    const groups = allGroups.filter((names) =>
-                      Math.max(...names.map((name) => quotas.find((q) => q.subject === name)?.ss2ss3Quota ?? 0)) > 0
-                    );
-                    const slashTotal = groups.reduce((sum, names) =>
-                      sum + Math.max(...names.map((name) => quotas.find((q) => q.subject === name)?.ss2ss3Quota ?? 0)), 0
-                    );
-                    const regularSubjects = [...quotas]
-                      .filter((q) => q.ss2ss3Quota > 0 && !slashNamesForBadge.has(q.subject))
-                      .sort((a, b) => a.subject.localeCompare(b.subject));
-                    const regularTotal = regularSubjects.reduce((sum, q) => sum + q.ss2ss3Quota, 0);
-                    const perClass = slashTotal + regularTotal;
+                {([
+                  ["SS2", "ss2Quota"],
+                  ["SS3", "ss3Quota"],
+                ] as const).map(([label, field], index) => {
+                  const valueFor = (q: SubjectQuota) => q[field] ?? q.ss2ss3Quota;
+                  const seenGroups = new Set<string>();
+                  const allGroups: string[][] = [];
+                  const slashNamesForBadge = new Set<string>();
+                  for (const s of subjects) {
+                    if (!s.isSlashSubject) continue;
+                    const group = findSlashGroup(subjects, s.name);
+                    if (group.length < 2) continue;
+                    const names = group.map((x) => x.name).sort();
+                    const key = names.join("|");
+                    if (seenGroups.has(key)) continue;
+                    seenGroups.add(key);
+                    names.forEach((name) => slashNamesForBadge.add(name));
+                    allGroups.push(names);
+                  }
+                  const groups = allGroups.filter((names) =>
+                    Math.max(...names.map((name) => {
+                      const q = quotas.find((item) => item.subject === name);
+                      return q ? valueFor(q) : 0;
+                    })) > 0
+                  );
+                  const slashTotal = groups.reduce((sum, names) =>
+                    sum + Math.max(...names.map((name) => {
+                      const q = quotas.find((item) => item.subject === name);
+                      return q ? valueFor(q) : 0;
+                    })), 0
+                  );
+                  const regularSubjects = [...quotas]
+                    .filter((q) => valueFor(q) > 0 && !slashNamesForBadge.has(q.subject))
+                    .sort((a, b) => a.subject.localeCompare(b.subject));
+                  const regularTotal = regularSubjects.reduce((sum, q) => sum + valueFor(q), 0);
+                  const perClass = slashTotal + regularTotal;
 
-                    return (
-                      <>
-                        <div className="flex items-center justify-between mb-3">
-                          <h3 className="font-medium">SS2/SS3 Subjects (includes slash pairing)</h3>
-                          <Badge variant="secondary">
-                            {`${perClass} periods/class (${perClass * 2} total for 2 classes)`}
-                          </Badge>
-                        </div>
+                  return (
+                    <div key={field}>
+                      {index > 0 && <Separator className="mb-6" />}
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="font-medium">{label} Subjects (includes slash pairing)</h3>
+                        <Badge variant="secondary">{perClass} periods/class</Badge>
+                      </div>
 
-                        {groups.length > 0 && (
-                          <div className="mb-4">
-                            <p className="text-sm text-muted-foreground mb-3">Slash Subject Groups (scheduled simultaneously)</p>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                              {groups.map((names) => {
-                                const quota = Math.max(...names.map((name) => quotas.find((q) => q.subject === name)?.ss2ss3Quota ?? 0));
-                                return (
-                                  <div key={names.join("-")} className="flex items-center gap-2">
-                                    <div className="flex-1">
-                                      <Label className="text-sm flex items-center gap-1">
-                                        {names.join(" / ")}
-                                        <Badge variant="outline" className="text-xs ml-1">Slash</Badge>
-                                        <span className="text-xs text-muted-foreground ml-1">({quota * 2} total slots)</span>
-                                      </Label>
-                                    </div>
-                                    <NumberInput
-                                      min={0}
-                                      max={10}
-                                      value={quota}
-                                      onChange={(v) => {
-                                        updateSlashGroupQuotaMutation.mutate({
-                                          subjects: names,
-                                          field: "ss2ss3Quota",
-                                          value: v,
-                                        });
-                                      }}
-                                      className="w-16"
-                                      data-testid={`input-quota-slash-${names.join("-").toLowerCase()}`}
-                                    />
-                                    <span className="text-sm text-muted-foreground">per week</span>
+                      {groups.length > 0 && (
+                        <div className="mb-4">
+                          <p className="text-sm text-muted-foreground mb-3">Slash Subject Groups (scheduled simultaneously)</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {groups.map((names) => {
+                              const quota = Math.max(...names.map((name) => {
+                                const q = quotas.find((item) => item.subject === name);
+                                return q ? valueFor(q) : 0;
+                              }));
+                              return (
+                                <div key={names.join("-")} className="flex items-center gap-2">
+                                  <div className="flex-1">
+                                    <Label className="text-sm flex items-center gap-1">
+                                      {names.join(" / ")}
+                                      <Badge variant="outline" className="text-xs ml-1">Slash</Badge>
+                                    </Label>
                                   </div>
-                                );
-                              })}
-                            </div>
+                                  <NumberInput
+                                    min={0}
+                                    max={10}
+                                    value={quota}
+                                    onChange={(v) => {
+                                      updateSlashGroupQuotaMutation.mutate({
+                                        subjects: names,
+                                        field,
+                                        value: v,
+                                      });
+                                    }}
+                                    className="w-16"
+                                    data-testid={`input-quota-${label.toLowerCase()}-slash-${names.join("-").toLowerCase()}`}
+                                  />
+                                  <span className="text-sm text-muted-foreground">per week</span>
+                                </div>
+                              );
+                            })}
                           </div>
-                        )}
+                        </div>
+                      )}
 
-                        {regularSubjects.length > 0 && (
-                          <>
-                            <p className="text-sm text-muted-foreground mb-3">Regular Subjects</p>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                              {regularSubjects.map((q) => (
-                                <QuotaInput
-                                  key={q.subject}
-                                  subject={q.subject}
-                                  value={q.ss2ss3Quota}
-                                  onChange={(v) => handleQuotaChange(q.subject, "ss2ss3Quota", v)}
-                                  isSlash={false}
-                                  sectionTotal={q.ss2ss3Quota * 2}
-                                />
-                              ))}
-                            </div>
-                          </>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
+                      {regularSubjects.length > 0 && (
+                        <>
+                          <p className="text-sm text-muted-foreground mb-3">Regular Subjects</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {regularSubjects.map((q) => (
+                              <QuotaInput
+                                key={`${field}-${q.subject}`}
+                                subject={q.subject}
+                                value={valueFor(q)}
+                                onChange={(v) => handleQuotaChange(q.subject, field, v)}
+                                isSlash={false}
+                                sectionTotal={valueFor(q)}
+                                testIdSuffix={field}
+                              />
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
               </>
             )}
           </CardContent>
