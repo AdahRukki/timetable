@@ -689,7 +689,10 @@ export class DatabaseStorage implements IStorage {
 
   // Subject Quotas
   async getSubjectQuotas(userId: string): Promise<SubjectQuota[]> {
-    const rows = await db.select().from(subjectQuotas).where(eq(subjectQuotas.userId, userId));
+    const schoolId = await this.ensureActiveSchoolId(userId);
+    const rows = await db.select().from(subjectQuotas).where(
+      and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.schoolId, schoolId))
+    );
     return rows.map((row) => ({
       subject: row.subject,
       jssQuota: row.jssQuota,
@@ -708,8 +711,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateSubjectQuota(userId: string, subject: string, updates: Partial<SubjectQuota>): Promise<SubjectQuota | undefined> {
+    const schoolId = await this.ensureActiveSchoolId(userId);
     const [existing] = await db.select().from(subjectQuotas).where(
-      and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subject))
+      and(
+        eq(subjectQuotas.userId, userId),
+        eq(subjectQuotas.schoolId, schoolId),
+        eq(subjectQuotas.subject, subject)
+      )
     );
     if (!existing) return undefined;
 
@@ -727,7 +735,11 @@ export class DatabaseStorage implements IStorage {
     if (updates.requiredDoubles !== undefined) updateValues.requiredDoubles = updates.requiredDoubles;
 
     await db.update(subjectQuotas).set(updateValues).where(
-      and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, subject))
+      and(
+        eq(subjectQuotas.userId, userId),
+        eq(subjectQuotas.schoolId, schoolId),
+        eq(subjectQuotas.subject, subject)
+      )
     );
 
     return {
@@ -753,6 +765,7 @@ export class DatabaseStorage implements IStorage {
     field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2Quota" | "ss3Quota" | "ss2ss3Quota",
     value: number,
   ): Promise<SubjectQuota[] | undefined> {
+    const schoolId = await this.ensureActiveSchoolId(userId);
     const names = Array.from(new Set(subjectNames.filter(Boolean)));
     if (names.length < 2 || names.length > 3) return undefined;
     const setValues: Record<string, number> = { [field]: value };
@@ -773,7 +786,11 @@ export class DatabaseStorage implements IStorage {
         );
         // Keep the editable subject record in sync with the quota table.
         await tx.update(subjects).set(setValues).where(
-          and(eq(subjects.userId, userId), eq(subjects.name, name))
+          and(
+            eq(subjects.userId, userId),
+            eq(subjects.schoolId, schoolId),
+            eq(subjects.name, name)
+          )
         );
       }
 
@@ -808,7 +825,10 @@ export class DatabaseStorage implements IStorage {
 
   // Subjects
   async getSubjects(userId: string): Promise<Subject[]> {
-    const rows = await db.select().from(subjects).where(eq(subjects.userId, userId));
+    const schoolId = await this.ensureActiveSchoolId(userId);
+    const rows = await db.select().from(subjects).where(
+      and(eq(subjects.userId, userId), eq(subjects.schoolId, schoolId))
+    );
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -830,8 +850,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getSubject(userId: string, id: number): Promise<Subject | undefined> {
+    const schoolId = await this.ensureActiveSchoolId(userId);
     const [row] = await db.select().from(subjects).where(
-      and(eq(subjects.userId, userId), eq(subjects.id, id))
+      and(eq(subjects.userId, userId), eq(subjects.schoolId, schoolId), eq(subjects.id, id))
     );
     if (!row) return undefined;
     return {
@@ -855,6 +876,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createSubject(userId: string, subject: InsertSubject): Promise<Subject> {
+    const schoolId = await this.ensureActiveSchoolId(userId);
     const preferredPeriods = subject.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] };
     const jss1Quota = subject.jss1Quota ?? subject.jssQuota;
     const jss2Quota = subject.jss2Quota ?? subject.jssQuota;
@@ -868,6 +890,7 @@ export class DatabaseStorage implements IStorage {
     return await db.transaction(async (tx) => {
       const [inserted] = await tx.insert(subjects).values({
         userId,
+        schoolId,
         name: subject.name,
         jssQuota: subject.jssQuota,
         jss1Quota,
@@ -887,6 +910,7 @@ export class DatabaseStorage implements IStorage {
 
       await tx.insert(subjectQuotas).values({
         userId,
+        schoolId,
         subject: subject.name,
         jssQuota: subject.jssQuota,
         jss1Quota,
@@ -903,7 +927,7 @@ export class DatabaseStorage implements IStorage {
       }).onConflictDoNothing();
 
       if (subject.isSlashSubject && subject.slashPairName) {
-        await setSlashGroup(tx, userId, [subject.name, subject.slashPairName, subject.slashThirdName ?? ""]);
+        await setSlashGroup(tx, userId, schoolId, [subject.name, subject.slashPairName, subject.slashThirdName ?? ""]);
       }
 
       return {
@@ -928,6 +952,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateSubject(userId: string, id: number, updates: Partial<InsertSubject>): Promise<Subject | undefined> {
+    const schoolId = await this.ensureActiveSchoolId(userId);
     const existing = await this.getSubject(userId, id);
     if (!existing) return undefined;
 
@@ -948,7 +973,7 @@ export class DatabaseStorage implements IStorage {
       // Break the prior slash group first, then establish the desired group
       // after the subject row has been updated/renamed.
       if (existing.isSlashSubject) {
-        await clearSlashGroup(tx, userId, existing.name);
+        await clearSlashGroup(tx, userId, schoolId, existing.name);
       }
 
       const updateValues: Record<string, unknown> = {};
@@ -969,7 +994,7 @@ export class DatabaseStorage implements IStorage {
       if (updates.requiredDoubles !== undefined || updates.singleOnly === true) updateValues.requiredDoubles = newRequiredDoubles;
 
       await tx.update(subjects).set(updateValues).where(
-        and(eq(subjects.userId, userId), eq(subjects.id, id))
+        and(eq(subjects.userId, userId), eq(subjects.schoolId, schoolId), eq(subjects.id, id))
       );
 
       const quotaUpdates: Record<string, unknown> = {};
@@ -987,17 +1012,25 @@ export class DatabaseStorage implements IStorage {
       if (updates.requiredDoubles !== undefined || updates.singleOnly === true) quotaUpdates.requiredDoubles = newRequiredDoubles;
 
       await tx.update(subjectQuotas).set(quotaUpdates).where(
-        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
+        and(
+          eq(subjectQuotas.userId, userId),
+          eq(subjectQuotas.schoolId, schoolId),
+          eq(subjectQuotas.subject, existing.name)
+        )
       );
 
       if (updates.name && updates.name !== existing.name) {
         await tx.update(subjectQuotas).set({ subject: newName }).where(
-          and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
+          and(
+            eq(subjectQuotas.userId, userId),
+            eq(subjectQuotas.schoolId, schoolId),
+            eq(subjectQuotas.subject, existing.name)
+          )
         );
       }
 
       if (newSlash && newPair) {
-        await setSlashGroup(tx, userId, [newName, newPair, newThird ?? ""]);
+        await setSlashGroup(tx, userId, schoolId, [newName, newPair, newThird ?? ""]);
       }
 
       return {
@@ -1022,18 +1055,23 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteSubject(userId: string, id: number): Promise<boolean> {
+    const schoolId = await this.ensureActiveSchoolId(userId);
     const existing = await this.getSubject(userId, id);
     if (!existing) return false;
 
     await db.transaction(async (tx) => {
       if (existing.isSlashSubject) {
-        await clearSlashGroup(tx, userId, existing.name);
+        await clearSlashGroup(tx, userId, schoolId, existing.name);
       }
       await tx.delete(subjects).where(
-        and(eq(subjects.userId, userId), eq(subjects.id, id))
+        and(eq(subjects.userId, userId), eq(subjects.schoolId, schoolId), eq(subjects.id, id))
       );
       await tx.delete(subjectQuotas).where(
-        and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.subject, existing.name))
+        and(
+          eq(subjectQuotas.userId, userId),
+          eq(subjectQuotas.schoolId, schoolId),
+          eq(subjectQuotas.subject, existing.name)
+        )
       );
     });
 
