@@ -77,10 +77,22 @@ export function findSlashPair<S extends {
 
 // ===== DATABASE TABLES =====
 
+// Schools are independent timetable workspaces owned by a user. Exactly one
+// school is active per user at a time; storage methods automatically scope all
+// timetable data to that active school.
+export const schools = pgTable("schools", {
+  id: varchar("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  name: text("name").notNull(),
+  isActive: integer("is_active").notNull().default(0),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+
 // Teachers table
 export const teachers = pgTable("teachers", {
   id: varchar("id").primaryKey(),
   userId: varchar("user_id").notNull(),
+  schoolId: varchar("school_id").notNull(),
   name: text("name").notNull(),
   subjects: text("subjects").array().notNull(),
   classes: text("classes").array().notNull(),
@@ -96,6 +108,7 @@ export const teachers = pgTable("teachers", {
 export const timetableSlots = pgTable("timetable_slots", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(),
+  schoolId: varchar("school_id").notNull(),
   day: text("day").notNull(),
   period: integer("period").notNull(),
   schoolClass: text("school_class").notNull(),
@@ -119,6 +132,7 @@ export const timetableSlots = pgTable("timetable_slots", {
 export const timetableActions = pgTable("timetable_actions", {
   id: varchar("id").primaryKey(),
   userId: varchar("user_id").notNull(),
+  schoolId: varchar("school_id").notNull(),
   type: text("type").notNull(),
   timestamp: integer("timestamp").notNull(),
   slotData: jsonb("slot_data").notNull(),
@@ -156,6 +170,7 @@ const DEFAULT_REQUIRED_DOUBLES: RequiredDoubles = { jss: 0, ss1: 0, ss2ss3: 0 };
 export const subjectQuotas = pgTable("subject_quotas", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(),
+  schoolId: varchar("school_id").notNull(),
   subject: text("subject").notNull(),
   jssQuota: integer("jss_quota").notNull(),
   // Per-JSS-class overrides. Null means fall back to the legacy shared JSS quota.
@@ -183,6 +198,7 @@ export const subjectQuotas = pgTable("subject_quotas", {
 export const subjects = pgTable("subjects", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(),
+  schoolId: varchar("school_id").notNull(),
   name: text("name").notNull(),
   jssQuota: integer("jss_quota").notNull().default(0),
   // Per-JSS-class overrides. Null means fall back to the legacy shared JSS quota.
@@ -215,8 +231,23 @@ export const userSettings = pgTable("user_settings", {
   fatigueLimit: integer("fatigue_limit").notNull().default(5),
   maxFreePeriodsPerWeek: integer("max_free_periods_per_week").notNull().default(3),
   maxFreePeriodsPerDay: integer("max_free_periods_per_day").notNull().default(2),
-  // Per-class weekly free-period overrides. Keys are SchoolClass names
-  // ("JSS1", "SS2", etc.). Missing keys fall back to maxFreePeriodsPerWeek.
+  freePeriodsPerClass: jsonb("free_periods_per_class")
+    .$type<Record<string, number>>()
+    .notNull()
+    .default({}),
+  allowDoublePeriods: integer("allow_double_periods").notNull().default(1),
+  allowDoubleInP8P9: integer("allow_double_in_p8p9").notNull().default(1),
+});
+
+// Settings are now stored per school. user_settings remains as a legacy source
+// for migration/backwards compatibility only.
+export const schoolSettings = pgTable("school_settings", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  schoolId: varchar("school_id").notNull(),
+  fatigueLimit: integer("fatigue_limit").notNull().default(5),
+  maxFreePeriodsPerWeek: integer("max_free_periods_per_week").notNull().default(3),
+  maxFreePeriodsPerDay: integer("max_free_periods_per_day").notNull().default(2),
   freePeriodsPerClass: jsonb("free_periods_per_class")
     .$type<Record<string, number>>()
     .notNull()
@@ -229,6 +260,7 @@ export const userSettings = pgTable("user_settings", {
 export const sharedTimetables = pgTable("shared_timetables", {
   id: varchar("id").primaryKey(),
   userId: varchar("user_id").notNull(),
+  schoolId: varchar("school_id").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   expiresAt: bigint("expires_at", { mode: "number" }),
   timetableData: jsonb("timetable_data").notNull(),
@@ -258,12 +290,26 @@ type SavedSlotShape = {
 export const savedTimetables = pgTable("saved_timetables", {
   id: varchar("id").primaryKey(),
   userId: varchar("user_id").notNull(),
+  schoolId: varchar("school_id").notNull(),
   name: text("name").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   timetableData: jsonb("timetable_data").$type<SavedSlotShape[]>().notNull(),
 });
 
 // ===== ZOD SCHEMAS =====
+
+export const schoolSchema = z.object({
+  id: z.string(),
+  name: z.string().trim().min(1, "School name is required").max(120),
+  isActive: z.boolean(),
+  createdAt: z.number(),
+});
+export type School = z.infer<typeof schoolSchema>;
+
+export const insertSchoolSchema = z.object({
+  name: z.string().trim().min(1, "School name is required").max(120),
+});
+export type InsertSchool = z.infer<typeof insertSchoolSchema>;
 
 // Teacher schema
 export const teacherSchema = z.object({
