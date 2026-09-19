@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { pgTable, text, integer, jsonb, varchar, serial, bigint } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, jsonb, varchar, serial, bigint, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 
 // Export auth schema
@@ -254,7 +254,10 @@ export const schoolSettings = pgTable("school_settings", {
     .default({}),
   allowDoublePeriods: integer("allow_double_periods").notNull().default(1),
   allowDoubleInP8P9: integer("allow_double_in_p8p9").notNull().default(1),
-});
+}, (table) => ({
+  userSchoolUnique: uniqueIndex("school_settings_user_school_unique")
+    .on(table.userId, table.schoolId),
+}));
 
 // Shared timetables table
 export const sharedTimetables = pgTable("shared_timetables", {
