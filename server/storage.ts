@@ -27,7 +27,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 
 function getSlotKey(day: Day, schoolClass: SchoolClass, period: number): string {
   return `${day}-${schoolClass}-${period}`;
@@ -226,7 +226,7 @@ export class DatabaseStorage implements IStorage {
       return id;
     }
 
-    const id = randomUUID();
+    const id = "school_" + createHash("sha256").update(userId).digest("hex").slice(0, 32);
     const createdAt = Date.now();
     await db.insert(schools).values({
       id,
@@ -234,7 +234,10 @@ export class DatabaseStorage implements IStorage {
       name: "My School",
       isActive: 1,
       createdAt,
-    });
+    }).onConflictDoNothing();
+    await db.update(schools).set({ isActive: 1 }).where(
+      and(eq(schools.userId, userId), eq(schools.id, id))
+    );
     await this.ensureSchoolSettings(userId, id);
     return id;
   }
@@ -244,7 +247,7 @@ export class DatabaseStorage implements IStorage {
       and(eq(schoolSettings.userId, userId), eq(schoolSettings.schoolId, schoolId))
     );
     if (existing.length === 0) {
-      await db.insert(schoolSettings).values({ userId, schoolId });
+      await db.insert(schoolSettings).values({ userId, schoolId }).onConflictDoNothing();
     }
   }
 
