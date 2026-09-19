@@ -15,6 +15,7 @@ import { Link, useLocation } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
 import type { UserSettings } from "@shared/schema";
+import { SchoolSwitcher } from "@/components/school-switcher";
 
 const menuItems = [
   {
@@ -78,6 +79,9 @@ export function AppSidebar() {
               Schedule Manager
             </p>
           </div>
+        </div>
+        <div className="pt-3">
+          <SchoolSwitcher />
         </div>
       </SidebarHeader>
 
