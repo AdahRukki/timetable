@@ -156,14 +156,14 @@ export interface IStorage {
   updateSlashGroupQuota(
     userId: string,
     subjectNames: string[],
-    field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2ss3Quota",
+    field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2Quota" | "ss3Quota" | "ss2ss3Quota",
     value: number,
   ): Promise<SubjectQuota[] | undefined>;
   updateSlashPairQuota(
     userId: string,
     subjectA: string,
     subjectB: string,
-    field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2ss3Quota",
+    field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2Quota" | "ss3Quota" | "ss2ss3Quota",
     value: number,
   ): Promise<{ a: SubjectQuota; b: SubjectQuota } | undefined>;
 
@@ -535,6 +535,8 @@ export class DatabaseStorage implements IStorage {
       jss2Quota: row.jss2Quota ?? row.jssQuota,
       jss3Quota: row.jss3Quota ?? row.jssQuota,
       ss1Quota: row.ss1Quota,
+      ss2Quota: row.ss2Quota ?? row.ss2ss3Quota,
+      ss3Quota: row.ss3Quota ?? row.ss2ss3Quota,
       ss2ss3Quota: row.ss2ss3Quota,
       isSlashSubject: row.isSlashSubject === 1,
       singleOnly: row.singleOnly === 1,
@@ -555,6 +557,8 @@ export class DatabaseStorage implements IStorage {
     if (updates.jss2Quota !== undefined) updateValues.jss2Quota = updates.jss2Quota;
     if (updates.jss3Quota !== undefined) updateValues.jss3Quota = updates.jss3Quota;
     if (updates.ss1Quota !== undefined) updateValues.ss1Quota = updates.ss1Quota;
+    if (updates.ss2Quota !== undefined) updateValues.ss2Quota = updates.ss2Quota;
+    if (updates.ss3Quota !== undefined) updateValues.ss3Quota = updates.ss3Quota;
     if (updates.ss2ss3Quota !== undefined) updateValues.ss2ss3Quota = updates.ss2ss3Quota;
     if (updates.isSlashSubject !== undefined) updateValues.isSlashSubject = updates.isSlashSubject ? 1 : 0;
     if (updates.preferredPeriods !== undefined) updateValues.preferredPeriods = updates.preferredPeriods;
@@ -571,6 +575,8 @@ export class DatabaseStorage implements IStorage {
       jss2Quota: updates.jss2Quota ?? existing.jss2Quota ?? existing.jssQuota,
       jss3Quota: updates.jss3Quota ?? existing.jss3Quota ?? existing.jssQuota,
       ss1Quota: updates.ss1Quota ?? existing.ss1Quota,
+      ss2Quota: updates.ss2Quota ?? existing.ss2Quota ?? existing.ss2ss3Quota,
+      ss3Quota: updates.ss3Quota ?? existing.ss3Quota ?? existing.ss2ss3Quota,
       ss2ss3Quota: updates.ss2ss3Quota ?? existing.ss2ss3Quota,
       isSlashSubject: updates.isSlashSubject ?? (existing.isSlashSubject === 1),
       singleOnly: existing.singleOnly === 1,
@@ -582,7 +588,7 @@ export class DatabaseStorage implements IStorage {
   async updateSlashGroupQuota(
     userId: string,
     subjectNames: string[],
-    field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2ss3Quota",
+    field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2Quota" | "ss3Quota" | "ss2ss3Quota",
     value: number,
   ): Promise<SubjectQuota[] | undefined> {
     const names = Array.from(new Set(subjectNames.filter(Boolean)));
@@ -616,6 +622,8 @@ export class DatabaseStorage implements IStorage {
         jss2Quota: field === "jss2Quota" ? value : (row.jss2Quota ?? row.jssQuota),
         jss3Quota: field === "jss3Quota" ? value : (row.jss3Quota ?? row.jssQuota),
         ss1Quota: field === "ss1Quota" ? value : row.ss1Quota,
+        ss2Quota: field === "ss2Quota" ? value : (row.ss2Quota ?? row.ss2ss3Quota),
+        ss3Quota: field === "ss3Quota" ? value : (row.ss3Quota ?? row.ss2ss3Quota),
         ss2ss3Quota: field === "ss2ss3Quota" ? value : row.ss2ss3Quota,
         isSlashSubject: row.isSlashSubject === 1,
         singleOnly: row.singleOnly === 1,
@@ -629,7 +637,7 @@ export class DatabaseStorage implements IStorage {
     userId: string,
     subjectA: string,
     subjectB: string,
-    field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2ss3Quota",
+    field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2Quota" | "ss3Quota" | "ss2ss3Quota",
     value: number,
   ): Promise<{ a: SubjectQuota; b: SubjectQuota } | undefined> {
     const result = await this.updateSlashGroupQuota(userId, [subjectA, subjectB], field, value);
@@ -647,6 +655,8 @@ export class DatabaseStorage implements IStorage {
       jss2Quota: row.jss2Quota ?? row.jssQuota,
       jss3Quota: row.jss3Quota ?? row.jssQuota,
       ss1Quota: row.ss1Quota,
+      ss2Quota: row.ss2Quota ?? row.ss2ss3Quota,
+      ss3Quota: row.ss3Quota ?? row.ss2ss3Quota,
       ss2ss3Quota: row.ss2ss3Quota,
       isSlashSubject: row.isSlashSubject === 1,
       slashPairName: row.slashPairName,
@@ -670,6 +680,8 @@ export class DatabaseStorage implements IStorage {
       jss2Quota: row.jss2Quota ?? row.jssQuota,
       jss3Quota: row.jss3Quota ?? row.jssQuota,
       ss1Quota: row.ss1Quota,
+      ss2Quota: row.ss2Quota ?? row.ss2ss3Quota,
+      ss3Quota: row.ss3Quota ?? row.ss2ss3Quota,
       ss2ss3Quota: row.ss2ss3Quota,
       isSlashSubject: row.isSlashSubject === 1,
       slashPairName: row.slashPairName,
@@ -685,6 +697,8 @@ export class DatabaseStorage implements IStorage {
     const jss1Quota = subject.jss1Quota ?? subject.jssQuota;
     const jss2Quota = subject.jss2Quota ?? subject.jssQuota;
     const jss3Quota = subject.jss3Quota ?? subject.jssQuota;
+    const ss2Quota = subject.ss2Quota ?? subject.ss2ss3Quota;
+    const ss3Quota = subject.ss3Quota ?? subject.ss2ss3Quota;
     const singleOnly = subject.singleOnly ?? false;
     const requiredDoubles = singleOnly
       ? { jss: 0, ss1: 0, ss2ss3: 0 }
@@ -698,6 +712,8 @@ export class DatabaseStorage implements IStorage {
         jss2Quota,
         jss3Quota,
         ss1Quota: subject.ss1Quota,
+        ss2Quota,
+        ss3Quota,
         ss2ss3Quota: subject.ss2ss3Quota,
         isSlashSubject: subject.isSlashSubject ? 1 : 0,
         slashPairName: subject.isSlashSubject ? subject.slashPairName : null,
@@ -715,6 +731,8 @@ export class DatabaseStorage implements IStorage {
         jss2Quota,
         jss3Quota,
         ss1Quota: subject.ss1Quota,
+        ss2Quota,
+        ss3Quota,
         ss2ss3Quota: subject.ss2ss3Quota,
         isSlashSubject: subject.isSlashSubject ? 1 : 0,
         singleOnly: singleOnly ? 1 : 0,
@@ -734,6 +752,8 @@ export class DatabaseStorage implements IStorage {
         jss2Quota,
         jss3Quota,
         ss1Quota: subject.ss1Quota,
+        ss2Quota,
+        ss3Quota,
         ss2ss3Quota: subject.ss2ss3Quota,
         isSlashSubject: subject.isSlashSubject,
         slashPairName: subject.isSlashSubject ? subject.slashPairName : null,
@@ -776,6 +796,8 @@ export class DatabaseStorage implements IStorage {
       if (updates.jss2Quota !== undefined) updateValues.jss2Quota = updates.jss2Quota;
       if (updates.jss3Quota !== undefined) updateValues.jss3Quota = updates.jss3Quota;
       if (updates.ss1Quota !== undefined) updateValues.ss1Quota = updates.ss1Quota;
+      if (updates.ss2Quota !== undefined) updateValues.ss2Quota = updates.ss2Quota;
+      if (updates.ss3Quota !== undefined) updateValues.ss3Quota = updates.ss3Quota;
       if (updates.ss2ss3Quota !== undefined) updateValues.ss2ss3Quota = updates.ss2ss3Quota;
       updateValues.isSlashSubject = newSlash ? 1 : 0;
       updateValues.slashPairName = newPair;
@@ -794,6 +816,8 @@ export class DatabaseStorage implements IStorage {
       if (updates.jss2Quota !== undefined) quotaUpdates.jss2Quota = updates.jss2Quota;
       if (updates.jss3Quota !== undefined) quotaUpdates.jss3Quota = updates.jss3Quota;
       if (updates.ss1Quota !== undefined) quotaUpdates.ss1Quota = updates.ss1Quota;
+      if (updates.ss2Quota !== undefined) quotaUpdates.ss2Quota = updates.ss2Quota;
+      if (updates.ss3Quota !== undefined) quotaUpdates.ss3Quota = updates.ss3Quota;
       if (updates.ss2ss3Quota !== undefined) quotaUpdates.ss2ss3Quota = updates.ss2ss3Quota;
       quotaUpdates.isSlashSubject = newSlash ? 1 : 0;
       if (updates.preferredPeriods !== undefined) quotaUpdates.preferredPeriods = updates.preferredPeriods;
@@ -822,6 +846,8 @@ export class DatabaseStorage implements IStorage {
         jss2Quota: updates.jss2Quota ?? existing.jss2Quota ?? existing.jssQuota,
         jss3Quota: updates.jss3Quota ?? existing.jss3Quota ?? existing.jssQuota,
         ss1Quota: updates.ss1Quota ?? existing.ss1Quota,
+        ss2Quota: updates.ss2Quota ?? existing.ss2Quota ?? existing.ss2ss3Quota,
+        ss3Quota: updates.ss3Quota ?? existing.ss3Quota ?? existing.ss2ss3Quota,
         ss2ss3Quota: updates.ss2ss3Quota ?? existing.ss2ss3Quota,
         isSlashSubject: newSlash,
         slashPairName: newPair,
