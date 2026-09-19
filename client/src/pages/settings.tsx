@@ -32,7 +32,8 @@ export default function SettingsPage() {
   const [newSubjectJss2Quota, setNewSubjectJss2Quota] = useState(4);
   const [newSubjectJss3Quota, setNewSubjectJss3Quota] = useState(4);
   const [newSubjectSs1Quota, setNewSubjectSs1Quota] = useState(4);
-  const [newSubjectSs2ss3Quota, setNewSubjectSs2ss3Quota] = useState(4);
+  const [newSubjectSs2Quota, setNewSubjectSs2Quota] = useState(4);
+  const [newSubjectSs3Quota, setNewSubjectSs3Quota] = useState(4);
   const [newSubjectIsSlash, setNewSubjectIsSlash] = useState(false);
   const [newSubjectSlashPair, setNewSubjectSlashPair] = useState<string>("");
   const [newSubjectSlashThird, setNewSubjectSlashThird] = useState<string>("");
@@ -40,12 +41,14 @@ export default function SettingsPage() {
   const [newSubjectPreferredJss2, setNewSubjectPreferredJss2] = useState<number[]>([]);
   const [newSubjectPreferredJss3, setNewSubjectPreferredJss3] = useState<number[]>([]);
   const [newSubjectPreferredSs1, setNewSubjectPreferredSs1] = useState<number[]>([]);
-  const [newSubjectPreferredSs2ss3, setNewSubjectPreferredSs2ss3] = useState<number[]>([]);
+  const [newSubjectPreferredSs2, setNewSubjectPreferredSs2] = useState<number[]>([]);
+  const [newSubjectPreferredSs3, setNewSubjectPreferredSs3] = useState<number[]>([]);
   const [newSubjectDoublesJss1, setNewSubjectDoublesJss1] = useState(0);
   const [newSubjectDoublesJss2, setNewSubjectDoublesJss2] = useState(0);
   const [newSubjectDoublesJss3, setNewSubjectDoublesJss3] = useState(0);
   const [newSubjectDoublesSs1, setNewSubjectDoublesSs1] = useState(0);
-  const [newSubjectDoublesSs2ss3, setNewSubjectDoublesSs2ss3] = useState(0);
+  const [newSubjectDoublesSs2, setNewSubjectDoublesSs2] = useState(0);
+  const [newSubjectDoublesSs3, setNewSubjectDoublesSs3] = useState(0);
   const [newSubjectSingleOnly, setNewSubjectSingleOnly] = useState(false);
   const [fatigueLimit, setFatigueLimit] = useState(5);
   const [maxFreePeriodsPerWeek, setMaxFreePeriodsPerWeek] = useState(3);
@@ -115,7 +118,7 @@ export default function SettingsPage() {
   const updateSlashGroupQuotaMutation = useMutation({
     mutationFn: async (payload: {
       subjects: string[];
-      field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2ss3Quota";
+      field: "jssQuota" | "jss1Quota" | "jss2Quota" | "jss3Quota" | "ss1Quota" | "ss2Quota" | "ss3Quota" | "ss2ss3Quota";
       value: number;
     }) => apiRequest("PATCH", "/api/quotas/slash-group", payload),
     onSuccess: () => {
@@ -140,12 +143,14 @@ export default function SettingsPage() {
       jss2Quota: number;
       jss3Quota: number;
       ss1Quota: number;
+      ss2Quota: number;
+      ss3Quota: number;
       ss2ss3Quota: number;
       isSlashSubject: boolean;
       slashPairName: string | null;
       slashThirdName: string | null;
-      preferredPeriods?: { jss: number[]; jss1: number[]; jss2: number[]; jss3: number[]; ss1: number[]; ss2ss3: number[] };
-      requiredDoubles?: { jss: number; jss1: number; jss2: number; jss3: number; ss1: number; ss2ss3: number };
+      preferredPeriods?: { jss: number[]; jss1: number[]; jss2: number[]; jss3: number[]; ss1: number[]; ss2: number[]; ss3: number[]; ss2ss3: number[] };
+      requiredDoubles?: { jss: number; jss1: number; jss2: number; jss3: number; ss1: number; ss2: number; ss3: number; ss2ss3: number };
       singleOnly?: boolean;
     }) => {
       return apiRequest("POST", "/api/subjects", data);
@@ -215,7 +220,8 @@ export default function SettingsPage() {
     setNewSubjectJss2Quota(4);
     setNewSubjectJss3Quota(4);
     setNewSubjectSs1Quota(4);
-    setNewSubjectSs2ss3Quota(4);
+    setNewSubjectSs2Quota(4);
+    setNewSubjectSs3Quota(4);
     setNewSubjectIsSlash(false);
     setNewSubjectSlashPair("");
     setNewSubjectSlashThird("");
@@ -223,12 +229,14 @@ export default function SettingsPage() {
     setNewSubjectPreferredJss2([]);
     setNewSubjectPreferredJss3([]);
     setNewSubjectPreferredSs1([]);
-    setNewSubjectPreferredSs2ss3([]);
+    setNewSubjectPreferredSs2([]);
+    setNewSubjectPreferredSs3([]);
     setNewSubjectDoublesJss1(0);
     setNewSubjectDoublesJss2(0);
     setNewSubjectDoublesJss3(0);
     setNewSubjectDoublesSs1(0);
-    setNewSubjectDoublesSs2ss3(0);
+    setNewSubjectDoublesSs2(0);
+    setNewSubjectDoublesSs3(0);
     setNewSubjectSingleOnly(false);
     setEditingSubject(null);
   };
@@ -245,7 +253,8 @@ export default function SettingsPage() {
     setNewSubjectJss2Quota(subject.jss2Quota ?? subject.jssQuota);
     setNewSubjectJss3Quota(subject.jss3Quota ?? subject.jssQuota);
     setNewSubjectSs1Quota(subject.ss1Quota);
-    setNewSubjectSs2ss3Quota(subject.ss2ss3Quota);
+    setNewSubjectSs2Quota(subject.ss2Quota ?? subject.ss2ss3Quota);
+    setNewSubjectSs3Quota(subject.ss3Quota ?? subject.ss2ss3Quota);
     setNewSubjectIsSlash(subject.isSlashSubject);
     setNewSubjectSlashPair(subject.slashPairName || "");
     setNewSubjectSlashThird(subject.slashThirdName || "");
@@ -253,12 +262,14 @@ export default function SettingsPage() {
     setNewSubjectPreferredJss2(subject.preferredPeriods?.jss2 ?? subject.preferredPeriods?.jss ?? []);
     setNewSubjectPreferredJss3(subject.preferredPeriods?.jss3 ?? subject.preferredPeriods?.jss ?? []);
     setNewSubjectPreferredSs1(subject.preferredPeriods?.ss1 ?? []);
-    setNewSubjectPreferredSs2ss3(subject.preferredPeriods?.ss2ss3 ?? []);
+    setNewSubjectPreferredSs2(subject.preferredPeriods?.ss2 ?? subject.preferredPeriods?.ss2ss3 ?? []);
+    setNewSubjectPreferredSs3(subject.preferredPeriods?.ss3 ?? subject.preferredPeriods?.ss2ss3 ?? []);
     setNewSubjectDoublesJss1(subject.requiredDoubles?.jss1 ?? subject.requiredDoubles?.jss ?? 0);
     setNewSubjectDoublesJss2(subject.requiredDoubles?.jss2 ?? subject.requiredDoubles?.jss ?? 0);
     setNewSubjectDoublesJss3(subject.requiredDoubles?.jss3 ?? subject.requiredDoubles?.jss ?? 0);
     setNewSubjectDoublesSs1(subject.requiredDoubles?.ss1 ?? 0);
-    setNewSubjectDoublesSs2ss3(subject.requiredDoubles?.ss2ss3 ?? 0);
+    setNewSubjectDoublesSs2(subject.requiredDoubles?.ss2 ?? subject.requiredDoubles?.ss2ss3 ?? 0);
+    setNewSubjectDoublesSs3(subject.requiredDoubles?.ss3 ?? subject.requiredDoubles?.ss2ss3 ?? 0);
     setNewSubjectSingleOnly(subject.singleOnly ?? false);
     setSubjectDialogOpen(true);
   };
@@ -283,17 +294,21 @@ export default function SettingsPage() {
       jss2: [...newSubjectPreferredJss2].sort((a, b) => a - b),
       jss3: [...newSubjectPreferredJss3].sort((a, b) => a - b),
       ss1: [...newSubjectPreferredSs1].sort((a, b) => a - b),
-      ss2ss3: [...newSubjectPreferredSs2ss3].sort((a, b) => a - b),
+      ss2: [...newSubjectPreferredSs2].sort((a, b) => a - b),
+      ss3: [...newSubjectPreferredSs3].sort((a, b) => a - b),
+      ss2ss3: [...new Set([...newSubjectPreferredSs2, ...newSubjectPreferredSs3])].sort((a, b) => a - b),
     };
     const requiredDoubles = newSubjectSingleOnly
-      ? { jss: 0, jss1: 0, jss2: 0, jss3: 0, ss1: 0, ss2ss3: 0 }
+      ? { jss: 0, jss1: 0, jss2: 0, jss3: 0, ss1: 0, ss2: 0, ss3: 0, ss2ss3: 0 }
       : {
           jss: newSubjectDoublesJss1,
           jss1: newSubjectDoublesJss1,
           jss2: newSubjectDoublesJss2,
           jss3: newSubjectDoublesJss3,
           ss1: newSubjectDoublesSs1,
-          ss2ss3: newSubjectDoublesSs2ss3,
+          ss2: newSubjectDoublesSs2,
+          ss3: newSubjectDoublesSs3,
+          ss2ss3: Math.max(newSubjectDoublesSs2, newSubjectDoublesSs3),
         };
     if (editingSubject) {
       updateSubjectMutation.mutate({
@@ -305,7 +320,9 @@ export default function SettingsPage() {
           jss2Quota: newSubjectJss2Quota,
           jss3Quota: newSubjectJss3Quota,
           ss1Quota: newSubjectSs1Quota,
-          ss2ss3Quota: newSubjectSs2ss3Quota,
+          ss2Quota: newSubjectSs2Quota,
+          ss3Quota: newSubjectSs3Quota,
+          ss2ss3Quota: Math.max(newSubjectSs2Quota, newSubjectSs3Quota),
           isSlashSubject: isSlash,
           slashPairName: pairName,
         slashThirdName: thirdName,
@@ -322,7 +339,9 @@ export default function SettingsPage() {
         jss2Quota: newSubjectJss2Quota,
         jss3Quota: newSubjectJss3Quota,
         ss1Quota: newSubjectSs1Quota,
-        ss2ss3Quota: newSubjectSs2ss3Quota,
+        ss2Quota: newSubjectSs2Quota,
+        ss3Quota: newSubjectSs3Quota,
+        ss2ss3Quota: Math.max(newSubjectSs2Quota, newSubjectSs3Quota),
         isSlashSubject: isSlash,
         slashPairName: pairName,
         slashThirdName: thirdName,
@@ -408,8 +427,9 @@ export default function SettingsPage() {
                         <span>JSS2: {subject.jss2Quota ?? subject.jssQuota}</span>
                         <span>JSS3: {subject.jss3Quota ?? subject.jssQuota}</span>
                         <span>SS1: {subject.ss1Quota}</span>
-                        <span>SS2/SS3: {subject.ss2ss3Quota}</span>
-                        <span className="font-medium text-foreground">Total: {(subject.jss1Quota ?? subject.jssQuota) + (subject.jss2Quota ?? subject.jssQuota) + (subject.jss3Quota ?? subject.jssQuota) + subject.ss1Quota + (subject.ss2ss3Quota * 2)}</span>
+                        <span>SS2: {subject.ss2Quota ?? subject.ss2ss3Quota}</span>
+                        <span>SS3: {subject.ss3Quota ?? subject.ss2ss3Quota}</span>
+                        <span className="font-medium text-foreground">Total: {(subject.jss1Quota ?? subject.jssQuota) + (subject.jss2Quota ?? subject.jssQuota) + (subject.jss3Quota ?? subject.jssQuota) + subject.ss1Quota + (subject.ss2Quota ?? subject.ss2ss3Quota) + (subject.ss3Quota ?? subject.ss2ss3Quota)}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
@@ -457,13 +477,14 @@ export default function SettingsPage() {
                   data-testid="input-subject-name"
                 />
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
                 {([
                   ["JSS1", "jss1-quota", newSubjectJss1Quota, setNewSubjectJss1Quota],
                   ["JSS2", "jss2-quota", newSubjectJss2Quota, setNewSubjectJss2Quota],
                   ["JSS3", "jss3-quota", newSubjectJss3Quota, setNewSubjectJss3Quota],
                   ["SS1", "ss1-quota", newSubjectSs1Quota, setNewSubjectSs1Quota],
-                  ["SS2/SS3", "ss2ss3-quota", newSubjectSs2ss3Quota, setNewSubjectSs2ss3Quota],
+                  ["SS2", "ss2-quota", newSubjectSs2Quota, setNewSubjectSs2Quota],
+                  ["SS3", "ss3-quota", newSubjectSs3Quota, setNewSubjectSs3Quota],
                 ] as const).map(([label, id, value, setter]) => (
                   <div className="space-y-2" key={id}>
                     <Label htmlFor={id}>{label} Quota</Label>
@@ -480,10 +501,10 @@ export default function SettingsPage() {
               </div>
               <div className="bg-muted/50 rounded-md p-3 mt-2">
                 <p className="text-sm font-medium">
-                  Total Weekly Periods: {newSubjectJss1Quota + newSubjectJss2Quota + newSubjectJss3Quota + newSubjectSs1Quota + (newSubjectSs2ss3Quota * 2)}
+                  Total Weekly Periods: {newSubjectJss1Quota + newSubjectJss2Quota + newSubjectJss3Quota + newSubjectSs1Quota + newSubjectSs2Quota + newSubjectSs3Quota}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  JSS1 ({newSubjectJss1Quota}) + JSS2 ({newSubjectJss2Quota}) + JSS3 ({newSubjectJss3Quota}) + SS1 ({newSubjectSs1Quota}) + SS2/SS3 ({newSubjectSs2ss3Quota} × 2)
+                  JSS1 ({newSubjectJss1Quota}) + JSS2 ({newSubjectJss2Quota}) + JSS3 ({newSubjectJss3Quota}) + SS1 ({newSubjectSs1Quota}) + SS2 ({newSubjectSs2Quota}) + SS3 ({newSubjectSs3Quota})
                 </p>
               </div>
 
@@ -494,20 +515,22 @@ export default function SettingsPage() {
                     Pick the periods this subject should land in first. Leave empty to allow any period.
                   </p>
                 </div>
-                {(["jss1", "jss2", "jss3", "ss1", "ss2ss3"] as const).map((lvl) => {
-                  const label = lvl === "jss1" ? "JSS1" : lvl === "jss2" ? "JSS2" : lvl === "jss3" ? "JSS3" : lvl === "ss1" ? "SS1" : "SS2/SS3";
+                {(["jss1", "jss2", "jss3", "ss1", "ss2", "ss3"] as const).map((lvl) => {
+                  const label = lvl === "jss1" ? "JSS1" : lvl === "jss2" ? "JSS2" : lvl === "jss3" ? "JSS3" : lvl === "ss1" ? "SS1" : lvl === "ss2" ? "SS2" : "SS3";
                   const value =
                     lvl === "jss1" ? newSubjectPreferredJss1
                     : lvl === "jss2" ? newSubjectPreferredJss2
                     : lvl === "jss3" ? newSubjectPreferredJss3
                     : lvl === "ss1" ? newSubjectPreferredSs1
-                    : newSubjectPreferredSs2ss3;
+                    : lvl === "ss2" ? newSubjectPreferredSs2
+                    : newSubjectPreferredSs3;
                   const setter =
                     lvl === "jss1" ? setNewSubjectPreferredJss1
                     : lvl === "jss2" ? setNewSubjectPreferredJss2
                     : lvl === "jss3" ? setNewSubjectPreferredJss3
                     : lvl === "ss1" ? setNewSubjectPreferredSs1
-                    : setNewSubjectPreferredSs2ss3;
+                    : lvl === "ss2" ? setNewSubjectPreferredSs2
+                    : setNewSubjectPreferredSs3;
                   return (
                     <div key={lvl} className="space-y-1">
                       <Label className="text-xs text-muted-foreground">{label}</Label>
@@ -559,13 +582,14 @@ export default function SettingsPage() {
                       : "Number of double-period blocks the generator must place per class."}
                   </p>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                   {([
                     ["JSS1", "doubles-jss1", newSubjectDoublesJss1, setNewSubjectDoublesJss1],
                     ["JSS2", "doubles-jss2", newSubjectDoublesJss2, setNewSubjectDoublesJss2],
                     ["JSS3", "doubles-jss3", newSubjectDoublesJss3, setNewSubjectDoublesJss3],
                     ["SS1", "doubles-ss1", newSubjectDoublesSs1, setNewSubjectDoublesSs1],
-                    ["SS2/SS3", "doubles-ss2ss3", newSubjectDoublesSs2ss3, setNewSubjectDoublesSs2ss3],
+                    ["SS2", "doubles-ss2", newSubjectDoublesSs2, setNewSubjectDoublesSs2],
+                    ["SS3", "doubles-ss3", newSubjectDoublesSs3, setNewSubjectDoublesSs3],
                   ] as const).map(([label, id, value, setter]) => (
                     <div className="space-y-1" key={id}>
                       <Label htmlFor={id} className="text-xs text-muted-foreground">{label}</Label>
