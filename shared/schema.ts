@@ -41,11 +41,29 @@ export function findSlashGroup<S extends {
   isSlashSubject: boolean;
   slashPairName: string | null;
   slashThirdName?: string | null;
-}>(subjects: S[], subjectName: string): S[] {
+  ss2SlashPairName?: string | null;
+  ss2SlashThirdName?: string | null;
+  ss3SlashPairName?: string | null;
+  ss3SlashThirdName?: string | null;
+}>(subjects: S[], subjectName: string, schoolClass?: SchoolClass): S[] {
   const self = subjects.find((s) => s.name === subjectName);
-  if (!self || !self.isSlashSubject || !self.slashPairName) return [];
+  if (!self || !self.isSlashSubject) return [];
 
-  const declared = [self.name, self.slashPairName, self.slashThirdName ?? null]
+  const pairField = schoolClass === "SS2"
+    ? "ss2SlashPairName"
+    : schoolClass === "SS3"
+      ? "ss3SlashPairName"
+      : "slashPairName";
+  const thirdField = schoolClass === "SS2"
+    ? "ss2SlashThirdName"
+    : schoolClass === "SS3"
+      ? "ss3SlashThirdName"
+      : "slashThirdName";
+  const pairName = self[pairField] as string | null | undefined;
+  const thirdName = self[thirdField] as string | null | undefined;
+  if (!pairName) return [];
+
+  const declared = [self.name, pairName, thirdName ?? null]
     .filter((name): name is string => !!name);
   const unique = Array.from(new Set(declared));
   if (unique.length < 2 || unique.length > 3) return [];
@@ -57,7 +75,9 @@ export function findSlashGroup<S extends {
 
   const expected = [...unique].sort().join("|");
   for (const member of group) {
-    const memberDeclared = [member.name, member.slashPairName, member.slashThirdName ?? null]
+    const memberPair = member[pairField] as string | null | undefined;
+    const memberThird = member[thirdField] as string | null | undefined;
+    const memberDeclared = [member.name, memberPair, memberThird ?? null]
       .filter((name): name is string => !!name);
     if (Array.from(new Set(memberDeclared)).sort().join("|") !== expected) return [];
   }
@@ -70,8 +90,12 @@ export function findSlashPair<S extends {
   isSlashSubject: boolean;
   slashPairName: string | null;
   slashThirdName?: string | null;
-}>(subjects: S[], subjectName: string): S | null {
-  const group = findSlashGroup(subjects, subjectName);
+  ss2SlashPairName?: string | null;
+  ss2SlashThirdName?: string | null;
+  ss3SlashPairName?: string | null;
+  ss3SlashThirdName?: string | null;
+}>(subjects: S[], subjectName: string, schoolClass?: SchoolClass): S | null {
+  const group = findSlashGroup(subjects, subjectName, schoolClass);
   return group.find((s) => s.name !== subjectName) ?? null;
 }
 
@@ -213,6 +237,10 @@ export const subjects = pgTable("subjects", {
   isSlashSubject: integer("is_slash_subject").notNull().default(0),
   slashPairName: text("slash_pair_name"),
   slashThirdName: text("slash_third_name"),
+  ss2SlashPairName: text("ss2_slash_pair_name"),
+  ss2SlashThirdName: text("ss2_slash_third_name"),
+  ss3SlashPairName: text("ss3_slash_pair_name"),
+  ss3SlashThirdName: text("ss3_slash_third_name"),
   singleOnly: integer("single_only").notNull().default(0),
   preferredPeriods: jsonb("preferred_periods")
     .$type<PreferredPeriods>()
@@ -538,6 +566,10 @@ export const subjectSchema = z.object({
   isSlashSubject: z.boolean().default(false),
   slashPairName: z.string().nullable().default(null),
   slashThirdName: z.string().nullable().default(null),
+  ss2SlashPairName: z.string().nullable().default(null),
+  ss2SlashThirdName: z.string().nullable().default(null),
+  ss3SlashPairName: z.string().nullable().default(null),
+  ss3SlashThirdName: z.string().nullable().default(null),
   singleOnly: z.boolean().default(false),
   preferredPeriods: preferredPeriodsSchema.default({ jss: [], ss1: [], ss2ss3: [] }),
   requiredDoubles: requiredDoublesSchema.default({ jss: 0, ss1: 0, ss2ss3: 0 }),

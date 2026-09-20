@@ -116,8 +116,8 @@ export function PlacementDialog({
   const editingLocked = isOccupied && !!slot?.isLocked;
   const schoolClass = slot?.schoolClass as SchoolClass;
   const selectedSubjectIsSlash = useMemo(
-    () => !!subject && !isActivity && findSlashGroup(customSubjects, subject).length >= 2,
-    [subject, customSubjects, isActivity],
+    () => !!subject && !isActivity && findSlashGroup(customSubjects, subject, schoolClass).length >= 2,
+    [subject, customSubjects, schoolClass, isActivity],
   );
   const maxPeriods = slot ? PERIODS_PER_DAY[slot.day] : 9;
 
@@ -147,11 +147,11 @@ export function PlacementDialog({
 
   const slashPairInfo = useMemo(() => {
     if (slotType !== "slash" || !subject || isActivity) return null;
-    const group = findSlashGroup(customSubjects, subject);
+    const group = findSlashGroup(customSubjects, subject, schoolClass);
     if (group.length < 2) return null;
     const partners = group.filter((s) => s.name !== subject).map((s) => s.name);
     return { pairSubject: partners[0], thirdSubject: partners[1] || "" };
-  }, [slotType, subject, customSubjects, isActivity]);
+  }, [slotType, subject, customSubjects, schoolClass, isActivity]);
 
   const slashPairTeachers = useMemo(() => {
     if (!slashPairInfo?.pairSubject) return [];

@@ -37,6 +37,9 @@ export default function SettingsPage() {
   const [newSubjectIsSlash, setNewSubjectIsSlash] = useState(false);
   const [newSubjectSlashPair, setNewSubjectSlashPair] = useState<string>("");
   const [newSubjectSlashThird, setNewSubjectSlashThird] = useState<string>("");
+  const [newSubjectSs3IsSlash, setNewSubjectSs3IsSlash] = useState(false);
+  const [newSubjectSs3SlashPair, setNewSubjectSs3SlashPair] = useState<string>("");
+  const [newSubjectSs3SlashThird, setNewSubjectSs3SlashThird] = useState<string>("");
   const [newSubjectPreferredJss1, setNewSubjectPreferredJss1] = useState<number[]>([]);
   const [newSubjectPreferredJss2, setNewSubjectPreferredJss2] = useState<number[]>([]);
   const [newSubjectPreferredJss3, setNewSubjectPreferredJss3] = useState<number[]>([]);
@@ -149,6 +152,10 @@ export default function SettingsPage() {
       isSlashSubject: boolean;
       slashPairName: string | null;
       slashThirdName: string | null;
+      ss2SlashPairName: string | null;
+      ss2SlashThirdName: string | null;
+      ss3SlashPairName: string | null;
+      ss3SlashThirdName: string | null;
       preferredPeriods?: { jss: number[]; jss1: number[]; jss2: number[]; jss3: number[]; ss1: number[]; ss2: number[]; ss3: number[]; ss2ss3: number[] };
       requiredDoubles?: { jss: number; jss1: number; jss2: number; jss3: number; ss1: number; ss2: number; ss3: number; ss2ss3: number };
       singleOnly?: boolean;
@@ -228,6 +235,9 @@ export default function SettingsPage() {
     setNewSubjectIsSlash(false);
     setNewSubjectSlashPair("");
     setNewSubjectSlashThird("");
+    setNewSubjectSs3IsSlash(false);
+    setNewSubjectSs3SlashPair("");
+    setNewSubjectSs3SlashThird("");
     setNewSubjectPreferredJss1([]);
     setNewSubjectPreferredJss2([]);
     setNewSubjectPreferredJss3([]);
@@ -258,9 +268,12 @@ export default function SettingsPage() {
     setNewSubjectSs1Quota(subject.ss1Quota);
     setNewSubjectSs2Quota(subject.ss2Quota ?? subject.ss2ss3Quota);
     setNewSubjectSs3Quota(subject.ss3Quota ?? subject.ss2ss3Quota);
-    setNewSubjectIsSlash(subject.isSlashSubject);
-    setNewSubjectSlashPair(subject.slashPairName || "");
-    setNewSubjectSlashThird(subject.slashThirdName || "");
+    setNewSubjectIsSlash(!!subject.ss2SlashPairName);
+    setNewSubjectSlashPair(subject.ss2SlashPairName || "");
+    setNewSubjectSlashThird(subject.ss2SlashThirdName || "");
+    setNewSubjectSs3IsSlash(!!subject.ss3SlashPairName);
+    setNewSubjectSs3SlashPair(subject.ss3SlashPairName || "");
+    setNewSubjectSs3SlashThird(subject.ss3SlashThirdName || "");
     setNewSubjectPreferredJss1(subject.preferredPeriods?.jss1 ?? subject.preferredPeriods?.jss ?? []);
     setNewSubjectPreferredJss2(subject.preferredPeriods?.jss2 ?? subject.preferredPeriods?.jss ?? []);
     setNewSubjectPreferredJss3(subject.preferredPeriods?.jss3 ?? subject.preferredPeriods?.jss ?? []);
@@ -288,9 +301,13 @@ export default function SettingsPage() {
   );
 
   const handleSubjectSubmit = () => {
-    const isSlash = newSubjectIsSlash;
-    const pairName = isSlash && newSubjectSlashPair ? newSubjectSlashPair : null;
-    const thirdName = isSlash && newSubjectSlashThird ? newSubjectSlashThird : null;
+    const ss2PairName = newSubjectIsSlash && newSubjectSlashPair ? newSubjectSlashPair : null;
+    const ss2ThirdName = newSubjectIsSlash && newSubjectSlashThird ? newSubjectSlashThird : null;
+    const ss3PairName = newSubjectSs3IsSlash && newSubjectSs3SlashPair ? newSubjectSs3SlashPair : null;
+    const ss3ThirdName = newSubjectSs3IsSlash && newSubjectSs3SlashThird ? newSubjectSs3SlashThird : null;
+    const isSlash = !!(ss2PairName || ss3PairName);
+    const pairName = ss2PairName ?? ss3PairName;
+    const thirdName = ss2PairName ? ss2ThirdName : ss3ThirdName;
     const preferredPeriods = {
       jss: [...newSubjectPreferredJss1].sort((a, b) => a - b),
       jss1: [...newSubjectPreferredJss1].sort((a, b) => a - b),
@@ -328,7 +345,11 @@ export default function SettingsPage() {
           ss2ss3Quota: Math.max(newSubjectSs2Quota, newSubjectSs3Quota),
           isSlashSubject: isSlash,
           slashPairName: pairName,
-        slashThirdName: thirdName,
+          slashThirdName: thirdName,
+          ss2SlashPairName: ss2PairName,
+          ss2SlashThirdName: ss2ThirdName,
+          ss3SlashPairName: ss3PairName,
+          ss3SlashThirdName: ss3ThirdName,
           preferredPeriods,
           requiredDoubles,
           singleOnly: newSubjectSingleOnly,
@@ -348,6 +369,10 @@ export default function SettingsPage() {
         isSlashSubject: isSlash,
         slashPairName: pairName,
         slashThirdName: thirdName,
+        ss2SlashPairName: ss2PairName,
+        ss2SlashThirdName: ss2ThirdName,
+        ss3SlashPairName: ss3PairName,
+        ss3SlashThirdName: ss3ThirdName,
         preferredPeriods,
         requiredDoubles,
         singleOnly: newSubjectSingleOnly,
@@ -616,9 +641,9 @@ export default function SettingsPage() {
               <div className="space-y-3 border-t pt-4">
                 <div className="flex items-center justify-between gap-4">
                   <div className="space-y-0.5">
-                    <Label htmlFor="subject-is-slash">Slash subject</Label>
+                    <Label htmlFor="subject-is-slash">SS2 slash subject</Label>
                     <p className="text-xs text-muted-foreground">
-                      Schedule this subject in the same period as a paired subject (e.g. Physics / Literature).
+                      Configure the subjects that SS2 takes in the same period.
                     </p>
                   </div>
                   <Switch
@@ -675,8 +700,74 @@ export default function SettingsPage() {
                       </Select>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      A slash group can contain 2 or 3 subjects. All members are scheduled in the same period with different teachers.
+                      This group applies to SS2 only.
                     </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="subject-ss3-is-slash">SS3 slash subject</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Configure SS3 independently; it may use different subject combinations from SS2.
+                    </p>
+                  </div>
+                  <Switch
+                    id="subject-ss3-is-slash"
+                    checked={newSubjectSs3IsSlash}
+                    onCheckedChange={(v) => {
+                      setNewSubjectSs3IsSlash(v);
+                      if (!v) {
+                        setNewSubjectSs3SlashPair("");
+                        setNewSubjectSs3SlashThird("");
+                      }
+                    }}
+                    data-testid="switch-subject-ss3-slash"
+                  />
+                </div>
+                {newSubjectSs3IsSlash && (
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="subject-ss3-slash-pair">Slash partner 1</Label>
+                      <Select
+                        value={newSubjectSs3SlashPair}
+                        onValueChange={(v) => {
+                          setNewSubjectSs3SlashPair(v);
+                          if (newSubjectSs3SlashThird === v) setNewSubjectSs3SlashThird("");
+                        }}
+                      >
+                        <SelectTrigger id="subject-ss3-slash-pair" data-testid="select-subject-ss3-slash-pair">
+                          <SelectValue placeholder="Choose the second subject" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {slashPairCandidates.map((s) => (
+                            <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="subject-ss3-slash-third">Slash partner 2 (optional)</Label>
+                      <Select
+                        value={newSubjectSs3SlashThird || "none"}
+                        onValueChange={(v) => setNewSubjectSs3SlashThird(v === "none" ? "" : v)}
+                      >
+                        <SelectTrigger id="subject-ss3-slash-third" data-testid="select-subject-ss3-slash-third">
+                          <SelectValue placeholder="Add a third subject" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No third subject</SelectItem>
+                          {slashPairCandidates
+                            .filter((s) => s.name !== newSubjectSs3SlashPair)
+                            .map((s) => (
+                              <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <p className="text-xs text-muted-foreground">This group applies to SS3 only.</p>
                   </div>
                 )}
               </div>
@@ -687,7 +778,7 @@ export default function SettingsPage() {
               </Button>
               <Button
                 onClick={handleSubjectSubmit}
-                disabled={!newSubjectName.trim() || (newSubjectIsSlash && !newSubjectSlashPair) || createSubjectMutation.isPending || updateSubjectMutation.isPending}
+                disabled={!newSubjectName.trim() || (newSubjectIsSlash && !newSubjectSlashPair) || (newSubjectSs3IsSlash && !newSubjectSs3SlashPair) || createSubjectMutation.isPending || updateSubjectMutation.isPending}
                 data-testid="button-submit-subject"
               >
                 {createSubjectMutation.isPending || updateSubjectMutation.isPending ? (
@@ -732,22 +823,21 @@ export default function SettingsPage() {
                       {(() => {
                         // Slash groups occupy one timetable slot within each senior class.
                         // SS2 and SS3 now have independent quotas, so calculate them separately.
-                        const seenGroups = new Set<string>();
-                        const slashNames = new Set<string>();
-                        const seniorSlashGroups: string[][] = [];
-                        for (const s of subjects) {
-                          if (!s.isSlashSubject) continue;
-                          const group = findSlashGroup(subjects, s.name);
-                          if (group.length < 2) continue;
-                          const names = group.map((item) => item.name).sort();
-                          const key = names.join("|");
-                          names.forEach((name) => slashNames.add(name));
-                          if (seenGroups.has(key)) continue;
-                          seenGroups.add(key);
-                          seniorSlashGroups.push(names);
-                        }
-                        const seniorTotal = (field: "ss2Quota" | "ss3Quota") => {
+                        const seniorTotal = (field: "ss2Quota" | "ss3Quota", schoolClass: "SS2" | "SS3") => {
                           const valueFor = (q: SubjectQuota) => q[field] ?? q.ss2ss3Quota;
+                          const seenGroups = new Set<string>();
+                          const slashNames = new Set<string>();
+                          const seniorSlashGroups: string[][] = [];
+                          for (const s of subjects) {
+                            const group = findSlashGroup(subjects, s.name, schoolClass);
+                            if (group.length < 2) continue;
+                            const names = group.map((item) => item.name).sort();
+                            const key = names.join("|");
+                            names.forEach((name) => slashNames.add(name));
+                            if (seenGroups.has(key)) continue;
+                            seenGroups.add(key);
+                            seniorSlashGroups.push(names);
+                          }
                           const slashTotal = seniorSlashGroups.reduce((sum, names) => {
                             const groupQuota = Math.max(
                               ...names.map((name) => {
@@ -766,8 +856,8 @@ export default function SettingsPage() {
                         const jss2Total = quotas.reduce((sum, q) => sum + (q.jss2Quota ?? q.jssQuota), 0);
                         const jss3Total = quotas.reduce((sum, q) => sum + (q.jss3Quota ?? q.jssQuota), 0);
                         const ss1Total = quotas.reduce((sum, q) => sum + q.ss1Quota, 0);
-                        const ss2Total = seniorTotal("ss2Quota");
-                        const ss3Total = seniorTotal("ss3Quota");
+                        const ss2Total = seniorTotal("ss2Quota", "SS2");
+                        const ss3Total = seniorTotal("ss3Quota", "SS3");
                         
                         const jss1InRange = jss1Total >= 37 && jss1Total <= 40;
                         const jss2InRange = jss2Total >= 37 && jss2Total <= 40;
@@ -882,7 +972,7 @@ export default function SettingsPage() {
                   const slashNamesForBadge = new Set<string>();
                   for (const s of subjects) {
                     if (!s.isSlashSubject) continue;
-                    const group = findSlashGroup(subjects, s.name);
+                    const group = findSlashGroup(subjects, s.name, label);
                     if (group.length < 2) continue;
                     const names = group.map((x) => x.name).sort();
                     const key = names.join("|");

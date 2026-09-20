@@ -43,24 +43,46 @@ type SlashRow = {
   isSlashSubject: number;
   slashPairName: string | null;
   slashThirdName: string | null;
+  ss2SlashPairName: string | null;
+  ss2SlashThirdName: string | null;
+  ss3SlashPairName: string | null;
+  ss3SlashThirdName: string | null;
 };
 
-function declaredSlashMembers(row: SlashRow): string[] {
-  return [row.name, row.slashPairName, row.slashThirdName]
+type SeniorSlashClass = "SS2" | "SS3";
+
+function slashFields(schoolClass: SeniorSlashClass) {
+  return schoolClass === "SS2"
+    ? { pair: "ss2SlashPairName" as const, third: "ss2SlashThirdName" as const,
+        otherPair: "ss3SlashPairName" as const, otherThird: "ss3SlashThirdName" as const }
+    : { pair: "ss3SlashPairName" as const, third: "ss3SlashThirdName" as const,
+        otherPair: "ss2SlashPairName" as const, otherThird: "ss2SlashThirdName" as const };
+}
+
+function declaredSlashMembers(row: SlashRow, schoolClass: SeniorSlashClass): string[] {
+  const fields = slashFields(schoolClass);
+  return [row.name, row[fields.pair], row[fields.third]]
     .filter((name): name is string => !!name);
 }
 
-async function clearSlashGroup(tx: Tx, userId: string, schoolId: string, anchorName: string): Promise<void> {
+async function clearSlashGroup(
+  tx: Tx,
+  userId: string,
+  schoolId: string,
+  schoolClass: SeniorSlashClass,
+  anchorName: string,
+): Promise<void> {
   const rows = await tx.select().from(subjects).where(
     and(eq(subjects.userId, userId), eq(subjects.schoolId, schoolId))
   );
+  const fields = slashFields(schoolClass);
   const byName = new Map(rows.map((row) => [row.name, row]));
   const affected = new Set<string>([anchorName]);
   let changed = true;
   while (changed) {
     changed = false;
     for (const row of rows) {
-      const names = declaredSlashMembers(row as SlashRow);
+      const names = declaredSlashMembers(row as SlashRow, schoolClass);
       if (!names.some((name) => affected.has(name))) continue;
       for (const name of names) {
         if (!affected.has(name)) {
@@ -74,16 +96,31 @@ async function clearSlashGroup(tx: Tx, userId: string, schoolId: string, anchorN
   for (const name of Array.from(affected)) {
     const row = byName.get(name);
     if (!row) continue;
+    const remainsSlash = !!row[fields.otherPair];
+    const legacyPair = row[fields.otherPair] ?? null;
+    const legacyThird = row[fields.otherThird] ?? null;
     await tx.update(subjects)
-      .set({ isSlashSubject: 0, slashPairName: null, slashThirdName: null })
+      .set({
+        isSlashSubject: remainsSlash ? 1 : 0,
+        slashPairName: legacyPair,
+        slashThirdName: legacyThird,
+        [fields.pair]: null,
+        [fields.third]: null,
+      })
       .where(and(eq(subjects.userId, userId), eq(subjects.schoolId, schoolId), eq(subjects.id, row.id)));
     await tx.update(subjectQuotas)
-      .set({ isSlashSubject: 0 })
+      .set({ isSlashSubject: remainsSlash ? 1 : 0 })
       .where(and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.schoolId, schoolId), eq(subjectQuotas.subject, name)));
   }
 }
 
-async function setSlashGroup(tx: Tx, userId: string, schoolId: string, rawNames: string[]): Promise<void> {
+async function setSlashGroup(
+  tx: Tx,
+  userId: string,
+  schoolId: string,
+  schoolClass: SeniorSlashClass,
+  rawNames: string[],
+): Promise<void> {
   const names = Array.from(new Set(rawNames.filter(Boolean)));
   if (names.length < 2 || names.length > 3) return;
 
@@ -92,23 +129,31 @@ async function setSlashGroup(tx: Tx, userId: string, schoolId: string, rawNames:
   );
   const byName = new Map(rows.map((row) => [row.name, row]));
   if (names.some((name) => !byName.has(name))) return;
+  const fields = slashFields(schoolClass);
 
   // Break any previous group touching any selected member before establishing
   // the new group. This prevents one subject from belonging to two groups.
   const touched = new Set<string>();
   for (const name of names) {
     const row = byName.get(name)!;
-    for (const oldName of declaredSlashMembers(row as SlashRow)) touched.add(oldName);
+    for (const oldName of declaredSlashMembers(row as SlashRow, schoolClass)) touched.add(oldName);
   }
   for (const name of Array.from(touched)) {
     if (names.includes(name)) continue;
     const row = byName.get(name);
     if (!row) continue;
+    const remainsSlash = !!row[fields.otherPair];
     await tx.update(subjects)
-      .set({ isSlashSubject: 0, slashPairName: null, slashThirdName: null })
+      .set({
+        isSlashSubject: remainsSlash ? 1 : 0,
+        slashPairName: row[fields.otherPair] ?? null,
+        slashThirdName: row[fields.otherThird] ?? null,
+        [fields.pair]: null,
+        [fields.third]: null,
+      })
       .where(and(eq(subjects.userId, userId), eq(subjects.schoolId, schoolId), eq(subjects.id, row.id)));
     await tx.update(subjectQuotas)
-      .set({ isSlashSubject: 0 })
+      .set({ isSlashSubject: remainsSlash ? 1 : 0 })
       .where(and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.schoolId, schoolId), eq(subjectQuotas.subject, name)));
   }
 
@@ -120,6 +165,8 @@ async function setSlashGroup(tx: Tx, userId: string, schoolId: string, rawNames:
         isSlashSubject: 1,
         slashPairName: others[0] ?? null,
         slashThirdName: others[1] ?? null,
+        [fields.pair]: others[0] ?? null,
+        [fields.third]: others[1] ?? null,
       })
       .where(and(eq(subjects.userId, userId), eq(subjects.schoolId, schoolId), eq(subjects.id, row.id)));
     await tx.update(subjectQuotas)
@@ -845,6 +892,10 @@ export class DatabaseStorage implements IStorage {
       isSlashSubject: row.isSlashSubject === 1,
       slashPairName: row.slashPairName,
       slashThirdName: row.slashThirdName,
+      ss2SlashPairName: row.ss2SlashPairName,
+      ss2SlashThirdName: row.ss2SlashThirdName,
+      ss3SlashPairName: row.ss3SlashPairName,
+      ss3SlashThirdName: row.ss3SlashThirdName,
       singleOnly: row.singleOnly === 1,
       preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
       requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
@@ -871,6 +922,10 @@ export class DatabaseStorage implements IStorage {
       isSlashSubject: row.isSlashSubject === 1,
       slashPairName: row.slashPairName,
       slashThirdName: row.slashThirdName,
+      ss2SlashPairName: row.ss2SlashPairName,
+      ss2SlashThirdName: row.ss2SlashThirdName,
+      ss3SlashPairName: row.ss3SlashPairName,
+      ss3SlashThirdName: row.ss3SlashThirdName,
       singleOnly: row.singleOnly === 1,
       preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
       requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
@@ -905,6 +960,10 @@ export class DatabaseStorage implements IStorage {
         isSlashSubject: subject.isSlashSubject ? 1 : 0,
         slashPairName: subject.isSlashSubject ? subject.slashPairName : null,
         slashThirdName: subject.isSlashSubject ? subject.slashThirdName : null,
+        ss2SlashPairName: subject.ss2SlashPairName,
+        ss2SlashThirdName: subject.ss2SlashThirdName,
+        ss3SlashPairName: subject.ss3SlashPairName,
+        ss3SlashThirdName: subject.ss3SlashThirdName,
         singleOnly: singleOnly ? 1 : 0,
         preferredPeriods,
         requiredDoubles,
@@ -928,8 +987,11 @@ export class DatabaseStorage implements IStorage {
         requiredDoubles,
       }).onConflictDoNothing();
 
-      if (subject.isSlashSubject && subject.slashPairName) {
-        await setSlashGroup(tx, userId, schoolId, [subject.name, subject.slashPairName, subject.slashThirdName ?? ""]);
+      if (subject.ss2SlashPairName) {
+        await setSlashGroup(tx, userId, schoolId, "SS2", [subject.name, subject.ss2SlashPairName, subject.ss2SlashThirdName ?? ""]);
+      }
+      if (subject.ss3SlashPairName) {
+        await setSlashGroup(tx, userId, schoolId, "SS3", [subject.name, subject.ss3SlashPairName, subject.ss3SlashThirdName ?? ""]);
       }
 
       return {
@@ -946,6 +1008,10 @@ export class DatabaseStorage implements IStorage {
         isSlashSubject: subject.isSlashSubject,
         slashPairName: subject.isSlashSubject ? subject.slashPairName : null,
         slashThirdName: subject.isSlashSubject ? subject.slashThirdName : null,
+        ss2SlashPairName: subject.ss2SlashPairName,
+        ss2SlashThirdName: subject.ss2SlashThirdName,
+        ss3SlashPairName: subject.ss3SlashPairName,
+        ss3SlashThirdName: subject.ss3SlashThirdName,
         singleOnly,
         preferredPeriods,
         requiredDoubles,
@@ -960,13 +1026,14 @@ export class DatabaseStorage implements IStorage {
 
     return await db.transaction(async (tx) => {
       const newName = updates.name ?? existing.name;
-      const newSlash = updates.isSlashSubject ?? existing.isSlashSubject;
-      const newPair = newSlash
-        ? (updates.slashPairName !== undefined ? updates.slashPairName : existing.slashPairName)
-        : null;
-      const newThird = newSlash
-        ? (updates.slashThirdName !== undefined ? updates.slashThirdName : existing.slashThirdName)
-        : null;
+      const disableSlash = updates.isSlashSubject === false;
+      const newSs2Pair = disableSlash ? null : (updates.ss2SlashPairName !== undefined ? updates.ss2SlashPairName : existing.ss2SlashPairName);
+      const newSs2Third = disableSlash ? null : (updates.ss2SlashThirdName !== undefined ? updates.ss2SlashThirdName : existing.ss2SlashThirdName);
+      const newSs3Pair = disableSlash ? null : (updates.ss3SlashPairName !== undefined ? updates.ss3SlashPairName : existing.ss3SlashPairName);
+      const newSs3Third = disableSlash ? null : (updates.ss3SlashThirdName !== undefined ? updates.ss3SlashThirdName : existing.ss3SlashThirdName);
+      const newSlash = !!(newSs2Pair || newSs3Pair);
+      const newPair = newSs2Pair ?? newSs3Pair;
+      const newThird = newSs2Pair ? newSs2Third : newSs3Third;
       const newSingleOnly = updates.singleOnly ?? existing.singleOnly;
       const newRequiredDoubles = newSingleOnly
         ? { jss: 0, ss1: 0, ss2ss3: 0 }
@@ -974,9 +1041,8 @@ export class DatabaseStorage implements IStorage {
 
       // Break the prior slash group first, then establish the desired group
       // after the subject row has been updated/renamed.
-      if (existing.isSlashSubject) {
-        await clearSlashGroup(tx, userId, schoolId, existing.name);
-      }
+      if (existing.ss2SlashPairName) await clearSlashGroup(tx, userId, schoolId, "SS2", existing.name);
+      if (existing.ss3SlashPairName) await clearSlashGroup(tx, userId, schoolId, "SS3", existing.name);
 
       const updateValues: Record<string, unknown> = {};
       if (updates.name !== undefined) updateValues.name = newName;
@@ -991,6 +1057,10 @@ export class DatabaseStorage implements IStorage {
       updateValues.isSlashSubject = newSlash ? 1 : 0;
       updateValues.slashPairName = newPair;
       updateValues.slashThirdName = newThird;
+      updateValues.ss2SlashPairName = newSs2Pair;
+      updateValues.ss2SlashThirdName = newSs2Third;
+      updateValues.ss3SlashPairName = newSs3Pair;
+      updateValues.ss3SlashThirdName = newSs3Third;
       if (updates.preferredPeriods !== undefined) updateValues.preferredPeriods = updates.preferredPeriods;
       if (updates.singleOnly !== undefined) updateValues.singleOnly = newSingleOnly ? 1 : 0;
       if (updates.requiredDoubles !== undefined || updates.singleOnly === true) updateValues.requiredDoubles = newRequiredDoubles;
@@ -1031,9 +1101,8 @@ export class DatabaseStorage implements IStorage {
         );
       }
 
-      if (newSlash && newPair) {
-        await setSlashGroup(tx, userId, schoolId, [newName, newPair, newThird ?? ""]);
-      }
+      if (newSs2Pair) await setSlashGroup(tx, userId, schoolId, "SS2", [newName, newSs2Pair, newSs2Third ?? ""]);
+      if (newSs3Pair) await setSlashGroup(tx, userId, schoolId, "SS3", [newName, newSs3Pair, newSs3Third ?? ""]);
 
       return {
         id: existing.id,
@@ -1049,6 +1118,10 @@ export class DatabaseStorage implements IStorage {
         isSlashSubject: newSlash,
         slashPairName: newPair,
         slashThirdName: newThird,
+        ss2SlashPairName: newSs2Pair,
+        ss2SlashThirdName: newSs2Third,
+        ss3SlashPairName: newSs3Pair,
+        ss3SlashThirdName: newSs3Third,
         singleOnly: newSingleOnly,
         preferredPeriods: updates.preferredPeriods ?? existing.preferredPeriods,
         requiredDoubles: newRequiredDoubles,
@@ -1063,7 +1136,8 @@ export class DatabaseStorage implements IStorage {
 
     await db.transaction(async (tx) => {
       if (existing.isSlashSubject) {
-        await clearSlashGroup(tx, userId, schoolId, existing.name);
+        await clearSlashGroup(tx, userId, schoolId, "SS2", existing.name);
+        await clearSlashGroup(tx, userId, schoolId, "SS3", existing.name);
       }
       await tx.delete(subjects).where(
         and(eq(subjects.userId, userId), eq(subjects.schoolId, schoolId), eq(subjects.id, id))

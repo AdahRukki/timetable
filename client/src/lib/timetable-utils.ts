@@ -578,7 +578,7 @@ export function validatePlacement(
   
   // Slash subject validation supports two- and three-way groups.
   if (slotType === "slash") {
-    const group = findSlashGroup(subjects, subject);
+    const group = findSlashGroup(subjects, subject, schoolClass);
     const expected = group.filter((s) => s.name !== subject).map((s) => s.name).sort();
     const requested = [request.slashPairSubject, request.slashThirdSubject]
       .filter((s): s is string => !!s)

@@ -373,7 +373,7 @@ async function validatePlacement(
   
   // Slash subject validation (two- or three-way groups).
   if (slotType === "slash") {
-    const group = findSlashGroup(allSubjects, subject);
+    const group = findSlashGroup(allSubjects, subject, schoolClass);
     const expectedPartners = group.filter((s) => s.name !== subject).map((s) => s.name);
     const requestedPartners = [slashPairSubject, slashThirdSubject]
       .filter((name): name is string => !!name);
@@ -1048,6 +1048,10 @@ export async function registerRoutes(
         isSlashSubject: z.boolean().optional(),
         slashPairName: z.string().nullable().optional(),
         slashThirdName: z.string().nullable().optional(),
+        ss2SlashPairName: z.string().nullable().optional(),
+        ss2SlashThirdName: z.string().nullable().optional(),
+        ss3SlashPairName: z.string().nullable().optional(),
+        ss3SlashThirdName: z.string().nullable().optional(),
         singleOnly: z.boolean().optional(),
         preferredPeriods: preferredPeriodsSchema.optional(),
         requiredDoubles: requiredDoublesSchema.optional(),
@@ -1675,13 +1679,13 @@ function countDoubleBlocks(timetable: Timetable, cls: SchoolClass, subject: stri
   return blocks;
 }
 
-function getRequiredDoubleDeficit(timetable: Timetable, quotas: SubjectQuota[]): number {
+function getRequiredDoubleDeficit(timetable: Timetable, quotas: SubjectQuota[], subjects: Subject[]): number {
   let deficit = 0;
   for (const cls of CLASSES) {
     for (const quota of quotas) {
       const required = getRequiredDoubles(quota, cls);
       if (required <= 0) continue;
-      if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) continue;
+      if (findSlashGroup(subjects, quota.subject, cls).length >= 2) continue;
       const actual = countDoubleBlocks(timetable, cls, quota.subject);
       deficit += Math.max(0, required - actual);
     }
@@ -1885,6 +1889,7 @@ function swapRepairPass(
 function preValidate(
   teachers: Teacher[],
   quotas: SubjectQuota[],
+  subjects: Subject[],
   warnings: string[],
   allowDoublePeriods: boolean,
 ): void {
@@ -1902,7 +1907,7 @@ function preValidate(
       if (requiredDoubles > 0 && (!allowDoublePeriods || quota.singleOnly)) {
         warnings.push(`PRE-VALIDATE: ${quota.subject} → ${cls} requires doubles but doubles are disabled for this configuration`);
       }
-      if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3") && needed > DAYS.length) {
+      if (findSlashGroup(subjects, quota.subject, cls).length >= 2 && needed > DAYS.length) {
         warnings.push(`PRE-VALIDATE: Slash subject ${quota.subject} → ${cls} needs ${needed}/week but slash groups can occur at most once per day (${DAYS.length}/week)`);
       }
       const eligible = teachers.filter(t => teacherCanTeachSubjectToClass(t, quota.subject, cls));
@@ -2346,6 +2351,7 @@ function tryRebalanceFromWorst(
   timetable: Timetable,
   teachers: Teacher[],
   quotas: SubjectQuota[],
+  subjects: Subject[],
   fatigueLimit: number,
   lockedSlots: Timetable,
   freePeriodsPerClass: Record<string, number>,
@@ -2358,7 +2364,7 @@ function tryRebalanceFromWorst(
   for (const q of quotas) {
     const needed = getQuotaForClass(q, worstCls);
     if (needed === 0) continue;
-    if (q.isSlashSubject && (worstCls === "SS2" || worstCls === "SS3")) continue;
+    if (findSlashGroup(subjects, q.subject, worstCls).length >= 2) continue;
     const placed = countPlacements(timetable, worstCls, q.subject);
     if (placed >= needed) continue;
     const eligible = teachers.filter((t) => teacherCanTeachSubjectToClass(t, q.subject, worstCls));
@@ -2488,6 +2494,7 @@ function crossClassRebalance(
   timetable: Timetable,
   teachers: Teacher[],
   quotas: SubjectQuota[],
+  subjects: Subject[],
   fatigueLimit: number,
   lockedSlots: Timetable,
   freePeriodsPerClass: Record<string, number>,
@@ -2512,7 +2519,7 @@ function crossClassRebalance(
 
     const moved = tryRebalanceFromWorst(
       worstCls, emptyByClass,
-      timetable, teachers, quotas, fatigueLimit, lockedSlots,
+      timetable, teachers, quotas, subjects, fatigueLimit, lockedSlots,
       freePeriodsPerClass, defaultMaxFreePerWeek,
     );
     if (!moved) break;
@@ -2665,17 +2672,16 @@ function runAttempt(
   const warnings: string[] = [];
 
   // PHASE 1: User-defined 2- or 3-subject slash groups (SS2/SS3).
-  const seenSlashGroups = new Set<string>();
-  for (const subj of subjects) {
-    if (!subj.isSlashSubject) continue;
-    const group = findSlashGroup(subjects, subj.name);
-    if (group.length < 2) continue;
-    const names = group.map((s) => s.name).sort();
-    const groupKey = names.join("|");
-    if (seenSlashGroups.has(groupKey)) continue;
-    seenSlashGroups.add(groupKey);
+  for (const cls of ["SS2", "SS3"] as SchoolClass[]) {
+    const seenSlashGroups = new Set<string>();
+    for (const subj of subjects) {
+      const group = findSlashGroup(subjects, subj.name, cls);
+      if (group.length < 2) continue;
+      const names = group.map((s) => s.name).sort();
+      const groupKey = names.join("|");
+      if (seenSlashGroups.has(groupKey)) continue;
+      seenSlashGroups.add(groupKey);
 
-    for (const cls of ["SS2", "SS3"] as SchoolClass[]) {
       const groupQuotas = names.map((name) => {
         const quota = quotas.find((q) => q.subject === name);
         return quota ? getQuotaForClass(quota, cls) : 0;
@@ -2701,7 +2707,7 @@ function runAttempt(
     for (const quota of quotas) {
       const needed = getQuotaForClass(quota, cls);
       if (needed === 0) continue;
-      if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) continue;
+      if (findSlashGroup(subjects, quota.subject, cls).length >= 2) continue;
       const eligible = teachers.filter((t) => teacherCanTeachSubjectToClass(t, quota.subject, cls));
       if (eligible.length === 0) continue;
       const alreadyPlaced = countPlacements(timetable, cls, quota.subject);
@@ -2737,7 +2743,7 @@ function runAttempt(
     const candidates = quotas
       .filter((quota) => {
         if (getQuotaForClass(quota, cls) <= 0) return false;
-        if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) return false;
+        if (findSlashGroup(subjects, quota.subject, cls).length >= 2) return false;
         if (countPlacements(timetable, cls, quota.subject) > 0) return false;
         return (remaining.get(quota.subject) ?? 0) > 0;
       })
@@ -2777,7 +2783,7 @@ function runAttempt(
     for (const subject of subjectsForClass) {
       const quota = quotas.find((q) => q.subject === subject);
       if (!quota) continue;
-      if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) continue;
+      if (findSlashGroup(subjects, quota.subject, cls).length >= 2) continue;
       const wantDoubles = getRequiredDoubles(quota, cls);
       if (wantDoubles <= 0) continue;
       if (!allowDoublePeriods || singleOnlySubjects.has(subject)) {
@@ -2850,8 +2856,8 @@ function runAttempt(
     let target = 0;
     const countedSlashGroups = new Set<string>();
     for (const quota of quotas) {
-      if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) {
-        const group = findSlashGroup(subjects, quota.subject);
+      if (findSlashGroup(subjects, quota.subject, cls).length >= 2) {
+        const group = findSlashGroup(subjects, quota.subject, cls);
         if (group.length >= 2) {
           const names = group.map((s) => s.name).sort();
           const key = names.join("|");
@@ -2923,7 +2929,7 @@ function runAttempt(
     for (const quota of quotas) {
       const needed = getQuotaForClass(quota, cls);
       if (needed === 0) continue;
-      if (quota.isSlashSubject && (cls === "SS2" || cls === "SS3")) continue;
+      if (findSlashGroup(subjects, quota.subject, cls).length >= 2) continue;
       const alreadyPlaced = countPlacements(timetable, cls, quota.subject);
       if (alreadyPlaced >= needed) continue;
       const eligible = teachers.filter((t) => teacherCanTeachSubjectToClass(t, quota.subject, cls));
@@ -2956,7 +2962,7 @@ function runAttempt(
   // improve the max-class-empty count, then re-runs P1 repair in case a swap
   // emptied a P1 slot.
   const rebalanceMoves = crossClassRebalance(
-    timetable, teachers, quotas, fatigueLimit, lockedSlots,
+    timetable, teachers, quotas, subjects, fatigueLimit, lockedSlots,
     freePeriodsPerClass, defaultMaxFreePerWeek,
   );
   if (rebalanceMoves > 0) {
@@ -2992,7 +2998,7 @@ function runAttempt(
       `CRITICAL: Required subject(s) with zero timetable occurrences: ${finalCoverage.zeroRequiredSubjects.join(", ")}`,
     );
   }
-  const finalDoubleDeficit = getRequiredDoubleDeficit(timetable, quotas);
+  const finalDoubleDeficit = getRequiredDoubleDeficit(timetable, quotas, subjects);
   if (finalDoubleDeficit > 0) {
     warnings.push(`CRITICAL: ${finalDoubleDeficit} required double-period block(s) remain unmet`);
   }
@@ -3077,7 +3083,7 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
 
   // Pre-validate: warn about impossible assignments before wasting attempts
   const preWarnings: string[] = [];
-  preValidate(teachers, quotas, preWarnings, allowDoublePeriods);
+  preValidate(teachers, quotas, subjects, preWarnings, allowDoublePeriods);
 
   const freePeriodsPerClass = userSettings.freePeriodsPerClass ?? {};
   const defaultMaxFreePerWeek = userSettings.maxFreePeriodsPerWeek;
@@ -3132,7 +3138,7 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
       ...r,
       zeroRequiredCount: coverage.zeroRequiredSubjects.length,
       missingRequiredPeriods: coverage.missingPeriods,
-      requiredDoubleDeficit: getRequiredDoubleDeficit(r.timetable, quotas),
+      requiredDoubleDeficit: getRequiredDoubleDeficit(r.timetable, quotas, subjects),
       weeklyFreeExcess: freeMetrics.weeklyExcess,
       dailyFreeExcess: freeMetrics.dailyExcess,
       emptyP1: countEmptyP1(r.timetable),
