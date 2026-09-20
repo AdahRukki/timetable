@@ -160,7 +160,10 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
       setSubjectDialogOpen(false);
       resetSubjectForm();
-      toast({ title: "Subject Created", description: "New subject has been added" });
+      toast({
+        title: "School subject created",
+        description: "The subject is now available to every class in this school.",
+      });
     },
     onError: (error: any) => {
       toast({
@@ -296,7 +299,7 @@ export default function SettingsPage() {
       ss1: [...newSubjectPreferredSs1].sort((a, b) => a - b),
       ss2: [...newSubjectPreferredSs2].sort((a, b) => a - b),
       ss3: [...newSubjectPreferredSs3].sort((a, b) => a - b),
-      ss2ss3: [...new Set([...newSubjectPreferredSs2, ...newSubjectPreferredSs3])].sort((a, b) => a - b),
+      ss2ss3: Array.from(new Set([...newSubjectPreferredSs2, ...newSubjectPreferredSs3])).sort((a, b) => a - b),
     };
     const requiredDoubles = newSubjectSingleOnly
       ? { jss: 0, jss1: 0, jss2: 0, jss3: 0, ss1: 0, ss2: 0, ss3: 0, ss2ss3: 0 }
@@ -385,10 +388,10 @@ export default function SettingsPage() {
               <div>
                 <CardTitle className="text-base flex items-center gap-2">
                   <Plus className="h-4 w-4" />
-                  Custom Subjects
+                  School Subjects
                 </CardTitle>
                 <CardDescription>
-                  Create and manage custom subjects for your timetable
+                  Each subject belongs to the current school and is available to JSS1 through SS3. Use the class quotas to control how often it is scheduled.
                 </CardDescription>
               </div>
               <Button
@@ -408,7 +411,7 @@ export default function SettingsPage() {
               </div>
             ) : subjects.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">
-                No subjects yet. Click "Add Subject" to create one.
+                No school subjects yet. Click "Add Subject" to create one for all classes in this school.
               </p>
             ) : (
               <div className="space-y-2">
@@ -421,6 +424,7 @@ export default function SettingsPage() {
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{subject.name}</span>
+                        <Badge variant="secondary">All classes</Badge>
                       </div>
                       <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
                         <span>JSS1: {subject.jss1Quota ?? subject.jssQuota}</span>
@@ -463,7 +467,9 @@ export default function SettingsPage() {
             <DialogHeader>
               <DialogTitle>{editingSubject ? "Edit Subject" : "Add New Subject"}</DialogTitle>
               <DialogDescription>
-                {editingSubject ? "Update the subject details below" : "Create a new subject with weekly period quotas"}
+                {editingSubject
+                  ? "Update this school-wide subject and its weekly quota for each class."
+                  : "Create the subject once for every class in this school, then set each class's weekly quota."}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
