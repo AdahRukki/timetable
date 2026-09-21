@@ -93,6 +93,22 @@ test("a partial quota never clears the existing timetable", async () => {
   assert.deepEqual(await database.select().from(schema.timetableSlots), before);
 });
 
+test("two periods save successfully even when the configured quota is five", async () => {
+  const [teacher] = await storage.getTeachers(user);
+  await storage.setSlot(user, occupied("Original lesson", teacher.id));
+  await storage.updateSubjectQuota(user, "Math", { jss1Quota: 5 });
+  const unavailable = Object.fromEntries(schema.DAYS.map((day) => [day,
+    Array.from({ length: schema.PERIODS_PER_DAY[day] }, (_, i) => i + 1).filter((period) => day !== "Monday" || period > 2),
+  ])) as schema.Teacher["unavailable"];
+  await storage.updateTeacher(user, teacher.id, { unavailable });
+  const result = await storage.autoGenerateTimetable(user, false, true);
+  assert.equal(result.success, true, result.errors.join(" "));
+  assert.match(result.warnings.join(" "), /Math has 2\/5 periods/);
+  const rows = await database.select().from(schema.timetableSlots);
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every((row) => row.subject === "Math"));
+});
+
 test("generation pins the original school if active school changes before reads", async () => {
   const [teacher] = await storage.getTeachers(user);
   await database.insert(schema.timetableSlots).values({ ...occupied("School B lesson", teacher.id), userId: user, schoolId: "b", isLocked: 0 });

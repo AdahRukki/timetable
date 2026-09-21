@@ -156,19 +156,20 @@ test("does not count an activity with the same name as a teaching period", () =>
   assert.deepEqual(timetable(slots).get("Monday-JSS1-1"), activity);
 });
 
-test("never upgrades a preserved single to satisfy a double requirement", () => {
+test("preserves singles and warns about an unmet double request", () => {
   const original = slot({ isLocked: true });
   const data = input({ existingTimetable: timetable([original]), quotas: [quota("Math", { jss1Quota: 2,
     requiredDoubles: { jss: 0, ss1: 0, ss2ss3: 0, jss1: 1 } })] });
   const plan = generateTimetable(data, true, false);
-  assert.equal(plan.result.success, false);
-  assert.match(plan.result.errors.join(" "), /required double blocks/);
+  assert.equal(plan.result.success, true, plan.result.errors.join(" "));
+  assert.match(plan.result.warnings.join(" "), /0\/1 requested double blocks/);
+  assert.equal(plan.slots?.length, 2);
   assert.equal(original.slotType, "single");
 });
 
 test("rejects preserved lessons above quota", () => {
-  const existing = [slot({ isLocked: true }), slot({ day: "Tuesday", isLocked: true })];
-  const plan = generateTimetable(input({ existingTimetable: timetable(existing), quotas: [quota("Math", { jss1Quota: 1 })] }));
+  const existing = [slot({ isLocked: true }), slot({ day: "Tuesday", isLocked: true }), slot({ day: "Wednesday", isLocked: true })];
+  const plan = generateTimetable(input({ existingTimetable: timetable(existing), quotas: [quota("Math", { jss1Quota: 2 })] }));
   assert.equal(plan.result.success, false);
   assert.match(plan.result.errors.join(" "), /over quota/);
 });
@@ -178,6 +179,49 @@ test("a zero quota disables a subject despite older double preferences", () => {
     quotas: [quota("Math", { jss1Quota: 2 }), quota("Science", { requiredDoubles: { jss: 1, ss1: 0, ss2ss3: 0 } })] }));
   assert.equal(slots.length, 2);
   assert.ok(slots.every((s) => s.subject === "Math"));
+});
+
+test("saves two of five periods with a clear shortfall warning", () => {
+  const data = input({ quotas: [quota("Math", { jss1Quota: 5 })],
+    teachers: [teacher("T", ["Math"], ["JSS1"], { unavailable: onlyAvailable("Monday", [1, 2]) })] });
+  const plan = generateTimetable(data);
+  assert.equal(plan.result.success, true, plan.result.errors.join(" "));
+  assert.equal(plan.slots?.length, 2);
+  assert.match(plan.result.warnings.join(" "), /Math has 2\/5 periods; 3 period\(s\) remain unfilled/);
+});
+
+test("zero periods and one period both block saving", () => {
+  for (const available of [[], [1]]) {
+    const plan = generateTimetable(input({ teachers: [teacher("T", ["Math"], ["JSS1"], {
+      unavailable: onlyAvailable("Monday", available),
+    })] }));
+    assert.equal(plan.result.success, false);
+    assert.match(plan.result.errors.join(" "), /At least 2 periods are required/);
+    assert.equal(plan.slots, undefined);
+  }
+});
+
+test("a quota of one requires an explicit correction instead of silently exceeding it", () => {
+  const plan = generateTimetable(input({ quotas: [quota("Math", { jss1Quota: 1 })] }));
+  assert.equal(plan.result.success, false);
+  assert.match(plan.result.errors.join(" "), /Set it to at least 2 periods, or 0/);
+});
+
+test("unreachable single-only quotas are warnings above the two-period minimum", () => {
+  const plan = generateTimetable(input({ quotas: [quota("Math", { jss1Quota: 6, singleOnly: true,
+    requiredDoubles: { jss: 0, ss1: 0, ss2ss3: 0, jss1: 1 } })] }));
+  assert.equal(plan.result.success, true, plan.result.errors.join(" "));
+  assert.equal(plan.slots?.length, 5);
+  assert.match(plan.result.warnings.join(" "), /5\/6 periods/);
+  assert.match(plan.result.warnings.join(" "), /0\/1 requested double blocks/);
+});
+
+test("the minimum applies separately to every subject and class", () => {
+  const data = input({ quotas: [quota("Math", { jss1Quota: 2, ss1Quota: 2 })],
+    teachers: [teacher("T", ["Math"], ["JSS1"]), teacher("SS", ["Math"], ["SS1"], { unavailable: onlyAvailable("Monday", [1]) })] });
+  const plan = generateTimetable(data);
+  assert.equal(plan.result.success, false);
+  assert.match(plan.result.errors.join(" "), /SS1: Math has 1\/2 periods/);
 });
 
 test("respects disabled doubles and single-only settings", () => {

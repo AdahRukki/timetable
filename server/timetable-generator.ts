@@ -161,7 +161,6 @@ function getGenerationBlockers(
   teachers: Teacher[],
   quotas: SubjectQuota[],
   subjects: Subject[],
-  settings: UserSettings,
 ): string[] {
   const blockers: string[] = [];
   const checkedSlashGroups = new Set<string>();
@@ -170,6 +169,9 @@ function getGenerationBlockers(
     for (const quota of quotas) {
       if (getQuotaForClass(quota, cls) <= 0) continue;
       const needed = getQuotaForClass(quota, cls);
+      if (needed < 2) {
+        blockers.push(`${cls}: ${quota.subject} has a quota of ${needed}. Set it to at least 2 periods, or 0 to exclude the subject.`);
+      }
       const group = findSlashGroup(subjects, quota.subject, cls);
 
       if (group.length >= 2) {
@@ -185,9 +187,6 @@ function getGenerationBlockers(
         if (groupQuotas.some((value) => value !== groupQuotas[0])) {
           blockers.push(`${cls}: slash group ${names.join(" / ")} has different quotas (${groupQuotas.join(" / ")}). Set the same quota for every member or change this class's slash group.`);
         }
-        if (groupQuotas[0] > DAYS.length) {
-          blockers.push(`${cls}: slash group ${names.join(" / ")} can have at most ${DAYS.length} periods per week.`);
-        }
 
         const teacherLists = names.map((name) =>
           teachers.filter((teacher) => teacherCanTeachSubjectToClass(teacher, name, cls)),
@@ -201,16 +200,6 @@ function getGenerationBlockers(
         continue;
       }
 
-      const doubles = getRequiredDoubles(quota, cls);
-      if (doubles * 2 > needed) {
-        blockers.push(`${cls}: ${quota.subject} requires ${doubles} double blocks but has only ${needed} periods.`);
-      }
-      if (doubles > 0 && (quota.singleOnly || !settings.allowDoublePeriods)) {
-        blockers.push(`${cls}: ${quota.subject} requires doubles, but double periods are disabled.`);
-      }
-      if ((quota.singleOnly || !settings.allowDoublePeriods) && needed > DAYS.length) {
-        blockers.push(`${cls}: ${quota.subject} needs ${needed} periods, but only ${DAYS.length} singles fit in a week. Enable doubles or reduce the quota.`);
-      }
       const eligible = teachers.filter((teacher) =>
         teacherCanTeachSubjectToClass(teacher, quota.subject, cls),
       );
@@ -461,22 +450,30 @@ function countPlacements(timetable: Timetable, cls: SchoolClass, subject: string
 
 type CoverageMetrics = {
   zeroRequiredSubjects: string[];
+  belowMinimumCount: number;
+  minimumDeficit: number;
   missingPeriods: number;
 };
 
 function getCoverageMetrics(timetable: Timetable, quotas: SubjectQuota[]): CoverageMetrics {
   const zeroRequiredSubjects: string[] = [];
   let missingPeriods = 0;
+  let belowMinimumCount = 0;
+  let minimumDeficit = 0;
   for (const cls of CLASSES) {
     for (const quota of quotas) {
       const needed = getQuotaForClass(quota, cls);
       if (needed <= 0) continue;
       const placed = countPlacements(timetable, cls, quota.subject);
       if (placed === 0) zeroRequiredSubjects.push(`${cls}:${quota.subject}`);
+      if (placed < 2) {
+        belowMinimumCount++;
+        minimumDeficit += 2 - placed;
+      }
       if (placed < needed) missingPeriods += needed - placed;
     }
   }
-  return { zeroRequiredSubjects, missingPeriods };
+  return { zeroRequiredSubjects, belowMinimumCount, minimumDeficit, missingPeriods };
 }
 
 function countDoubleBlocks(timetable: Timetable, cls: SchoolClass, subject: string): number {
@@ -510,8 +507,8 @@ function getRequiredDoubleDeficit(timetable: Timetable, quotas: SubjectQuota[], 
   return deficit;
 }
 
-// Validate the final plan, including preserved lessons. A partial allocation
-// must never replace the user's current timetable with a "success" result.
+// Two periods per active subject/class is the saving minimum. Higher quota
+// targets and requested doubles are best-effort and reported as warnings.
 export function validateGeneratedTimetable(
   timetable: Timetable,
   teachers: Teacher[],
@@ -526,13 +523,11 @@ export function validateGeneratedTimetable(
     for (const quota of quotas) {
       const needed = getQuotaForClass(quota, cls);
       const actual = countPlacements(timetable, cls, quota.subject);
-      if (actual !== needed) {
-        errors.add(`${cls}: ${quota.subject} has ${actual}/${needed} periods${actual > needed ? " (over quota; check preserved lessons)" : ""}.`);
+      if (needed > 0 && actual < 2) {
+        errors.add(`${cls}: ${quota.subject} has ${actual}/${needed} periods. At least 2 periods are required to save.`);
       }
-      if (needed > 0 && findSlashGroup(subjects, quota.subject, cls).length < 2) {
-        const doubles = countDoubleBlocks(timetable, cls, quota.subject);
-        const required = getRequiredDoubles(quota, cls);
-        if (doubles < required) errors.add(`${cls}: ${quota.subject} has ${doubles}/${required} required double blocks.`);
+      if (actual > needed) {
+        errors.add(`${cls}: ${quota.subject} has ${actual}/${needed} periods (over quota; check preserved lessons).`);
       }
       for (const day of DAYS) {
         const slots = Array.from(timetable.values()).filter((slot) =>
@@ -1757,7 +1752,7 @@ function runAttempt(
       // Each member consumes one period in the same slot. Existing lessons
       // count toward the quota, including lessons preserved for this run.
       const existing = Math.max(...names.map((name) => countPlacements(timetable, cls, name)));
-      const missing = Math.max(0, periods - existing);
+      const missing = Math.max(0, Math.min(2, periods) - existing);
       scheduleSlashGroup(timetable, cls, names, missing, teachers, fatigueLimit, warnings);
     }
   }
@@ -1795,7 +1790,36 @@ function runAttempt(
     quotas.filter((q) => q.singleOnly).map((q) => q.subject),
   );
 
-  // PHASE 2A: Required doubles pre-pass — for each (cls, subject), place the
+  // PHASE 2A: Give every active subject two periods before filling higher
+  // targets or extra doubles. Preserved lessons count toward this minimum.
+  for (const cls of shuffle([...CLASSES] as SchoolClass[])) {
+    const remaining = remainingByClass.get(cls)!;
+    const candidates = shuffle(quotas.filter((quota) =>
+      getQuotaForClass(quota, cls) > 0 && findSlashGroup(subjects, quota.subject, cls).length < 2,
+    )).sort((a, b) =>
+      countAvailableSubjectDays(timetable, cls, a.subject, teachers, fatigueLimit) -
+      countAvailableSubjectDays(timetable, cls, b.subject, teachers, fatigueLimit),
+    );
+    for (const quota of candidates) {
+      const subject = quota.subject;
+      while (countPlacements(timetable, cls, subject) < 2) {
+        const remNeeded = remaining.get(subject) ?? 0;
+        if (remNeeded <= 0) break;
+        const placed = placeOneSubjectPeriod(
+          timetable, cls, subject, teachers, fatigueLimit,
+          Math.min(remNeeded, 2 - countPlacements(timetable, cls, subject)),
+          flaggedIds, getPreferredPeriods(quota, cls), singleOnlySubjects,
+          maxFreePeriodsPerDay, allowDoublePeriods, allowDoubleInP8P9,
+        );
+        if (placed === 0) break;
+        const newRem = remNeeded - placed;
+        if (newRem <= 0) remaining.delete(subject);
+        else remaining.set(subject, newRem);
+      }
+    }
+  }
+
+  // PHASE 2B: Required doubles pre-pass — for each (cls, subject), place the
   // user-requested number of double-period blocks before single-period scheduling.
   // Doubles try preferred periods first; if none fit, any legal slot is used.
   for (const cls of shuffle([...CLASSES] as SchoolClass[])) {
@@ -1844,48 +1868,6 @@ function runAttempt(
       }
       // Report any remaining shortfall after the repair passes, so a repaired
       // requirement does not leave a stale warning in a successful result.
-    }
-  }
-
-  // PHASE 2B: First-occurrence guarantee. Every subject with quota > 0
-  // gets a chance to receive a legal lesson before optional repeats are
-  // filled. Use a double when the remaining teaching days need one. Subjects
-  // with the fewest eligible teachers are attempted first. Senior slash groups
-  // were handled atomically in Phase 1 and must never be split here.
-  for (const cls of shuffle([...CLASSES] as SchoolClass[])) {
-    const remaining = remainingByClass.get(cls)!;
-    const candidates = quotas
-      .filter((quota) => {
-        if (getQuotaForClass(quota, cls) <= 0) return false;
-        if (findSlashGroup(subjects, quota.subject, cls).length >= 2) return false;
-        if (countPlacements(timetable, cls, quota.subject) > 0) return false;
-        return (remaining.get(quota.subject) ?? 0) > 0;
-      })
-      .map((quota) => ({
-        quota,
-        eligibleCount: teachers.filter((t) =>
-          teacherCanTeachSubjectToClass(t, quota.subject, cls),
-        ).length,
-      }));
-
-    // Shuffle first so subjects with equal constraint levels do not always
-    // receive the same deterministic ordering across attempts.
-    const ordered = shuffle(candidates).sort((a, b) => a.eligibleCount - b.eligibleCount);
-    for (const { quota } of ordered) {
-      const subject = quota.subject;
-      const remNeeded = remaining.get(subject) ?? 0;
-      if (remNeeded <= 0 || countPlacements(timetable, cls, subject) > 0) continue;
-      const placed = placeOneSubjectPeriod(
-        timetable, cls, subject, teachers, fatigueLimit,
-        remNeeded > countAvailableSubjectDays(timetable, cls, subject, teachers, fatigueLimit) ? Math.min(2, remNeeded) : 1,
-        flaggedIds, getPreferredPeriods(quota, cls), singleOnlySubjects,
-        maxFreePeriodsPerDay, allowDoublePeriods, allowDoubleInP8P9,
-      );
-      if (placed > 0) {
-        const newRem = remNeeded - placed;
-        if (newRem <= 0) remaining.delete(subject);
-        else remaining.set(subject, newRem);
-      }
     }
   }
 
@@ -2081,7 +2063,7 @@ function runAttempt(
   }
   const finalDoubleDeficit = getRequiredDoubleDeficit(timetable, quotas, subjects);
   if (finalDoubleDeficit > 0) {
-    warnings.push(`CRITICAL: ${finalDoubleDeficit} required double-period block(s) remain unmet`);
+    warnings.push(`${finalDoubleDeficit} requested double-period block(s) remain unmet`);
   }
   const finalFreeMetrics = getFreePeriodMetrics(
     timetable, freePeriodsPerClass, defaultMaxFreePerWeek, maxFreePeriodsPerDay,
@@ -2164,7 +2146,7 @@ export function generateTimetable(
   // Pre-validate: warn about impossible assignments before wasting attempts
   const preWarnings: string[] = [];
   preValidate(teachers, quotas, subjects, preWarnings, allowDoublePeriods);
-  const blockers = getGenerationBlockers(teachers, quotas, subjects, userSettings);
+  const blockers = getGenerationBlockers(teachers, quotas, subjects);
   if (blockers.length > 0) {
     return { result: {
       success: false,
@@ -2193,6 +2175,8 @@ export function generateTimetable(
     emptyCount: number;
     warnings: string[];
     zeroRequiredCount: number;
+    belowMinimumCount: number;
+    minimumDeficit: number;
     missingRequiredPeriods: number;
     requiredDoubleDeficit: number;
     weeklyFreeExcess: number;
@@ -2205,6 +2189,8 @@ export function generateTimetable(
   const cmp = (a: AttemptResult, b: AttemptResult): number => {
     // Subject coverage is a hard priority: never prefer a prettier/full-looking
     // timetable that completely omits a required subject.
+    if (a.belowMinimumCount !== b.belowMinimumCount) return a.belowMinimumCount - b.belowMinimumCount;
+    if (a.minimumDeficit !== b.minimumDeficit) return a.minimumDeficit - b.minimumDeficit;
     if (a.zeroRequiredCount !== b.zeroRequiredCount) return a.zeroRequiredCount - b.zeroRequiredCount;
     if (a.missingRequiredPeriods !== b.missingRequiredPeriods) return a.missingRequiredPeriods - b.missingRequiredPeriods;
     if (a.requiredDoubleDeficit !== b.requiredDoubleDeficit) return a.requiredDoubleDeficit - b.requiredDoubleDeficit;
@@ -2229,6 +2215,8 @@ export function generateTimetable(
     const scored: AttemptResult = {
       ...r,
       zeroRequiredCount: coverage.zeroRequiredSubjects.length,
+      belowMinimumCount: coverage.belowMinimumCount,
+      minimumDeficit: coverage.minimumDeficit,
       missingRequiredPeriods: coverage.missingPeriods,
       requiredDoubleDeficit: getRequiredDoubleDeficit(r.timetable, quotas, subjects),
       weeklyFreeExcess: freeMetrics.weeklyExcess,
@@ -2256,6 +2244,19 @@ export function generateTimetable(
   }
 
   const allWarnings = [...preWarnings, ...best.warnings];
+  for (const cls of CLASSES) {
+    for (const quota of quotas) {
+      const needed = getQuotaForClass(quota, cls);
+      if (needed <= 0) continue;
+      const actual = countPlacements(best.timetable, cls, quota.subject);
+      if (actual < needed) allWarnings.push(`${cls}: ${quota.subject} has ${actual}/${needed} periods; ${needed - actual} period(s) remain unfilled.`);
+      if (findSlashGroup(subjects, quota.subject, cls).length < 2) {
+        const required = getRequiredDoubles(quota, cls);
+        const actualDoubles = countDoubleBlocks(best.timetable, cls, quota.subject);
+        if (actualDoubles < required) allWarnings.push(`${cls}: ${quota.subject} has ${actualDoubles}/${required} requested double blocks.`);
+      }
+    }
+  }
   const errors = validateGeneratedTimetable(best.timetable, teachers, quotas, subjects, userSettings);
   if (errors.length > 0) {
     return { result: {
