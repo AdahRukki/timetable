@@ -1409,6 +1409,66 @@ function teacherCanTeachSubjectToClass(teacher: Teacher, subject: string, cls: S
   return true;
 }
 
+function canAssignDistinctTeachers(teacherLists: Teacher[][]): boolean {
+  const assign = (index: number, used: Set<string>): boolean => {
+    if (index >= teacherLists.length) return true;
+    for (const teacher of teacherLists[index]) {
+      if (used.has(teacher.id)) continue;
+      used.add(teacher.id);
+      if (assign(index + 1, used)) return true;
+      used.delete(teacher.id);
+    }
+    return false;
+  };
+  return assign(0, new Set<string>());
+}
+
+// A timetable can only be generated when every required subject has at least
+// one eligible teacher. Slash groups additionally need a different teacher
+// for every subject in the group because they run at the same time.
+function getGenerationBlockers(
+  teachers: Teacher[],
+  quotas: SubjectQuota[],
+  subjects: Subject[],
+): string[] {
+  const blockers: string[] = [];
+  const checkedSlashGroups = new Set<string>();
+
+  for (const cls of CLASSES) {
+    for (const quota of quotas) {
+      if (getQuotaForClass(quota, cls) <= 0) continue;
+      const group = findSlashGroup(subjects, quota.subject, cls);
+
+      if (group.length >= 2) {
+        const names = group.map((subject) => subject.name).sort();
+        const groupKey = `${cls}:${names.join("|")}`;
+        if (checkedSlashGroups.has(groupKey)) continue;
+        checkedSlashGroups.add(groupKey);
+
+        const teacherLists = names.map((name) =>
+          teachers.filter((teacher) => teacherCanTeachSubjectToClass(teacher, name, cls)),
+        );
+        const missingSubject = names.find((name, index) => teacherLists[index].length === 0);
+        if (missingSubject) {
+          blockers.push(`${cls}: ${missingSubject} has no eligible teacher. Assign a teacher to both the subject and ${cls}.`);
+        } else if (!canAssignDistinctTeachers(teacherLists)) {
+          blockers.push(`${cls}: slash group ${names.join(" / ")} needs a different eligible teacher for each subject.`);
+        }
+        continue;
+      }
+
+      const eligible = teachers.filter((teacher) =>
+        teacherCanTeachSubjectToClass(teacher, quota.subject, cls),
+      );
+      if (eligible.length === 0) {
+        blockers.push(`${cls}: ${quota.subject} has no eligible teacher. Assign a teacher to both the subject and ${cls}.`);
+      }
+    }
+  }
+
+  return blockers;
+}
+
 function placeSlot(
   timetable: Timetable,
   cls: SchoolClass,
@@ -3084,6 +3144,18 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
   // Pre-validate: warn about impossible assignments before wasting attempts
   const preWarnings: string[] = [];
   preValidate(teachers, quotas, subjects, preWarnings, allowDoublePeriods);
+  const blockers = getGenerationBlockers(teachers, quotas, subjects);
+  if (blockers.length > 0) {
+    return {
+      success: false,
+      slotsPlaced: 0,
+      warnings: preWarnings,
+      errors: [
+        "Generation was not started. Fix the subject-teacher assignments below.",
+        ...blockers,
+      ],
+    };
+  }
 
   const freePeriodsPerClass = userSettings.freePeriodsPerClass ?? {};
   const defaultMaxFreePerWeek = userSettings.maxFreePeriodsPerWeek;
@@ -3163,6 +3235,20 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
     return { success: false, slotsPlaced: 0, warnings: preWarnings, errors: ["Failed to generate timetable"] };
   }
 
+  const allWarnings = [...preWarnings, ...best.warnings];
+  const finalCoverage = getCoverageMetrics(best.timetable, quotas);
+  if (finalCoverage.zeroRequiredSubjects.length > 0) {
+    return {
+      success: false,
+      slotsPlaced: 0,
+      warnings: allWarnings,
+      errors: [
+        "Generation was not saved because one or more required subjects received zero periods.",
+        ...finalCoverage.zeroRequiredSubjects.map((item) => `${item} received 0 periods.`),
+      ],
+    };
+  }
+
   // Write best result to DB.
   // - clearFirst=true: wipe everything first, then write the full new timetable.
   // - clearFirst=false: leave existing slots alone (they are locked above) and
@@ -3181,7 +3267,6 @@ async function autoGenerateTimetable(userId: string, lockExisting: boolean, clea
     slotsPlaced++;
   }
 
-  const allWarnings = [...preWarnings, ...best.warnings];
   if (best.emptyCount > 0) {
     allWarnings.push(`${best.emptyCount} slot(s) remain empty after ${MAX_ATTEMPTS} attempts`);
   }

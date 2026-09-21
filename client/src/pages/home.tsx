@@ -111,11 +111,8 @@ export default function Home() {
           variant: "destructive",
         });
       }
-      // Keep the dialog open on success so the user sees the result summary
-      // and can use the Save Timetable CTA in the footer.
-      if (!result.success) {
-        setAutoGenDialogOpen(false);
-      }
+      // Keep the dialog open for both success and failure so the user can
+      // review every missing subject or teacher assignment before retrying.
     },
     onError: (error) => {
       toast({
