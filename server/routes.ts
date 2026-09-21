@@ -2224,6 +2224,77 @@ function fillSpecificSlot(
   return false;
 }
 
+// The earlier generation phases can remove an over-quota placement or move a
+// class during rebalancing. Re-check coverage at the end so a newly free slot
+// is used for a missing subject instead of leaving its eligible teacher idle.
+function repairFinalCoverage(
+  timetable: Timetable,
+  teachers: Teacher[],
+  quotas: SubjectQuota[],
+  subjects: Subject[],
+  fatigueLimit: number,
+  flaggedIds: Set<string>,
+  singleOnlySubjects: ReadonlySet<string>,
+  maxFreePeriodsPerDay: number,
+  allowDoublePeriods: boolean,
+  allowDoubleInP8P9: boolean,
+  warnings: string[],
+): number {
+  let repaired = 0;
+
+  for (const cls of CLASSES) {
+    const handledSlashGroups = new Set<string>();
+
+    for (const quota of quotas) {
+      const group = findSlashGroup(subjects, quota.subject, cls);
+      if (group.length >= 2) {
+        const names = group.map((subject) => subject.name).sort();
+        const key = `${cls}:${names.join("|")}`;
+        if (handledSlashGroups.has(key)) continue;
+        handledSlashGroups.add(key);
+
+        const needed = Math.max(...names.map((name) => {
+          const groupQuota = quotas.find((item) => item.subject === name);
+          return groupQuota ? getQuotaForClass(groupQuota, cls) : 0;
+        }));
+        const placed = Math.min(...names.map((name) => countPlacements(timetable, cls, name)));
+        let missing = needed - placed;
+        while (missing > 0) {
+          const added = scheduleSlashGroup(timetable, cls, names, 1, teachers, fatigueLimit, warnings);
+          if (added === 0) break;
+          repaired += added;
+          missing -= added;
+        }
+        continue;
+      }
+
+      const needed = getQuotaForClass(quota, cls);
+      let missing = needed - countPlacements(timetable, cls, quota.subject);
+      while (missing > 0) {
+        const added = placeOneSubjectPeriod(
+          timetable,
+          cls,
+          quota.subject,
+          teachers,
+          fatigueLimit,
+          missing,
+          flaggedIds,
+          getPreferredPeriods(quota, cls),
+          singleOnlySubjects,
+          maxFreePeriodsPerDay,
+          allowDoublePeriods,
+          allowDoubleInP8P9,
+        );
+        if (added === 0) break;
+        repaired += added;
+        missing -= added;
+      }
+    }
+  }
+
+  return repaired;
+}
+
 // Period-1 swap repair: if P1 of (day, cls) is empty, try to move a same-day
 // later occupied (single) period of the same class into P1, preserving all rules.
 function p1SwapRepair(
@@ -3038,6 +3109,26 @@ function runAttempt(
     }
     p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
     p1SwapRepair(timetable, teachers, fatigueLimit, lockedSlots);
+  }
+
+  // Revisit every required subject after excess removal and class rebalancing.
+  // This catches subjects that became placeable only after another subject was
+  // removed or moved to a different class.
+  const finalCoverageRepairs = repairFinalCoverage(
+    timetable,
+    teachers,
+    quotas,
+    subjects,
+    fatigueLimit,
+    flaggedIds,
+    singleOnlySubjects,
+    maxFreePeriodsPerDay,
+    allowDoublePeriods,
+    allowDoubleInP8P9,
+    warnings,
+  );
+  if (finalCoverageRepairs > 0) {
+    warnings.push(`Final coverage repair placed ${finalCoverageRepairs} missing period(s).`);
   }
 
   // PHASE 9: Day-off consolidation for flagged teachers (those with at least
