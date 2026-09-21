@@ -107,6 +107,7 @@ export default function SettingsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/subjects"] });
     },
     onError: (error) => {
       toast({
@@ -188,6 +189,10 @@ export default function SettingsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/subjects"] });
       queryClient.invalidateQueries({ queryKey: ["/api/quotas"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teachers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/timetable"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/actions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/saved-timetables"] });
       setSubjectDialogOpen(false);
       setEditingSubject(null);
       resetSubjectForm();

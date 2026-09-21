@@ -1,5 +1,6 @@
 import {
   type Teacher,
+  type AutoGenerateResult,
   type InsertTeacher,
   type TimetableSlot,
   type TimetableAction,
@@ -26,7 +27,8 @@ import {
   schoolSettings,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
+import { generateTimetable } from "./timetable-generator";
 import { createHash, randomUUID } from "crypto";
 
 function getSlotKey(day: Day, schoolClass: SchoolClass, period: number): string {
@@ -191,6 +193,7 @@ export interface IStorage {
   deleteTeacher(userId: string, id: string): Promise<boolean>;
 
   // Timetable
+  autoGenerateTimetable(userId: string, lockExisting: boolean, clearFirst: boolean): Promise<AutoGenerateResult>;
   getTimetable(userId: string): Promise<Map<string, TimetableSlot>>;
   getSlot(userId: string, day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined>;
   setSlot(userId: string, slot: TimetableSlot): Promise<TimetableSlot>;
@@ -233,11 +236,11 @@ export interface IStorage {
   createSubject(userId: string, subject: InsertSubject): Promise<Subject>;
   updateSubject(userId: string, id: number, subject: Partial<InsertSubject>): Promise<Subject | undefined>;
   deleteSubject(userId: string, id: number): Promise<boolean>;
-  
+
   // User settings
   getUserSettings(userId: string): Promise<UserSettings>;
   updateUserSettings(userId: string, settings: Partial<UserSettings>): Promise<UserSettings>;
-  
+
   // Shared timetables
   createSharedTimetable(userId: string, timetableData: TimetableSlot[], teacherData: Teacher[], title?: string): Promise<SharedTimetable>;
   getSharedTimetable(shareId: string): Promise<SharedTimetable | undefined>;
@@ -257,16 +260,25 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  constructor(
+    private readonly database: typeof db | Tx = db,
+    private readonly schoolScope?: { userId: string; schoolId: string },
+  ) {}
+
   private async ensureActiveSchoolId(userId: string): Promise<string> {
-    const active = await db.select().from(schools).where(
+    if (this.schoolScope) {
+      if (this.schoolScope.userId !== userId) throw new Error("School scope does not belong to this user");
+      return this.schoolScope.schoolId;
+    }
+    const active = await this.database.select().from(schools).where(
       and(eq(schools.userId, userId), eq(schools.isActive, 1))
     );
     if (active.length > 0) return active[0].id;
 
-    const existing = await db.select().from(schools).where(eq(schools.userId, userId));
+    const existing = await this.database.select().from(schools).where(eq(schools.userId, userId));
     if (existing.length > 0) {
       const id = existing[0].id;
-      await db.update(schools).set({ isActive: 1 }).where(
+      await this.database.update(schools).set({ isActive: 1 }).where(
         and(eq(schools.userId, userId), eq(schools.id, id))
       );
       await this.ensureSchoolSettings(userId, id);
@@ -275,14 +287,14 @@ export class DatabaseStorage implements IStorage {
 
     const id = "school_" + createHash("sha256").update(userId).digest("hex").slice(0, 32);
     const createdAt = Date.now();
-    await db.insert(schools).values({
+    await this.database.insert(schools).values({
       id,
       userId,
       name: "My School",
       isActive: 1,
       createdAt,
     }).onConflictDoNothing();
-    await db.update(schools).set({ isActive: 1 }).where(
+    await this.database.update(schools).set({ isActive: 1 }).where(
       and(eq(schools.userId, userId), eq(schools.id, id))
     );
     await this.ensureSchoolSettings(userId, id);
@@ -290,11 +302,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   private async ensureSchoolSettings(userId: string, schoolId: string): Promise<void> {
-    const existing = await db.select().from(schoolSettings).where(
+    const existing = await this.database.select().from(schoolSettings).where(
       and(eq(schoolSettings.userId, userId), eq(schoolSettings.schoolId, schoolId))
     );
     if (existing.length === 0) {
-      await db.insert(schoolSettings).values({ userId, schoolId }).onConflictDoNothing();
+      await this.database.insert(schoolSettings).values({ userId, schoolId }).onConflictDoNothing();
     }
   }
 
@@ -304,7 +316,7 @@ export class DatabaseStorage implements IStorage {
 
   async getSchools(userId: string): Promise<School[]> {
     await this.ensureActiveSchoolId(userId);
-    const rows = await db.select().from(schools).where(eq(schools.userId, userId));
+    const rows = await this.database.select().from(schools).where(eq(schools.userId, userId));
     return rows
       .map((row) => ({
         id: row.id,
@@ -317,7 +329,7 @@ export class DatabaseStorage implements IStorage {
 
   async getActiveSchool(userId: string): Promise<School> {
     const id = await this.ensureActiveSchoolId(userId);
-    const [row] = await db.select().from(schools).where(
+    const [row] = await this.database.select().from(schools).where(
       and(eq(schools.userId, userId), eq(schools.id, id))
     );
     return {
@@ -331,7 +343,7 @@ export class DatabaseStorage implements IStorage {
   async createSchool(userId: string, name: string): Promise<School> {
     const id = randomUUID();
     const createdAt = Date.now();
-    await db.transaction(async (tx) => {
+    await this.database.transaction(async (tx) => {
       await tx.update(schools).set({ isActive: 0 }).where(eq(schools.userId, userId));
       await tx.insert(schools).values({
         id,
@@ -346,11 +358,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async renameSchool(userId: string, schoolId: string, name: string): Promise<School | undefined> {
-    const [existing] = await db.select().from(schools).where(
+    const [existing] = await this.database.select().from(schools).where(
       and(eq(schools.userId, userId), eq(schools.id, schoolId))
     );
     if (!existing) return undefined;
-    await db.update(schools).set({ name }).where(
+    await this.database.update(schools).set({ name }).where(
       and(eq(schools.userId, userId), eq(schools.id, schoolId))
     );
     return {
@@ -362,11 +374,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async activateSchool(userId: string, schoolId: string): Promise<School | undefined> {
-    const [existing] = await db.select().from(schools).where(
+    const [existing] = await this.database.select().from(schools).where(
       and(eq(schools.userId, userId), eq(schools.id, schoolId))
     );
     if (!existing) return undefined;
-    await db.transaction(async (tx) => {
+    await this.database.transaction(async (tx) => {
       await tx.update(schools).set({ isActive: 0 }).where(eq(schools.userId, userId));
       await tx.update(schools).set({ isActive: 1 }).where(
         and(eq(schools.userId, userId), eq(schools.id, schoolId))
@@ -379,7 +391,7 @@ export class DatabaseStorage implements IStorage {
   // Teachers
   async getTeachers(userId: string): Promise<Teacher[]> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const rows = await db.select().from(teachers).where(
+    const rows = await this.database.select().from(teachers).where(
       and(eq(teachers.userId, userId), eq(teachers.schoolId, schoolId))
     );
     return rows.map((row) => ({
@@ -396,7 +408,7 @@ export class DatabaseStorage implements IStorage {
 
   async getTeacher(userId: string, id: string): Promise<Teacher | undefined> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const [row] = await db.select().from(teachers).where(
+    const [row] = await this.database.select().from(teachers).where(
       and(eq(teachers.userId, userId), eq(teachers.schoolId, schoolId), eq(teachers.id, id))
     );
     if (!row) return undefined;
@@ -415,7 +427,7 @@ export class DatabaseStorage implements IStorage {
   async createTeacher(userId: string, insertTeacher: InsertTeacher): Promise<Teacher> {
     const schoolId = await this.ensureActiveSchoolId(userId);
     const id = randomUUID();
-    await db.insert(teachers).values({
+    await this.database.insert(teachers).values({
       id,
       userId,
       schoolId,
@@ -444,7 +456,7 @@ export class DatabaseStorage implements IStorage {
     if (updates.maxConsecutivePeriods !== undefined) updateValues.maxConsecutivePeriods = updates.maxConsecutivePeriods;
 
     const schoolId = await this.ensureActiveSchoolId(userId);
-    await db.update(teachers).set(updateValues).where(
+    await this.database.update(teachers).set(updateValues).where(
       and(eq(teachers.userId, userId), eq(teachers.schoolId, schoolId), eq(teachers.id, id))
     );
     return { ...existing, ...updates };
@@ -452,17 +464,54 @@ export class DatabaseStorage implements IStorage {
 
   async deleteTeacher(userId: string, id: string): Promise<boolean> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const result = await db.delete(teachers).where(
+    const result = await this.database.delete(teachers).where(
       and(eq(teachers.userId, userId), eq(teachers.schoolId, schoolId), eq(teachers.id, id))
     );
     return (result.rowCount ?? 0) > 0;
   }
 
   // Timetable
+  async autoGenerateTimetable(userId: string, lockExisting: boolean, clearFirst: boolean): Promise<AutoGenerateResult> {
+    // Resolve the school once. Every read and write below uses this scope,
+    // even if another tab changes the user's active school during generation.
+    const schoolId = await this.ensureActiveSchoolId(userId);
+    await this.ensureSchoolSettings(userId, schoolId);
+
+    return this.database.transaction(async (tx) => {
+      // Serialize generation for this school. The transaction also prevents
+      // another request from seeing or keeping a partly written timetable.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId + ":" + schoolId}, 0))`);
+      const scoped = new DatabaseStorage(tx, { userId, schoolId });
+      const teachers = await scoped.getTeachers(userId);
+      const quotas = await scoped.getSubjectQuotas(userId);
+      const subjects = await scoped.getSubjects(userId);
+      const userSettings = await scoped.getUserSettings(userId);
+      const existingTimetable = await scoped.getTimetable(userId);
+      const plan = generateTimetable({ teachers, quotas, subjects, userSettings, existingTimetable }, lockExisting, clearFirst);
+      if (!plan.result.success || !plan.slots) return plan.result;
+
+      // The validated plan already includes preserved lessons and activities.
+      // Replace it in one transaction; any failed insert restores the old grid.
+      await tx.delete(timetableSlots).where(
+        and(eq(timetableSlots.userId, userId), eq(timetableSlots.schoolId, schoolId)),
+      );
+      if (plan.slots.length > 0) {
+        await tx.insert(timetableSlots).values(plan.slots.map((slot) => ({
+          ...slot, userId, schoolId, isLocked: slot.isLocked ? 1 : 0,
+        })));
+      }
+      // Old undo actions refer to placements that may no longer exist.
+      await tx.delete(timetableActions).where(
+        and(eq(timetableActions.userId, userId), eq(timetableActions.schoolId, schoolId)),
+      );
+      return plan.result;
+    }, { isolationLevel: "serializable" });
+  }
+
   async getTimetable(userId: string): Promise<Map<string, TimetableSlot>> {
     const schoolId = await this.ensureActiveSchoolId(userId);
     const timetable = new Map<string, TimetableSlot>();
-    
+
     // Initialize empty slots
     for (const day of DAYS) {
       const maxPeriods = PERIODS_PER_DAY[day];
@@ -488,7 +537,7 @@ export class DatabaseStorage implements IStorage {
     }
 
     // Load saved slots
-    const rows = await db.select().from(timetableSlots).where(
+    const rows = await this.database.select().from(timetableSlots).where(
       and(eq(timetableSlots.userId, userId), eq(timetableSlots.schoolId, schoolId))
     );
     for (const row of rows) {
@@ -514,7 +563,7 @@ export class DatabaseStorage implements IStorage {
 
   async getSlot(userId: string, day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const [row] = await db.select().from(timetableSlots).where(
+    const [row] = await this.database.select().from(timetableSlots).where(
       and(
         eq(timetableSlots.userId, userId),
         eq(timetableSlots.schoolId, schoolId),
@@ -523,7 +572,7 @@ export class DatabaseStorage implements IStorage {
         eq(timetableSlots.period, period)
       )
     );
-    
+
     if (!row) {
       return {
         day,
@@ -560,7 +609,7 @@ export class DatabaseStorage implements IStorage {
   async setSlot(userId: string, slot: TimetableSlot): Promise<TimetableSlot> {
     const schoolId = await this.ensureActiveSchoolId(userId);
     // Delete existing slot first
-    await db.delete(timetableSlots).where(
+    await this.database.delete(timetableSlots).where(
       and(
         eq(timetableSlots.userId, userId),
         eq(timetableSlots.schoolId, schoolId),
@@ -572,7 +621,7 @@ export class DatabaseStorage implements IStorage {
 
     // Insert new slot if not empty
     if (slot.status !== "empty") {
-      await db.insert(timetableSlots).values({
+      await this.database.insert(timetableSlots).values({
         userId,
         schoolId,
         day: slot.day,
@@ -600,7 +649,7 @@ export class DatabaseStorage implements IStorage {
   ): Promise<TimetableSlot[]> {
     if (slots.length === 0) return [];
     const schoolId = await this.ensureActiveSchoolId(userId);
-    return await db.transaction(async (tx) => {
+    return await this.database.transaction(async (tx) => {
       if (requireEmpty) {
         // Re-check every target row inside the tx so a concurrent placement
         // can't slip in between our pre-validation and these writes.
@@ -660,7 +709,7 @@ export class DatabaseStorage implements IStorage {
 
   async clearSlot(userId: string, day: Day, schoolClass: SchoolClass, period: number): Promise<TimetableSlot | undefined> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    await db.delete(timetableSlots).where(
+    await this.database.delete(timetableSlots).where(
       and(
         eq(timetableSlots.userId, userId),
         eq(timetableSlots.schoolId, schoolId),
@@ -690,7 +739,7 @@ export class DatabaseStorage implements IStorage {
   // preserved so fixed periods and non-teaching activities survive a regen.
   async clearAllSlots(userId: string): Promise<void> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    await db.delete(timetableSlots).where(
+    await this.database.delete(timetableSlots).where(
       and(
         eq(timetableSlots.userId, userId),
         eq(timetableSlots.schoolId, schoolId),
@@ -702,7 +751,7 @@ export class DatabaseStorage implements IStorage {
   // Actions
   async getActions(userId: string): Promise<TimetableAction[]> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const rows = await db.select().from(timetableActions).where(
+    const rows = await this.database.select().from(timetableActions).where(
       and(eq(timetableActions.userId, userId), eq(timetableActions.schoolId, schoolId))
     );
     return rows.map((row) => ({
@@ -717,7 +766,7 @@ export class DatabaseStorage implements IStorage {
   async addAction(userId: string, action: Omit<TimetableAction, "id">): Promise<TimetableAction> {
     const schoolId = await this.ensureActiveSchoolId(userId);
     const id = randomUUID();
-    await db.insert(timetableActions).values({
+    await this.database.insert(timetableActions).values({
       id,
       userId,
       schoolId,
@@ -731,7 +780,7 @@ export class DatabaseStorage implements IStorage {
 
   async clearActions(userId: string): Promise<void> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    await db.delete(timetableActions).where(
+    await this.database.delete(timetableActions).where(
       and(eq(timetableActions.userId, userId), eq(timetableActions.schoolId, schoolId))
     );
   }
@@ -739,7 +788,7 @@ export class DatabaseStorage implements IStorage {
   // Subject Quotas
   async getSubjectQuotas(userId: string): Promise<SubjectQuota[]> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const rows = await db.select().from(subjectQuotas).where(
+    const rows = await this.database.select().from(subjectQuotas).where(
       and(eq(subjectQuotas.userId, userId), eq(subjectQuotas.schoolId, schoolId))
     );
     return rows.map((row) => ({
@@ -761,51 +810,59 @@ export class DatabaseStorage implements IStorage {
 
   async updateSubjectQuota(userId: string, subject: string, updates: Partial<SubjectQuota>): Promise<SubjectQuota | undefined> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const [existing] = await db.select().from(subjectQuotas).where(
-      and(
-        eq(subjectQuotas.userId, userId),
-        eq(subjectQuotas.schoolId, schoolId),
-        eq(subjectQuotas.subject, subject)
-      )
-    );
-    if (!existing) return undefined;
+    return this.database.transaction(async (tx) => {
+      const [existing] = await tx.select().from(subjectQuotas).where(
+        and(
+          eq(subjectQuotas.userId, userId),
+          eq(subjectQuotas.schoolId, schoolId),
+          eq(subjectQuotas.subject, subject)
+        )
+      );
+      if (!existing) return undefined;
 
-    const updateValues: Record<string, unknown> = {};
-    if (updates.jssQuota !== undefined) updateValues.jssQuota = updates.jssQuota;
-    if (updates.jss1Quota !== undefined) updateValues.jss1Quota = updates.jss1Quota;
-    if (updates.jss2Quota !== undefined) updateValues.jss2Quota = updates.jss2Quota;
-    if (updates.jss3Quota !== undefined) updateValues.jss3Quota = updates.jss3Quota;
-    if (updates.ss1Quota !== undefined) updateValues.ss1Quota = updates.ss1Quota;
-    if (updates.ss2Quota !== undefined) updateValues.ss2Quota = updates.ss2Quota;
-    if (updates.ss3Quota !== undefined) updateValues.ss3Quota = updates.ss3Quota;
-    if (updates.ss2ss3Quota !== undefined) updateValues.ss2ss3Quota = updates.ss2ss3Quota;
-    if (updates.isSlashSubject !== undefined) updateValues.isSlashSubject = updates.isSlashSubject ? 1 : 0;
-    if (updates.preferredPeriods !== undefined) updateValues.preferredPeriods = updates.preferredPeriods;
-    if (updates.requiredDoubles !== undefined) updateValues.requiredDoubles = updates.requiredDoubles;
+      const updateValues: Record<string, unknown> = {};
+      if (updates.jssQuota !== undefined) updateValues.jssQuota = updates.jssQuota;
+      if (updates.jss1Quota !== undefined) updateValues.jss1Quota = updates.jss1Quota;
+      if (updates.jss2Quota !== undefined) updateValues.jss2Quota = updates.jss2Quota;
+      if (updates.jss3Quota !== undefined) updateValues.jss3Quota = updates.jss3Quota;
+      if (updates.ss1Quota !== undefined) updateValues.ss1Quota = updates.ss1Quota;
+      if (updates.ss2Quota !== undefined) updateValues.ss2Quota = updates.ss2Quota;
+      if (updates.ss3Quota !== undefined) updateValues.ss3Quota = updates.ss3Quota;
+      if (updates.ss2ss3Quota !== undefined) updateValues.ss2ss3Quota = updates.ss2ss3Quota;
+      if (updates.isSlashSubject !== undefined) updateValues.isSlashSubject = updates.isSlashSubject ? 1 : 0;
+      if (updates.preferredPeriods !== undefined) updateValues.preferredPeriods = updates.preferredPeriods;
+      if (updates.requiredDoubles !== undefined) updateValues.requiredDoubles = updates.requiredDoubles;
 
-    await db.update(subjectQuotas).set(updateValues).where(
-      and(
-        eq(subjectQuotas.userId, userId),
-        eq(subjectQuotas.schoolId, schoolId),
-        eq(subjectQuotas.subject, subject)
-      )
-    );
+      await tx.update(subjectQuotas).set(updateValues).where(
+        and(
+          eq(subjectQuotas.userId, userId),
+          eq(subjectQuotas.schoolId, schoolId),
+          eq(subjectQuotas.subject, subject)
+        )
+      );
 
-    return {
-      subject: existing.subject,
-      jssQuota: updates.jssQuota ?? existing.jssQuota,
-      jss1Quota: updates.jss1Quota ?? existing.jss1Quota ?? existing.jssQuota,
-      jss2Quota: updates.jss2Quota ?? existing.jss2Quota ?? existing.jssQuota,
-      jss3Quota: updates.jss3Quota ?? existing.jss3Quota ?? existing.jssQuota,
-      ss1Quota: updates.ss1Quota ?? existing.ss1Quota,
-      ss2Quota: updates.ss2Quota ?? existing.ss2Quota ?? existing.ss2ss3Quota,
-      ss3Quota: updates.ss3Quota ?? existing.ss3Quota ?? existing.ss2ss3Quota,
-      ss2ss3Quota: updates.ss2ss3Quota ?? existing.ss2ss3Quota,
-      isSlashSubject: updates.isSlashSubject ?? (existing.isSlashSubject === 1),
-      singleOnly: existing.singleOnly === 1,
-      preferredPeriods: updates.preferredPeriods ?? existing.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
-      requiredDoubles: updates.requiredDoubles ?? existing.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
-    };
+      // Keep the subject editor and manual placement list in sync with the
+      // quota values used by generation.
+      await tx.update(subjects).set(updateValues).where(
+        and(eq(subjects.userId, userId), eq(subjects.schoolId, schoolId), eq(subjects.name, subject)),
+      );
+
+      return {
+        subject: existing.subject,
+        jssQuota: updates.jssQuota ?? existing.jssQuota,
+        jss1Quota: updates.jss1Quota ?? existing.jss1Quota ?? existing.jssQuota,
+        jss2Quota: updates.jss2Quota ?? existing.jss2Quota ?? existing.jssQuota,
+        jss3Quota: updates.jss3Quota ?? existing.jss3Quota ?? existing.jssQuota,
+        ss1Quota: updates.ss1Quota ?? existing.ss1Quota,
+        ss2Quota: updates.ss2Quota ?? existing.ss2Quota ?? existing.ss2ss3Quota,
+        ss3Quota: updates.ss3Quota ?? existing.ss3Quota ?? existing.ss2ss3Quota,
+        ss2ss3Quota: updates.ss2ss3Quota ?? existing.ss2ss3Quota,
+        isSlashSubject: updates.isSlashSubject ?? (existing.isSlashSubject === 1),
+        singleOnly: existing.singleOnly === 1,
+        preferredPeriods: updates.preferredPeriods ?? existing.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
+        requiredDoubles: updates.requiredDoubles ?? existing.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
+      };
+    });
   }
 
   async updateSlashGroupQuota(
@@ -819,7 +876,7 @@ export class DatabaseStorage implements IStorage {
     if (names.length < 2 || names.length > 3) return undefined;
     const setValues: Record<string, number> = { [field]: value };
 
-    return await db.transaction(async (tx) => {
+    return await this.database.transaction(async (tx) => {
       const rows = [];
       for (const name of names) {
         const [row] = await tx.select().from(subjectQuotas).where(
@@ -875,61 +932,45 @@ export class DatabaseStorage implements IStorage {
   // Subjects
   async getSubjects(userId: string): Promise<Subject[]> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const rows = await db.select().from(subjects).where(
-      and(eq(subjects.userId, userId), eq(subjects.schoolId, schoolId))
-    );
-    return rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      jssQuota: row.jssQuota,
-      jss1Quota: row.jss1Quota ?? row.jssQuota,
-      jss2Quota: row.jss2Quota ?? row.jssQuota,
-      jss3Quota: row.jss3Quota ?? row.jssQuota,
-      ss1Quota: row.ss1Quota,
-      ss2Quota: row.ss2Quota ?? row.ss2ss3Quota,
-      ss3Quota: row.ss3Quota ?? row.ss2ss3Quota,
-      ss2ss3Quota: row.ss2ss3Quota,
-      isSlashSubject: row.isSlashSubject === 1,
-      slashPairName: row.slashPairName,
-      slashThirdName: row.slashThirdName,
-      ss2SlashPairName: row.ss2SlashPairName,
-      ss2SlashThirdName: row.ss2SlashThirdName,
-      ss3SlashPairName: row.ss3SlashPairName,
-      ss3SlashThirdName: row.ss3SlashThirdName,
-      singleOnly: row.singleOnly === 1,
-      preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
-      requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
-    }));
+    const rows = await this.database.select({ subject: subjects, quota: subjectQuotas })
+      .from(subjects)
+      .leftJoin(subjectQuotas, and(
+        eq(subjectQuotas.userId, subjects.userId),
+        eq(subjectQuotas.schoolId, subjects.schoolId),
+        eq(subjectQuotas.subject, subjects.name),
+      ))
+      .where(and(eq(subjects.userId, userId), eq(subjects.schoolId, schoolId)));
+    return rows.map(({ subject: row, quota }) => {
+      // The quota table is authoritative, including records written before
+      // quota edits started synchronizing both tables.
+      const settings = quota ?? row;
+      return {
+        id: row.id,
+        name: row.name,
+        jssQuota: settings.jssQuota,
+        jss1Quota: settings.jss1Quota ?? settings.jssQuota,
+        jss2Quota: settings.jss2Quota ?? settings.jssQuota,
+        jss3Quota: settings.jss3Quota ?? settings.jssQuota,
+        ss1Quota: settings.ss1Quota,
+        ss2Quota: settings.ss2Quota ?? settings.ss2ss3Quota,
+        ss3Quota: settings.ss3Quota ?? settings.ss2ss3Quota,
+        ss2ss3Quota: settings.ss2ss3Quota,
+        isSlashSubject: row.isSlashSubject === 1,
+        slashPairName: row.slashPairName,
+        slashThirdName: row.slashThirdName,
+        ss2SlashPairName: row.ss2SlashPairName,
+        ss2SlashThirdName: row.ss2SlashThirdName,
+        ss3SlashPairName: row.ss3SlashPairName,
+        ss3SlashThirdName: row.ss3SlashThirdName,
+        singleOnly: settings.singleOnly === 1,
+        preferredPeriods: settings.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
+        requiredDoubles: settings.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
+      };
+    });
   }
 
   async getSubject(userId: string, id: number): Promise<Subject | undefined> {
-    const schoolId = await this.ensureActiveSchoolId(userId);
-    const [row] = await db.select().from(subjects).where(
-      and(eq(subjects.userId, userId), eq(subjects.schoolId, schoolId), eq(subjects.id, id))
-    );
-    if (!row) return undefined;
-    return {
-      id: row.id,
-      name: row.name,
-      jssQuota: row.jssQuota,
-      jss1Quota: row.jss1Quota ?? row.jssQuota,
-      jss2Quota: row.jss2Quota ?? row.jssQuota,
-      jss3Quota: row.jss3Quota ?? row.jssQuota,
-      ss1Quota: row.ss1Quota,
-      ss2Quota: row.ss2Quota ?? row.ss2ss3Quota,
-      ss3Quota: row.ss3Quota ?? row.ss2ss3Quota,
-      ss2ss3Quota: row.ss2ss3Quota,
-      isSlashSubject: row.isSlashSubject === 1,
-      slashPairName: row.slashPairName,
-      slashThirdName: row.slashThirdName,
-      ss2SlashPairName: row.ss2SlashPairName,
-      ss2SlashThirdName: row.ss2SlashThirdName,
-      ss3SlashPairName: row.ss3SlashPairName,
-      ss3SlashThirdName: row.ss3SlashThirdName,
-      singleOnly: row.singleOnly === 1,
-      preferredPeriods: row.preferredPeriods ?? { jss: [], ss1: [], ss2ss3: [] },
-      requiredDoubles: row.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 },
-    };
+    return (await this.getSubjects(userId)).find((subject) => subject.id === id);
   }
 
   async createSubject(userId: string, subject: InsertSubject): Promise<Subject> {
@@ -944,7 +985,7 @@ export class DatabaseStorage implements IStorage {
     const requiredDoubles = singleOnly
       ? { jss: 0, ss1: 0, ss2ss3: 0 }
       : (subject.requiredDoubles ?? { jss: 0, ss1: 0, ss2ss3: 0 });
-    return await db.transaction(async (tx) => {
+    return await this.database.transaction(async (tx) => {
       const [inserted] = await tx.insert(subjects).values({
         userId,
         schoolId,
@@ -1021,11 +1062,15 @@ export class DatabaseStorage implements IStorage {
 
   async updateSubject(userId: string, id: number, updates: Partial<InsertSubject>): Promise<Subject | undefined> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const existing = await this.getSubject(userId, id);
-    if (!existing) return undefined;
-
-    return await db.transaction(async (tx) => {
+    return await this.database.transaction(async (tx) => {
+      const scoped = new DatabaseStorage(tx, { userId, schoolId });
+      const schoolSubjects = await scoped.getSubjects(userId);
+      const existing = schoolSubjects.find((subject) => subject.id === id);
+      if (!existing) return undefined;
       const newName = updates.name ?? existing.name;
+      if (schoolSubjects.some((subject) => subject.id !== id && subject.name.toLowerCase() === newName.toLowerCase())) {
+        throw new Error("A subject with this name already exists in this school");
+      }
       const disableSlash = updates.isSlashSubject === false;
       const newSs2Pair = disableSlash ? null : (updates.ss2SlashPairName !== undefined ? updates.ss2SlashPairName : existing.ss2SlashPairName);
       const newSs2Third = disableSlash ? null : (updates.ss2SlashThirdName !== undefined ? updates.ss2SlashThirdName : existing.ss2SlashThirdName);
@@ -1099,6 +1144,53 @@ export class DatabaseStorage implements IStorage {
             eq(subjectQuotas.subject, existing.name)
           )
         );
+
+        const schoolTeachers = await tx.select().from(teachers).where(
+          and(eq(teachers.userId, userId), eq(teachers.schoolId, schoolId)),
+        );
+        for (const teacher of schoolTeachers) {
+          const subjectClasses = { ...teacher.subjectClasses };
+          if (!teacher.subjects.includes(existing.name) && !(existing.name in subjectClasses)) continue;
+          if (existing.name in subjectClasses) {
+            subjectClasses[newName] = subjectClasses[existing.name];
+            delete subjectClasses[existing.name];
+          }
+          await tx.update(teachers).set({
+            subjects: Array.from(new Set(teacher.subjects.map((name) => name === existing.name ? newName : name))),
+            subjectClasses,
+          }).where(and(eq(teachers.userId, userId), eq(teachers.schoolId, schoolId), eq(teachers.id, teacher.id)));
+        }
+
+        for (const field of ["subject", "slashPairSubject", "slashThirdSubject"] as const) {
+          await tx.update(timetableSlots).set({ [field]: newName }).where(and(
+            eq(timetableSlots.userId, userId), eq(timetableSlots.schoolId, schoolId),
+            eq(timetableSlots[field], existing.name), sql`${timetableSlots.slotType} IS DISTINCT FROM 'activity'`,
+          ));
+        }
+        const renameSlot = <T extends Partial<TimetableSlot>>(slot: T): T => {
+          if (slot.slotType === "activity") return slot;
+          const updated = { ...slot };
+          for (const field of ["subject", "slashPairSubject", "slashThirdSubject"] as const) {
+            if (updated[field] === existing.name) updated[field] = newName;
+          }
+          return updated;
+        };
+        const saved = await tx.select().from(savedTimetables).where(
+          and(eq(savedTimetables.userId, userId), eq(savedTimetables.schoolId, schoolId)),
+        );
+        for (const timetable of saved) {
+          await tx.update(savedTimetables).set({ timetableData: timetable.timetableData.map(renameSlot) })
+            .where(and(eq(savedTimetables.userId, userId), eq(savedTimetables.schoolId, schoolId), eq(savedTimetables.id, timetable.id)));
+        }
+        const actions = await tx.select().from(timetableActions).where(
+          and(eq(timetableActions.userId, userId), eq(timetableActions.schoolId, schoolId)),
+        );
+        for (const action of actions) {
+          await tx.update(timetableActions).set({
+            slotData: renameSlot(action.slotData as TimetableSlot),
+            previousSlotData: action.previousSlotData ? renameSlot(action.previousSlotData as TimetableSlot) : null,
+          }).where(and(eq(timetableActions.userId, userId), eq(timetableActions.schoolId, schoolId), eq(timetableActions.id, action.id)));
+        }
       }
 
       if (newSs2Pair) await setSlashGroup(tx, userId, schoolId, "SS2", [newName, newSs2Pair, newSs2Third ?? ""]);
@@ -1134,7 +1226,7 @@ export class DatabaseStorage implements IStorage {
     const existing = await this.getSubject(userId, id);
     if (!existing) return false;
 
-    await db.transaction(async (tx) => {
+    await this.database.transaction(async (tx) => {
       if (existing.isSlashSubject) {
         await clearSlashGroup(tx, userId, schoolId, "SS2", existing.name);
         await clearSlashGroup(tx, userId, schoolId, "SS3", existing.name);
@@ -1157,7 +1249,7 @@ export class DatabaseStorage implements IStorage {
   async getUserSettings(userId: string): Promise<UserSettings> {
     const schoolId = await this.ensureActiveSchoolId(userId);
     await this.ensureSchoolSettings(userId, schoolId);
-    const [row] = await db.select().from(schoolSettings).where(
+    const [row] = await this.database.select().from(schoolSettings).where(
       and(eq(schoolSettings.userId, userId), eq(schoolSettings.schoolId, schoolId))
     );
     return {
@@ -1174,7 +1266,7 @@ export class DatabaseStorage implements IStorage {
     const schoolId = await this.ensureActiveSchoolId(userId);
     const existing = await this.getUserSettings(userId);
     const newSettings = { ...existing, ...settings };
-    await db.update(schoolSettings).set({
+    await this.database.update(schoolSettings).set({
       fatigueLimit: newSettings.fatigueLimit,
       maxFreePeriodsPerWeek: newSettings.maxFreePeriodsPerWeek,
       maxFreePeriodsPerDay: newSettings.maxFreePeriodsPerDay,
@@ -1191,8 +1283,8 @@ export class DatabaseStorage implements IStorage {
     const schoolId = await this.ensureActiveSchoolId(userId);
     const id = randomUUID().substring(0, 8);
     const createdAt = Date.now();
-    
-    await db.insert(sharedTimetables).values({
+
+    await this.database.insert(sharedTimetables).values({
       id,
       userId,
       schoolId,
@@ -1215,7 +1307,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getSharedTimetable(shareId: string): Promise<SharedTimetable | undefined> {
-    const results = await db.select().from(sharedTimetables).where(eq(sharedTimetables.id, shareId));
+    const results = await this.database.select().from(sharedTimetables).where(eq(sharedTimetables.id, shareId));
     if (results.length === 0) return undefined;
 
     const row = results[0];
@@ -1232,7 +1324,7 @@ export class DatabaseStorage implements IStorage {
 
   async deleteSharedTimetable(userId: string, shareId: string): Promise<boolean> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const result = await db.delete(sharedTimetables).where(
+    const result = await this.database.delete(sharedTimetables).where(
       and(
         eq(sharedTimetables.id, shareId),
         eq(sharedTimetables.userId, userId),
@@ -1244,7 +1336,7 @@ export class DatabaseStorage implements IStorage {
 
   async getUserSharedTimetables(userId: string): Promise<SharedTimetable[]> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const results = await db.select().from(sharedTimetables).where(
+    const results = await this.database.select().from(sharedTimetables).where(
       and(eq(sharedTimetables.userId, userId), eq(sharedTimetables.schoolId, schoolId))
     );
     return results.map(row => ({
@@ -1261,7 +1353,7 @@ export class DatabaseStorage implements IStorage {
   // ===== Saved timetables =====
   async listSavedTimetables(userId: string): Promise<SavedTimetable[]> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const rows = await db.select().from(savedTimetables).where(
+    const rows = await this.database.select().from(savedTimetables).where(
       and(eq(savedTimetables.userId, userId), eq(savedTimetables.schoolId, schoolId))
     );
     return rows
@@ -1277,7 +1369,7 @@ export class DatabaseStorage implements IStorage {
 
   async getSavedTimetable(userId: string, id: string): Promise<SavedTimetable | undefined> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const rows = await db.select().from(savedTimetables).where(
+    const rows = await this.database.select().from(savedTimetables).where(
       and(
         eq(savedTimetables.id, id),
         eq(savedTimetables.userId, userId),
@@ -1299,7 +1391,7 @@ export class DatabaseStorage implements IStorage {
     const schoolId = await this.ensureActiveSchoolId(userId);
     const id = randomUUID();
     const createdAt = Date.now();
-    await db.insert(savedTimetables).values({
+    await this.database.insert(savedTimetables).values({
       id,
       userId,
       schoolId,
@@ -1312,7 +1404,7 @@ export class DatabaseStorage implements IStorage {
 
   async renameSavedTimetable(userId: string, id: string, name: string): Promise<SavedTimetable | undefined> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    await db.update(savedTimetables)
+    await this.database.update(savedTimetables)
       .set({ name })
       .where(and(
         eq(savedTimetables.id, id),
@@ -1324,7 +1416,7 @@ export class DatabaseStorage implements IStorage {
 
   async deleteSavedTimetable(userId: string, id: string): Promise<boolean> {
     const schoolId = await this.ensureActiveSchoolId(userId);
-    const result = await db.delete(savedTimetables).where(
+    const result = await this.database.delete(savedTimetables).where(
       and(
         eq(savedTimetables.id, id),
         eq(savedTimetables.userId, userId),
@@ -1345,7 +1437,7 @@ export class DatabaseStorage implements IStorage {
 
     // Atomic replace: clear current slots + audit history, then insert snapshot.
     // If any step fails the transaction rolls back, leaving the prior grid intact.
-    await db.transaction(async (tx) => {
+    await this.database.transaction(async (tx) => {
       await tx.delete(timetableSlots).where(
         and(eq(timetableSlots.userId, userId), eq(timetableSlots.schoolId, schoolId))
       );

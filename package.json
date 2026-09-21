@@ -8,6 +8,7 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "test": "tsc -p tsconfig.test.json && node --import tsx --test server/*.test.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
@@ -87,6 +88,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@replit/vite-plugin-cartographer": "^0.4.4",
     "@replit/vite-plugin-dev-banner": "^0.1.1",
     "@replit/vite-plugin-runtime-error-modal": "^0.0.3",

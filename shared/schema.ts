@@ -46,6 +46,9 @@ export function findSlashGroup<S extends {
   ss3SlashPairName?: string | null;
   ss3SlashThirdName?: string | null;
 }>(subjects: S[], subjectName: string, schoolClass?: SchoolClass): S[] {
+  // Slash choices apply only to SS2 and SS3. A subject remains independent
+  // in JSS and SS1 even when it belongs to a senior slash group.
+  if (schoolClass && schoolClass !== "SS2" && schoolClass !== "SS3") return [];
   const self = subjects.find((s) => s.name === subjectName);
   if (!self || !self.isSlashSubject) return [];
 

@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "incremental": false
+  },
+  "include": ["server/**/*.test.ts"],
+  "exclude": ["node_modules", "build", "dist"]
+}
